@@ -1351,7 +1351,18 @@ export default function Canvas() {
       isPanning = false; drawEl.style.cursor = 'crosshair'
     }
 
-    function onLeave() {
+    function onLeave(e) {
+      // Apple Pencil hover fires this exact event whenever the pencil lifts
+      // out of hover range (~1 inch on iPadOS) with the pencil still
+      // positioned over the canvas in x/y — not just when the pointer
+      // actually moves off it. Only treat this as a genuine "moved off the
+      // canvas" (e.g. to click a sidebar button) when the coordinates are
+      // really outside drawEl's bounds, so lifting the pencil mid-shape
+      // doesn't silently close the polygon/linear-ft line.
+      if (e) {
+        const r = drawEl.getBoundingClientRect()
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return
+      }
       if (cursorRingRef.current) cursorRingRef.current.style.display = 'none'
       drawCtx.clearRect(0, 0, cW, cH)
       // An active rectangle/polygon lives on this same canvas — the pointer
