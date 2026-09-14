@@ -301,12 +301,20 @@ export default function ProjectDetail() {
   const [savingProjectInfo, setSavingProjectInfo] = useState(false)
   const [tilingPageId, setTilingPageId] = useState(null)
   const [tilingProgress, setTilingProgress] = useState(0)
+  // setTilingPageId is async (React state), so a burst of clicks/duplicate
+  // events landing before the next render can all read the same stale
+  // tilingPageId and slip past the `if (tilingPageId) return` guard below —
+  // confirmed in practice as multiple concurrent generatePdfTiles() runs
+  // fighting over the same storage path. A ref is synchronous, so it blocks
+  // every duplicate call starting from the very first line.
+  const tilingRef = useRef(false)
 
   const canManage = profile?.role === 'admin' || profile?.role === 'pm'
 
   async function generateTiles(page) {
-    if (tilingPageId) return
+    if (tilingRef.current) return
     if (!page.floor_plan_url) { alert('This page has no floor plan file to tile.'); return }
+    tilingRef.current = true
     setTilingPageId(page.id); setTilingProgress(0)
     try {
       if (page.tile_meta) {
@@ -334,6 +342,7 @@ export default function ProjectDetail() {
       alert('Tile generation failed: ' + (err.message || 'check console'))
     } finally {
       setTilingPageId(null); setTilingProgress(0)
+      tilingRef.current = false
     }
   }
 
