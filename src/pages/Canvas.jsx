@@ -1351,18 +1351,7 @@ export default function Canvas() {
       isPanning = false; drawEl.style.cursor = 'crosshair'
     }
 
-    function onLeave(e) {
-      // Apple Pencil hover fires this exact event whenever the pencil lifts
-      // out of hover range (~1 inch on iPadOS) with the pencil still
-      // positioned over the canvas in x/y — not just when the pointer
-      // actually moves off it. Only treat this as a genuine "moved off the
-      // canvas" (e.g. to click a sidebar button) when the coordinates are
-      // really outside drawEl's bounds, so lifting the pencil mid-shape
-      // doesn't silently close the polygon/linear-ft line.
-      if (e) {
-        const r = drawEl.getBoundingClientRect()
-        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return
-      }
+    function onLeave() {
       if (cursorRingRef.current) cursorRingRef.current.style.display = 'none'
       drawCtx.clearRect(0, 0, cW, cH)
       // An active rectangle/polygon lives on this same canvas — the pointer
@@ -1370,7 +1359,15 @@ export default function Canvas() {
       // redrawing here also picks up any color change made while hovering
       // the sidebar.
       if (activeRect) drawActiveRectPreview()
-      if (activePoly) {
+      // On iPad, Apple Pencil hover fires this exact mouseleave event
+      // whenever the pencil lifts out of hover range (~1 inch) while still
+      // positioned over the canvas in x/y — it's not a reliable "user is
+      // done" signal there the way a mouse actually leaving the canvas
+      // (e.g. to click a sidebar swatch) is on desktop. So auto-finishing
+      // the shape on leave only applies off iPad; on iPad, tapping the
+      // closing point or switching tools (which already bakes the active
+      // polygon/LF line — see setTool) are the ways to finish instead.
+      if (!isIPad && activePoly) {
         // Still placing points and the pointer left the canvas entirely —
         // treat that as "done placing points" per the user's request:
         // close it if it's a valid shape already, else there's nothing
@@ -1381,7 +1378,7 @@ export default function Canvas() {
         }
         drawActivePolyPreview()
       }
-      if (activeLFLine) {
+      if (!isIPad && activeLFLine) {
         // Same idea as the polygon: pointer leaving the canvas while still
         // placing points finishes it if it's a valid line already (2+
         // points), else there's nothing meaningful to keep.
