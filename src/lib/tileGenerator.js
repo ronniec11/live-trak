@@ -150,16 +150,18 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
           // what parses and caches the page's whole operator list; every
           // later render (any level/chunk) reuses that cache and is much
           // faster. 30s wasn't enough for a genuinely complex real-world
-          // drawing's first pass even with concurrency already ruled out as
-          // the cause — 120s gives that cold start real room without letting
-          // a truly hung render block generation forever.
+          // drawing's first pass, then 120s wasn't either (confirmed hitting
+          // the wall repeatedly on this same large/detailed PDF, both on the
+          // cold-start chunk and on a full-size chunk at the highest pyramid
+          // level) — 300s gives real headroom on slower hardware without
+          // letting a truly hung render block generation forever.
           await withTimeout(
             page.render({
               canvasContext: chunkCanvas.getContext('2d'),
               viewport: levelViewport,
               transform: [1, 0, 0, 1, -chunkX, -chunkY],
             }).promise,
-            120000,
+            300000,
             `Render of level ${level} chunk ${chunkIndex}`,
           )
           console.log('[tileGenerator] chunk', chunkIndex, 'level', level, 'rendered in', Math.round(performance.now() - t0), 'ms — uploading tiles...')
