@@ -2390,7 +2390,7 @@ export default function Canvas() {
       txt += 'GRAND TOTAL: ' + Math.round(grand).toLocaleString() + ' SF\n'
       const blob = new Blob([txt], {type: 'text/plain'})
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
-      a.download = 'scribilis-' + date + '.txt'; a.click()
+      a.download = 'live-trak-' + date + '.txt'; a.click()
 
       pages.forEach(pg => {
         if (!pg.image) return
@@ -2409,7 +2409,7 @@ export default function Canvas() {
         pg.sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0) })
         const lk = document.createElement('a')
         lk.href = exp.toDataURL('image/png')
-        lk.download = 'scribilis-' + pg.name.replace(/\s+/g, '-') + '-' + date + '.png'
+        lk.download = 'live-trak-' + pg.name.replace(/\s+/g, '-') + '-' + date + '.png'
         lk.click()
       })
     }
