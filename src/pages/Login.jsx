@@ -38,7 +38,7 @@ export default function Login() {
       <div className="w-full max-w-sm relative">
         {/* Logo */}
         <div className="flex items-center justify-center gap-4 mb-8">
-          <img src="/squeegee-icon.svg" style={{ width: '56px', height: '56px' }} />
+          <img src="/live-trak-icon.svg" style={{ width: '56px', height: '56px' }} />
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">scribilis</h1>
         </div>
 

@@ -1510,7 +1510,7 @@ export default function Canvas() {
     // once per mount; changing it on the Profile page takes effect the next
     // time a floor plan is opened.
     let pencilOnlyMode = false
-    try { pencilOnlyMode = localStorage.getItem('squeegee_pencil_only') === 'true' } catch {}
+    try { pencilOnlyMode = localStorage.getItem('live-trak_pencil_only') === 'true' } catch {}
     let fingerPanning = false, fingerPanLast = null
 
     // Pencil double-tap-to-erase: Apple Pencil's own barrel double-tap
@@ -2376,7 +2376,7 @@ export default function Canvas() {
     // ── EXPORT ────────────────────────────────────────────────────────────────
     function exportAll() {
       const date = getCurrentDate()
-      let txt = 'Scribilis - Daily Report\nDate: ' + date + '\n\n'; let grand = 0
+      let txt = 'Live-Trak - Daily Report\nDate: ' + date + '\n\n'; let grand = 0
       pages.forEach(pg => {
         txt += '=== ' + pg.name + ' ===\n'
         pg.sessions.forEach((s, i) => {

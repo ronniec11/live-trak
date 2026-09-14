@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
 const ThemeContext = createContext(null)
-const STORAGE_KEY = 'squeegee_theme'
+const STORAGE_KEY = 'live-trak_theme'
 
 function getInitialTheme() {
   try {

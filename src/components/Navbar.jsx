@@ -1,8 +1,8 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
-import SqueegeeLogoDark from '../assets/squeegee-logo-full.svg'
-import SqueegeeLogoLight from '../assets/squeegee-logo-full-light.svg'
+import LiveTrakLogoDark from '../assets/live-trak-logo-full.svg'
+import LiveTrakLogoLight from '../assets/live-trak-logo-full-light.svg'
 
 export default function Navbar() {
   const { profile, signOut } = useAuth()
@@ -20,7 +20,7 @@ export default function Navbar() {
   return (
     <header className="h-14 bg-surface border-b border-border flex items-center px-4 gap-4 shrink-0 z-40">
       <Link to="/projects" className="flex items-center group">
-        <img src={theme === 'light' ? SqueegeeLogoLight : SqueegeeLogoDark} alt="Scribilis" className="h-11 w-auto" />
+        <img src={theme === 'light' ? LiveTrakLogoLight : LiveTrakLogoDark} alt="Live-Trak" className="h-11 w-auto" />
       </Link>
 
       {!isCanvas && (

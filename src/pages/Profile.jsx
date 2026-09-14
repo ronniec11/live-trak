@@ -26,13 +26,13 @@ export default function Profile() {
   // Per-device, like the theme toggle — not tied to the account, since it's
   // about this touchscreen's input, not the user's identity.
   const [pencilOnly, setPencilOnly] = useState(() => {
-    try { return localStorage.getItem('squeegee_pencil_only') === 'true' } catch { return false }
+    try { return localStorage.getItem('live-trak_pencil_only') === 'true' } catch { return false }
   })
 
   function togglePencilOnly() {
     const next = !pencilOnly
     setPencilOnly(next)
-    try { localStorage.setItem('squeegee_pencil_only', String(next)) } catch {}
+    try { localStorage.setItem('live-trak_pencil_only', String(next)) } catch {}
   }
 
   async function handleSave(e) {
