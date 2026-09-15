@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -7,8 +7,16 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signIn } = useAuth()
+  const { signIn, user } = useAuth()
   const navigate = useNavigate()
+
+  // Covers a magic-link click landing here: exchanging the link's code for
+  // a session is a network round-trip, so this page can render before it
+  // resolves. Without this, the user is signed in moments later but just
+  // sits on the login form with no indication anything happened.
+  useEffect(() => {
+    if (user) navigate('/projects', { replace: true })
+  }, [user, navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()
