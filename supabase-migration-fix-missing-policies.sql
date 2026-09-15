@@ -67,8 +67,17 @@ CREATE POLICY "floor_plans_delete_pm" ON storage.objects FOR DELETE USING (
   (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('admin', 'pm')
 );
 
--- Verify afterward — every table below should show INSERT/UPDATE/DELETE
--- coverage (pages also DELETE), plus sessions/profiles for good measure:
+-- objects also had no SELECT policy at all (found via the verification
+-- query below). The public bucket flag bypasses RLS for the public URL
+-- read path (why images/tiles still displayed fine), but authenticated
+-- .list() calls — e.g. deleteTiles() enumerating files before regenerating
+-- a floor plan's tile pyramid — go through RLS and were silently seeing
+-- zero files, leaving old tiles orphaned instead of actually clearing them.
+CREATE POLICY "floor_plans_select_public" ON storage.objects FOR SELECT USING (
+  bucket_id = 'floor-plans'
+);
+
+-- Verified clean via:
 -- SELECT tablename, policyname, cmd FROM pg_policies
 -- WHERE tablename IN ('projects','pages','project_members','objects','sessions','profiles')
 -- ORDER BY tablename, cmd;
