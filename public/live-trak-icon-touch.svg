@@ -19,33 +19,32 @@
        bordered icon gets double-masked/cropped unevenly under that. -->
   <rect x="0" y="0" width="56" height="56" fill="url(#bgGrad)"/>
 
-  <!-- Floor plan grid — centered within the bracket frame (brackets mark
-       the corners of the (8,10)-(48,46) rectangle) and sized as large as
-       possible with a small uniform margin so it never touches them. -->
-  <rect x="10" y="12" width="19" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-  <rect x="29" y="12" width="17" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-  <rect x="10" y="28" width="36" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
+  <!-- Floor plan grid — centered within the bracket frame and sized as
+       large as possible with a ~1 unit margin so it never touches them. -->
+  <rect x="9"  y="11" width="19" height="17" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
+  <rect x="28" y="11" width="19" height="17" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
+  <rect x="9"  y="28" width="38" height="17" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
 
   <!-- Highlighted cells — blue and green so the icon isn't a single flat color -->
-  <rect x="10.4" y="12.4" width="18.2" height="15.2" fill="#60a5fa" opacity="0.3"/>
-  <rect x="29.4" y="12.4" width="16.2" height="15.2" fill="#4ade80" opacity="0.3"/>
+  <rect x="9.4"  y="11.4" width="18.2" height="16.2" fill="#60a5fa" opacity="0.3"/>
+  <rect x="28.4" y="11.4" width="18.2" height="16.2" fill="#4ade80" opacity="0.3"/>
 
   <!-- Top gloss for a raised, glassy feel -->
   <rect x="0" y="0" width="56" height="56" fill="url(#glossGrad)"/>
 
   <!-- Checkmark — white -->
-  <polyline points="13,20 19,26 28,15" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
+  <polyline points="12,20 18,26 27,14" fill="none" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
 
   <!-- Corner brackets — white. Anchored far enough from the true corner
        to clear iOS's mask, with a clear ~1 unit gap before the grid. -->
-  <g stroke="#ffffff" stroke-width="1.1" opacity="0.9">
-    <line x1="8"  y1="10" x2="12" y2="10"/>
-    <line x1="8"  y1="10" x2="8"  y2="14"/>
-    <line x1="48" y1="10" x2="44" y2="10"/>
-    <line x1="48" y1="10" x2="48" y2="14"/>
-    <line x1="8"  y1="46" x2="12" y2="46"/>
-    <line x1="8"  y1="46" x2="8"  y2="42"/>
-    <line x1="48" y1="46" x2="44" y2="46"/>
-    <line x1="48" y1="46" x2="48" y2="42"/>
+  <g stroke="#ffffff" stroke-width="1.3" opacity="0.9">
+    <line x1="8"  y1="10" x2="13" y2="10"/>
+    <line x1="8"  y1="10" x2="8"  y2="15"/>
+    <line x1="48" y1="10" x2="43" y2="10"/>
+    <line x1="48" y1="10" x2="48" y2="15"/>
+    <line x1="8"  y1="46" x2="13" y2="46"/>
+    <line x1="8"  y1="46" x2="8"  y2="41"/>
+    <line x1="48" y1="46" x2="43" y2="46"/>
+    <line x1="48" y1="46" x2="48" y2="41"/>
   </g>
 </svg>
