@@ -9,6 +9,14 @@ const PRESET_COLORS = [
   '#fbbf24', '#f87171', '#34d399', '#60a5fa', '#e879f9',
 ]
 
+// Hard-coded rather than window.location.origin — an invite sent while the
+// admin happens to be on covrd-seven.vercel.app (or bare live-trak.ai,
+// which itself 308s to www) would build a redirect URL Supabase's allowlist
+// doesn't recognize, silently dropping the session. One canonical URL means
+// this only needs to be allow-listed in Supabase once, regardless of which
+// domain the admin is actually browsing from.
+const INVITE_REDIRECT_URL = 'https://www.live-trak.ai/projects'
+
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
   { value: 'pm', label: 'PM' },
@@ -59,7 +67,7 @@ function PersonModal({ person, onClose, onSaved }) {
           options: {
             shouldCreateUser: true,
             data: { full_name: form.full_name.trim(), role: form.role },
-            emailRedirectTo: `${window.location.origin}/projects`,
+            emailRedirectTo: INVITE_REDIRECT_URL,
           },
         })
         if (authErr) throw authErr
@@ -188,7 +196,7 @@ export default function Team() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email: person.email,
-        options: { shouldCreateUser: false, emailRedirectTo: `${window.location.origin}/projects` },
+        options: { shouldCreateUser: false, emailRedirectTo: INVITE_REDIRECT_URL },
       })
       if (error) throw error
       setToast(`Invite resent to ${person.email}`)
