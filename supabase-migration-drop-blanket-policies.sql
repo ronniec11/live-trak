@@ -26,6 +26,19 @@ DROP POLICY IF EXISTS "Authenticated users can read floor plans" ON storage.obje
 DROP POLICY IF EXISTS "Authenticated users can delete floor plans" ON storage.objects;
 DROP POLICY IF EXISTS "Authenticated users can update floor plans" ON storage.objects;
 
+-- IMPORTANT: on this database, "Profiles are viewable by authenticated
+-- users" (just dropped above) turned out to be the ONLY SELECT policy that
+-- actually existed on profiles — the "profiles_select_all USING (true)"
+-- policy documented in supabase-schema.sql was never actually created here
+-- (this project's live schema has drifted from that file in several other
+-- ways too — see its own inline notes). Dropping it without this line left
+-- profiles completely unreadable: every profile fetch failed, including the
+-- app's own "who am I" lookup on login, which made the client fall back to
+-- a hardcoded default role. Every other table this migration touches
+-- already had its own broadened replacement created in
+-- supabase-migration-team.sql, which is why only this one needs restoring.
+CREATE POLICY "profiles_select_all" ON public.profiles FOR SELECT USING (true);
+
 -- Sanity check afterward — should return zero rows:
 -- SELECT tablename, policyname FROM pg_policies
 -- WHERE policyname ILIKE '%allow all%' OR qual ILIKE '%authenticated%';
