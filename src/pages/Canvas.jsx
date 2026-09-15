@@ -279,15 +279,20 @@ export default function Canvas() {
         }
         console.log('[Canvas] Drawing session to cache:', s.name, s.color, s.hlCanvas.width, 'x', s.hlCanvas.height)
         const tinted = tintCanvas(s.hlCanvas, s.color)
-        if (!tinted) { console.warn('[Canvas] tintCanvas returned null for session:', s.id); return }
+        // tintCanvas returning null means the color tint failed (invalid
+        // dims, no 2d context) — draw the untinted source instead of
+        // skipping the session outright, so the markup is at least visible
+        // (in whatever color it was originally painted) rather than missing.
+        const toDraw = tinted || s.hlCanvas
+        if (!tinted) console.warn('[Canvas] tintCanvas returned null for session, drawing untinted:', s.id)
         // Draw scaled to the CURRENT page size rather than at native
         // resolution when they don't match — a session saved/decoded at a
         // different size (a stale cache, a since-changed calibration, a
         // race during load) would otherwise render shrunk into the
         // top-left corner instead of proportionally covering the same
         // area it was painted over.
-        if (mismatched) hlc.drawImage(tinted, 0, 0, img.width, img.height)
-        else hlc.drawImage(tinted, 0, 0)
+        if (mismatched) hlc.drawImage(toDraw, 0, 0, img.width, img.height)
+        else hlc.drawImage(toDraw, 0, 0)
       })
       activePage.sessions.forEach(s => {
         if (!s.penCanvas || s._hidden) return
@@ -3270,6 +3275,17 @@ export default function Canvas() {
       console.log('[Canvas] Sessions loaded:', activePage.sessions.length)
       invalidateSessions()
       redrawAll(); renderSessions(); updateSF(); updateProgressBar(); saveDayToHistory()
+      // Defensive second pass on Safari/iPad: every session's canvas is
+      // already fully decoded by this point (this line runs after the
+      // await-based loop above), so this isn't expected to change anything —
+      // but it's cheap insurance against whatever timing quirk is behind
+      // sessions loading correctly yet not appearing on iPad.
+      if (isSafari || isIPad) {
+        setTimeout(() => {
+          invalidateSessions()
+          redrawAll(); renderSessions(); updateSF()
+        }, 100)
+      }
     }
 
     // ── REALTIME SUBSCRIPTION ─────────────────────────────────────────────────
