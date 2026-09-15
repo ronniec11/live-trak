@@ -1,42 +1,44 @@
 <svg viewBox="0 0 280 60" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#60a5fa"/>
-      <stop offset="55%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#1d4ed8"/>
+      <stop offset="0%" stop-color="#1e2a47"/>
+      <stop offset="100%" stop-color="#0b1120"/>
     </linearGradient>
-    <radialGradient id="glossGrad" cx="50%" cy="0%" r="75%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35"/>
-      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.08"/>
+    <linearGradient id="checkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <radialGradient id="glossGrad" cx="50%" cy="0%" r="80%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0.04"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="shadeGrad" x1="0%" y1="55%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.3"/>
-    </linearGradient>
     <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
-      <feDropShadow dx="0" dy="0.8" stdDeviation="0.9" flood-color="#0f172a" flood-opacity="0.5"/>
+      <feDropShadow dx="0" dy="0.6" stdDeviation="0.6" flood-color="#0b1120" flood-opacity="0.6"/>
     </filter>
   </defs>
 
-  <!-- Icon — rich blue gradient rather than flat near-black, so it holds
-       up against both light and dark navbar backgrounds -->
+  <!-- Icon — subtle gradient + glowing blue edge instead of a flat fill,
+       so it separates from a dark navbar instead of blending into it -->
   <g transform="translate(0,2)">
-    <rect x="1" y="1" width="54" height="54" rx="12" fill="url(#bgGrad)"/>
-    <g stroke="#ffffff" stroke-width="0.5" opacity="0.16">
-      <line x1="19" y1="8" x2="19" y2="48"/>
-      <line x1="37" y1="8" x2="37" y2="48"/>
-      <line x1="8" y1="23" x2="48" y2="23"/>
+    <rect x="1" y="1" width="54" height="54" rx="11" fill="url(#bgGrad)" stroke="#3b82f6" stroke-width="1" stroke-opacity="0.35"/>
+    <rect x="8"  y="10" width="19" height="16" fill="none" stroke="#4a5f8a" stroke-width="0.7" opacity="0.7"/>
+    <rect x="27" y="10" width="16" height="16" fill="none" stroke="#4a5f8a" stroke-width="0.7" opacity="0.7"/>
+    <rect x="8"  y="26" width="35" height="16" fill="none" stroke="#4a5f8a" stroke-width="0.7" opacity="0.7"/>
+    <rect x="8.4" y="10.4" width="18.2" height="15.2" fill="#60a5fa" opacity="0.3"/>
+    <rect x="27.4" y="10.4" width="15.2" height="15.2" fill="#4ade80" opacity="0.3"/>
+    <rect x="1" y="1" width="54" height="54" rx="11" fill="url(#glossGrad)"/>
+    <polyline points="11,18 17,24 26,13" fill="none" stroke="url(#checkGrad)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
+    <g stroke="#60a5fa" stroke-width="1.1" opacity="0.8">
+      <line x1="4"  y1="7"  x2="9"  y2="7"/>
+      <line x1="4"  y1="7"  x2="4"  y2="12"/>
+      <line x1="52" y1="7"  x2="47" y2="7"/>
+      <line x1="52" y1="7"  x2="52" y2="12"/>
+      <line x1="4"  y1="53" x2="9"  y2="53"/>
+      <line x1="4"  y1="53" x2="4"  y2="48"/>
+      <line x1="52" y1="53" x2="47" y2="53"/>
+      <line x1="52" y1="53" x2="52" y2="48"/>
     </g>
-    <rect x="1" y="1" width="54" height="54" rx="12" fill="url(#shadeGrad)"/>
-    <rect x="1" y="1" width="54" height="54" rx="12" fill="url(#glossGrad)"/>
-    <g stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" fill="none" opacity="0.9">
-      <path d="M8 14 V10 a2 2 0 0 1 2-2 H14"/>
-      <path d="M48 14 V10 a2 2 0 0 0 -2-2 H42"/>
-      <path d="M8 42 V46 a2 2 0 0 0 2 2 H14"/>
-      <path d="M48 42 V46 a2 2 0 0 1 -2 2 H42"/>
-    </g>
-    <path d="M16 29 L24 38 L41 18" fill="none" stroke="#ffffff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
   </g>
 
   <!-- Wordmark: "Live-Trak" -->
