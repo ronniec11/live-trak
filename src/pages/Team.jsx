@@ -169,6 +169,89 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
   )
 }
 
+function PersonCard({ person, onClose, onEdit }) {
+  const [projects, setProjects] = useState(null) // null = loading
+
+  useEffect(() => {
+    let cancelled = false
+    supabase.from('project_members').select('projects(id, name, status)').eq('user_id', person.id)
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) { console.error('[Team] load projects error:', error); setProjects([]); return }
+        setProjects((data || []).map(r => r.projects).filter(Boolean))
+      })
+    return () => { cancelled = true }
+  }, [person.id])
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Profile</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 mb-5">
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold text-bg shrink-0"
+            style={{ backgroundColor: person.avatar_color || '#4ade80' }}
+          >
+            {(person.full_name || person.email || 'U')[0].toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{person.full_name || '(no name)'}</p>
+              <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${person.last_login_at ? 'bg-accent/10 text-accent' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'}`}>
+                {person.last_login_at ? 'Active' : 'Invited'}
+              </span>
+            </div>
+            <p className="text-xs text-muted capitalize">{ROLE_LABELS[person.role] || person.role}</p>
+          </div>
+        </div>
+
+        <div className="space-y-1.5 text-sm mb-5">
+          <p className="text-gray-700 dark:text-gray-300">{person.email}</p>
+          {person.phone && <p className="text-gray-700 dark:text-gray-300">{person.phone}</p>}
+          {person.company && <p className="text-gray-700 dark:text-gray-300">{person.company}</p>}
+        </div>
+
+        <div className="mb-5">
+          <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
+            Projects {projects !== null && `(${projects.length})`}
+          </h3>
+          {projects === null && <p className="text-sm text-muted">Loading...</p>}
+          {projects !== null && projects.length === 0 && <p className="text-sm text-muted">Not on any projects yet.</p>}
+          {projects !== null && projects.length > 0 && (
+            <div className="space-y-1.5">
+              {projects.map(proj => (
+                <div key={proj.id} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-800 dark:text-gray-200 truncate">{proj.name}</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 capitalize ${badgeClassFor(proj.status)}`}>{proj.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={onClose} className="btn-secondary flex-1">Close</button>
+          <button onClick={onEdit} className="btn-primary flex-1">Edit</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function badgeClassFor(status) {
+  if (status === 'active') return 'bg-accent/10 text-accent'
+  if (status === 'completed') return 'bg-blue-500/10 text-blue-500'
+  return 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+}
+
 export default function Team() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -176,6 +259,7 @@ export default function Team() {
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [editPerson, setEditPerson] = useState(null)
+  const [viewPerson, setViewPerson] = useState(null)
   const [resendingId, setResendingId] = useState(null)
   const [toast, setToast] = useState('')
 
@@ -237,7 +321,10 @@ export default function Team() {
         ) : (
           <div className="card divide-y divide-border">
             {people.map(p => (
-              <div key={p.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+              <div
+                key={p.id} onClick={() => setViewPerson(p)}
+                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-surface-2 -mx-2 px-2 rounded-lg transition-colors"
+              >
                 <div
                   className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-bg shrink-0"
                   style={{ backgroundColor: p.avatar_color || '#4ade80' }}
@@ -256,17 +343,14 @@ export default function Team() {
                   </p>
                 </div>
                 <span className="text-xs text-muted capitalize shrink-0">{ROLE_LABELS[p.role] || p.role}</span>
-                <div className="flex items-center gap-1 shrink-0">
-                  {!p.last_login_at && (
-                    <button
-                      onClick={() => resendInvite(p)} disabled={resendingId === p.id}
-                      className="btn-ghost py-1 px-2 text-xs"
-                    >
-                      {resendingId === p.id ? 'Sending...' : 'Resend Invite'}
-                    </button>
-                  )}
-                  <button onClick={() => setEditPerson(p)} className="btn-ghost py-1 px-2 text-xs">Edit</button>
-                </div>
+                {!p.last_login_at && (
+                  <button
+                    onClick={e => { e.stopPropagation(); resendInvite(p) }} disabled={resendingId === p.id}
+                    className="btn-ghost py-1 px-2 text-xs shrink-0"
+                  >
+                    {resendingId === p.id ? 'Sending...' : 'Resend Invite'}
+                  </button>
+                )}
               </div>
             ))}
             {people.length === 0 && <p className="text-sm text-muted py-4">No one yet.</p>}
@@ -276,6 +360,13 @@ export default function Team() {
 
       {showAdd && (
         <PersonModal onClose={() => setShowAdd(false)} onSaved={loadPeople} />
+      )}
+      {viewPerson && (
+        <PersonCard
+          person={viewPerson}
+          onClose={() => setViewPerson(null)}
+          onEdit={() => { setEditPerson(viewPerson); setViewPerson(null) }}
+        />
       )}
       {editPerson && (
         <PersonModal person={editPerson} currentUserId={profile?.id} onClose={() => setEditPerson(null)} onSaved={loadPeople} />

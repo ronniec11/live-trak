@@ -368,6 +368,13 @@ export default function ProjectDetail() {
     setEditingProjectInfo(false)
   }
 
+  async function removeMember(member) {
+    if (!confirm(`Remove ${member.full_name || 'this person'} from this project?`)) return
+    const { error } = await supabase.from('project_members').delete().eq('project_id', projectId).eq('user_id', member.id)
+    if (error) { alert('Failed to remove: ' + error.message); return }
+    setMembers(ms => ms.filter(m => m?.id !== member.id))
+  }
+
   async function savePageRename(page) {
     const trimmed = editingPageName.trim()
     if (!trimmed || trimmed === page.name) { setEditingPageId(null); return }
@@ -1066,7 +1073,7 @@ export default function ProjectDetail() {
               </div>
               <div className="space-y-2">
                 {members.map(member => member && (
-                  <div key={member.id} className="flex items-center gap-2.5">
+                  <div key={member.id} className="flex items-center gap-2.5 group">
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
                       style={{ backgroundColor: member.avatar_color || '#4ade80' }}
@@ -1077,6 +1084,17 @@ export default function ProjectDetail() {
                       <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
                       <p className="text-xs text-muted capitalize">{member.role}</p>
                     </div>
+                    {canManage && (
+                      <button
+                        onClick={() => removeMember(member)}
+                        className="btn-ghost p-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        title="Remove from project"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 ))}
                 {members.length === 0 && (
