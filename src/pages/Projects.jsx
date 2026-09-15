@@ -220,7 +220,7 @@ function formatRatePerSF(cost, totalSfTarget) {
   return `$${(cost / totalSfTarget).toFixed(2)}/SF`
 }
 
-function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage }) {
+function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage, canViewCost }) {
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(project.name)
   const [editDesc, setEditDesc] = useState(project.description || '')
@@ -368,22 +368,26 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
             {allTimeSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-xs font-normal text-muted">SF</span>
           </p>
         </div>
-        <div className="bg-surface-2 rounded-lg p-2.5">
-          <p className="text-xs text-muted mb-0.5">Contract Cost</p>
-          <InlineTargetEdit
-            value={project.cost}
-            onSave={saveCost}
-            canManage={canManage}
-            colorClass="text-green-700 dark:text-green-300"
-            prefix="$"
-            suffix=""
-            allowNull
-          />
-        </div>
-        <div className="bg-surface-2 rounded-lg p-2.5">
-          <p className="text-xs text-muted mb-0.5">Target $/SF</p>
-          <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{formatRatePerSF(project.cost, project.total_sf_target)}</p>
-        </div>
+        {canViewCost && (
+          <>
+            <div className="bg-surface-2 rounded-lg p-2.5">
+              <p className="text-xs text-muted mb-0.5">Contract Cost</p>
+              <InlineTargetEdit
+                value={project.cost}
+                onSave={saveCost}
+                canManage={canManage}
+                colorClass="text-green-700 dark:text-green-300"
+                prefix="$"
+                suffix=""
+                allowNull
+              />
+            </div>
+            <div className="bg-surface-2 rounded-lg p-2.5">
+              <p className="text-xs text-muted mb-0.5">Target $/SF</p>
+              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{formatRatePerSF(project.cost, project.total_sf_target)}</p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Daily progress bar (green) */}
@@ -435,6 +439,7 @@ export default function Projects() {
   const [filterStatus, setFilterStatus] = useState('all')
 
   const canCreate = profile?.role === 'admin' || profile?.role === 'pm'
+  const canViewCost = profile?.role !== 'foreman'
 
   function handleUpdateProject(id, patch) {
     setProjects(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p))
@@ -623,6 +628,7 @@ export default function Projects() {
                 allTimeSF={sfByProject[project.id] || 0}
                 onClick={() => navigate(`/projects/${project.id}`)}
                 canManage={canCreate}
+                canViewCost={canViewCost}
                 onRename={(id, name) => setProjects(ps => ps.map(p => p.id === id ? { ...p, name } : p))}
                 onUpdateProject={handleUpdateProject}
               />

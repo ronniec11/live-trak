@@ -263,11 +263,11 @@ export default function Team() {
   const [resendingId, setResendingId] = useState(null)
   const [toast, setToast] = useState('')
 
-  const isAdmin = profile?.role === 'admin'
+  const canAccessTeam = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
 
   useEffect(() => {
-    if (profile && !isAdmin) navigate('/projects', { replace: true })
-  }, [profile, isAdmin, navigate])
+    if (profile && !canAccessTeam) navigate('/projects', { replace: true })
+  }, [profile, canAccessTeam, navigate])
 
   async function loadPeople() {
     setLoading(true)
@@ -277,7 +277,7 @@ export default function Team() {
     setLoading(false)
   }
 
-  useEffect(() => { if (isAdmin) loadPeople() }, [isAdmin])
+  useEffect(() => { if (canAccessTeam) loadPeople() }, [canAccessTeam])
 
   async function resendInvite(person) {
     setResendingId(person.id)
@@ -297,7 +297,7 @@ export default function Team() {
     }
   }
 
-  if (!isAdmin) return null
+  if (!canAccessTeam) return null
 
   return (
     <Layout>

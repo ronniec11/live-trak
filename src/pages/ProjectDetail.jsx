@@ -320,7 +320,16 @@ export default function ProjectDetail() {
   // every duplicate call starting from the very first line.
   const tilingRef = useRef(false)
 
-  const canManage = profile?.role === 'admin' || profile?.role === 'pm'
+  // General project management (floor plans, team assignment, project
+  // info, calibrate) — Superintendent gets this too, just not the two
+  // finance-specific abilities below.
+  const canManage = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
+  // Editing SF targets/cost stays admin+PM only — Superintendent can see
+  // these (see canViewCost) but not change them.
+  const canEditFinancials = profile?.role === 'admin' || profile?.role === 'pm'
+  // Cost is hidden entirely from Foreman ("they don't need to know cost");
+  // SF stays visible to everyone, just read-only per canEditFinancials.
+  const canViewCost = profile?.role !== 'foreman'
 
   async function generateTiles(page) {
     if (tilingRef.current) return
@@ -736,7 +745,7 @@ export default function ProjectDetail() {
                         <span className="text-muted font-normal"> / {project.total_sf_target.toLocaleString()} SF</span>
                       )}
                     </span>
-                    {canManage && !editingTotalTarget && (
+                    {canEditFinancials && !editingTotalTarget && (
                       <button onClick={() => setEditingTotalTarget(true)} className="btn-ghost p-1 ml-1">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
@@ -774,7 +783,8 @@ export default function ProjectDetail() {
                 )}
               </div>
 
-              {/* Contract cost / $ per SF */}
+              {/* Contract cost / $ per SF — hidden entirely from Foreman */}
+              {canViewCost && (
               <div className="px-4 py-3 border-b border-border bg-surface/30">
                 <div className="flex justify-between items-baseline mb-2">
                   <span className="text-xs text-muted font-medium">Contract Cost</span>
@@ -783,7 +793,7 @@ export default function ProjectDetail() {
                       {project?.cost ? `$${project.cost.toLocaleString()}` : '—'}
                       <span className="text-muted font-normal"> · {ratePerSF}</span>
                     </span>
-                    {canManage && !editingCost && (
+                    {canEditFinancials && !editingCost && (
                       <button onClick={() => setEditingCost(true)} className="btn-ghost p-1 ml-1">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
@@ -809,6 +819,7 @@ export default function ProjectDetail() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Daily progress bar (green) */}
               <div className="px-4 py-3 border-b border-border bg-surface/30">
@@ -905,7 +916,7 @@ export default function ProjectDetail() {
                         {project?.total_sf_target > 0 && <span className="text-muted"> / {project.total_sf_target.toLocaleString()}</span>}
                         {' SF'}
                       </p>
-                      {canManage && !editingTotalTarget && (
+                      {canEditFinancials && !editingTotalTarget && (
                         <button onClick={() => setEditingTotalTarget(true)} className="btn-ghost p-0.5">
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
@@ -947,7 +958,8 @@ export default function ProjectDetail() {
                   )}
                 </div>
 
-                {/* Contract cost / $ per SF */}
+                {/* Contract cost / $ per SF — hidden entirely from Foreman */}
+                {canViewCost && (
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <p className="text-xs text-muted font-medium">Contract Cost</p>
@@ -956,7 +968,7 @@ export default function ProjectDetail() {
                         {project?.cost ? `$${project.cost.toLocaleString()}` : '—'}
                         <span className="text-muted"> · {ratePerSF}</span>
                       </p>
-                      {canManage && !editingCost && (
+                      {canEditFinancials && !editingCost && (
                         <button onClick={() => setEditingCost(true)} className="btn-ghost p-0.5">
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
@@ -982,6 +994,7 @@ export default function ProjectDetail() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Daily progress (green) */}
                 <div>
@@ -993,7 +1006,7 @@ export default function ProjectDetail() {
                         {project?.daily_sf_target > 0 && <span className="text-muted"> / {project.daily_sf_target.toLocaleString()}</span>}
                         {' SF'}
                       </p>
-                      {canManage && !editingTarget && (
+                      {canEditFinancials && !editingTarget && (
                         <button onClick={() => setEditingTarget(true)} className="btn-ghost p-0.5">
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />

@@ -33,7 +33,7 @@ export default function Navbar() {
           >
             Projects
           </Link>
-          {profile?.role === 'admin' && (
+          {(profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent') && (
             <Link
               to="/team"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${

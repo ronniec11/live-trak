@@ -3356,7 +3356,7 @@ export default function Canvas() {
       uzShow('', 'Loading…', 'Fetching page data…')
 
       // Fetch user profile for session default name
-      const { data: prof } = await supabase.from('profiles').select('full_name, avatar_color').eq('id', user.id).single()
+      const { data: prof } = await supabase.from('profiles').select('full_name, avatar_color, role').eq('id', user.id).single()
       userProfile = prof
       setCanvasProfile(prof)
 
@@ -3708,9 +3708,13 @@ export default function Canvas() {
           <input ref={cDenomRef} type="number" className="ct-num-input" defaultValue="1" min="0.001" step="1" style={{width:44}} />
           <span style={{color:'var(--ct-muted)',fontSize:12}}>'</span>
         </div>
-        <div className="ct-hdiv" />
-        <button ref={calibBtnRef} className="ct-hbtn" onClick={() => api.current.startCalib?.()}>Calibrate</button>
-        <span ref={calibInfoRef} className="ct-calib-info" style={{display:'none'}} />
+        {canvasProfile?.role !== 'foreman' && (
+          <>
+            <div className="ct-hdiv" />
+            <button ref={calibBtnRef} className="ct-hbtn" onClick={() => api.current.startCalib?.()}>Calibrate</button>
+            <span ref={calibInfoRef} className="ct-calib-info" style={{display:'none'}} />
+          </>
+        )}
         <div className="ct-hdiv" />
         <div className="ct-stat-box">
           <div ref={hdrSessionRef} className="ct-stat-val" style={{color:'var(--ct-accent)'}}>0</div>

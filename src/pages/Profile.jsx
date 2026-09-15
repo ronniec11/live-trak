@@ -268,9 +268,12 @@ export default function Profile() {
               { label: 'Use pen & annotation tools', allowed: true },
               { label: 'Save sessions', allowed: true },
               { label: 'View all team sessions', allowed: true },
-              { label: 'Add floor plan pages', allowed: profile?.role === 'admin' || profile?.role === 'pm' },
-              { label: 'Set daily SF targets', allowed: profile?.role === 'admin' || profile?.role === 'pm' },
-              { label: 'Add team members', allowed: profile?.role === 'admin' || profile?.role === 'pm' },
+              { label: 'View project cost', allowed: profile?.role !== 'foreman' },
+              { label: 'Calibrate floor plans', allowed: profile?.role !== 'foreman' },
+              { label: 'Add floor plan pages', allowed: profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent' },
+              { label: 'Add/remove project team members', allowed: profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent' },
+              { label: 'Manage company directory', allowed: profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent' },
+              { label: 'Edit SF targets & cost', allowed: profile?.role === 'admin' || profile?.role === 'pm' },
               { label: 'Create projects', allowed: profile?.role === 'admin' || profile?.role === 'pm' },
             ].map(item => (
               <div key={item.label} className="flex items-center gap-2.5 text-sm">
