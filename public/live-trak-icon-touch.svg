@@ -19,33 +19,35 @@
        bordered icon gets double-masked/cropped unevenly under that. -->
   <rect x="0" y="0" width="56" height="56" fill="url(#bgGrad)"/>
 
-  <!-- Floor plan grid — light blue instead of gray, more visible -->
-  <rect x="8"  y="10" width="19" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-  <rect x="27" y="10" width="16" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-  <rect x="8"  y="26" width="35" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
+  <!-- Floor plan grid — shrunk and re-centered from the favicon/logo
+       version specifically to leave enough room for the corner brackets
+       to clear both iOS's corner mask AND the grid itself; those two
+       constraints left almost no usable space at the original larger
+       grid size. -->
+  <rect x="13" y="15" width="15" height="13" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
+  <rect x="28" y="15" width="12" height="13" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
+  <rect x="13" y="28" width="27" height="12" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
 
   <!-- Highlighted cells — blue and green so the icon isn't a single flat color -->
-  <rect x="8.4" y="10.4" width="18.2" height="15.2" fill="#60a5fa" opacity="0.3"/>
-  <rect x="27.4" y="10.4" width="15.2" height="15.2" fill="#4ade80" opacity="0.3"/>
+  <rect x="13.4" y="15.4" width="14.2" height="12.2" fill="#60a5fa" opacity="0.3"/>
+  <rect x="28.4" y="15.4" width="11.2" height="12.2" fill="#4ade80" opacity="0.3"/>
 
   <!-- Top gloss for a raised, glassy feel -->
   <rect x="0" y="0" width="56" height="56" fill="url(#glossGrad)"/>
 
   <!-- Checkmark — white -->
-  <polyline points="11,18 17,24 26,13" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
+  <polyline points="15,21 20,26 27,17" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
 
-  <!-- Corner brackets — white, pulled in further from the edges than a
-       favicon/logo context needs: iOS's own corner mask curves in more
-       aggressively than this icon's own margins account for, so brackets
-       placed close to the edge get visually clipped by that mask. -->
+  <!-- Corner brackets — white. Anchored far enough from the true corner
+       to clear iOS's mask, with a clear ~1 unit gap before the grid. -->
   <g stroke="#ffffff" stroke-width="1.1" opacity="0.9">
-    <line x1="6"  y1="9"  x2="10" y2="9"/>
-    <line x1="6"  y1="9"  x2="6"  y2="13"/>
-    <line x1="50" y1="9"  x2="46" y2="9"/>
-    <line x1="50" y1="9"  x2="50" y2="13"/>
-    <line x1="6"  y1="47" x2="10" y2="47"/>
-    <line x1="6"  y1="47" x2="6"  y2="43"/>
-    <line x1="50" y1="47" x2="46" y2="47"/>
-    <line x1="50" y1="47" x2="50" y2="43"/>
+    <line x1="8"  y1="10" x2="12" y2="10"/>
+    <line x1="8"  y1="10" x2="8"  y2="14"/>
+    <line x1="48" y1="10" x2="44" y2="10"/>
+    <line x1="48" y1="10" x2="48" y2="14"/>
+    <line x1="8"  y1="46" x2="12" y2="46"/>
+    <line x1="8"  y1="46" x2="8"  y2="42"/>
+    <line x1="48" y1="46" x2="44" y2="46"/>
+    <line x1="48" y1="46" x2="48" y2="42"/>
   </g>
 </svg>
