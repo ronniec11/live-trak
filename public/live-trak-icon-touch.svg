@@ -14,14 +14,10 @@
     </filter>
   </defs>
 
-  <!-- Base: lightened gradient + glowing blue edge instead of a flat fill,
-       so it separates from a dark navbar instead of blending into it.
-       (This rounded/bordered version is for the browser-tab favicon only —
-       browsers render it as-is with no extra masking. The PWA/home-screen
-       icons use live-trak-icon-touch.svg, a full-bleed unrounded version,
-       since iOS applies its own corner mask and double-rounding crops
-       unevenly.) -->
-  <rect x="1" y="1" width="54" height="54" rx="11" fill="url(#bgGrad)" stroke="#3b82f6" stroke-width="1" stroke-opacity="0.35"/>
+  <!-- Full-bleed, no rounded corners baked in and no edge border — iOS
+       applies its own corner mask over this image, and a self-rounded or
+       bordered icon gets double-masked/cropped unevenly under that. -->
+  <rect x="0" y="0" width="56" height="56" fill="url(#bgGrad)"/>
 
   <!-- Floor plan grid — light blue instead of gray, more visible -->
   <rect x="8"  y="10" width="19" height="16" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
@@ -33,7 +29,7 @@
   <rect x="27.4" y="10.4" width="15.2" height="15.2" fill="#4ade80" opacity="0.3"/>
 
   <!-- Top gloss for a raised, glassy feel -->
-  <rect x="1" y="1" width="54" height="54" rx="11" fill="url(#glossGrad)"/>
+  <rect x="0" y="0" width="56" height="56" fill="url(#glossGrad)"/>
 
   <!-- Checkmark — white -->
   <polyline points="11,18 17,24 26,13" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
