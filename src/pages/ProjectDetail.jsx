@@ -199,54 +199,46 @@ function AddPageModal({ projectId, onClose, onCreated }) {
   )
 }
 
-function AddMemberModal({ projectId, onClose, onAdded }) {
-  const [email, setEmail] = useState('')
-  const [loading, setLoading] = useState(false)
+function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
+  const [directory, setDirectory] = useState(null) // null = still loading
+  const [search, setSearch] = useState('')
+  const [addingId, setAddingId] = useState(null)
   const [error, setError] = useState('')
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  useEffect(() => {
+    supabase.from('profiles').select('*').order('full_name').then(({ data, error: dErr }) => {
+      if (dErr) { setError(dErr.message); setDirectory([]); return }
+      setDirectory((data || []).filter(p => !existingMemberIds.includes(p.id)))
+    })
+  }, [])
+
+  async function addPerson(person) {
+    setAddingId(person.id)
     setError('')
-    setLoading(true)
     try {
-      // Find profile by email
-      const { data: userProfile, error: pErr } = await supabase
-        .from('profiles')
-        .select('id, name')
-        .eq('email', email.trim().toLowerCase())
-        .single()
-
-      if (pErr || !userProfile) throw new Error('No user found with that email')
-
-      // Check not already a member
-      const { data: existing } = await supabase
-        .from('project_members')
-        .select('id')
-        .eq('project_id', projectId)
-        .eq('user_id', userProfile.id)
-        .single()
-
-      if (existing) throw new Error('User is already a member')
-
       const { error: mErr } = await supabase
         .from('project_members')
-        .insert({ project_id: projectId, user_id: userProfile.id })
-
+        .insert({ project_id: projectId, user_id: person.id })
       if (mErr) throw mErr
-
+      setDirectory(d => d.filter(p => p.id !== person.id))
       onAdded()
-      onClose()
     } catch (err) {
       setError(err.message)
     } finally {
-      setLoading(false)
+      setAddingId(null)
     }
   }
 
+  const filtered = (directory || []).filter(p => {
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    return p.full_name?.toLowerCase().includes(q) || p.email?.toLowerCase().includes(q)
+  })
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6">
-        <div className="flex items-center justify-between mb-5">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -254,17 +246,36 @@ function AddMemberModal({ projectId, onClose, onAdded }) {
             </svg>
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="label">Member Email</label>
-            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="member@company.com" required />
-          </div>
-          {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={loading} className="btn-primary flex-1">{loading ? 'Adding...' : 'Add Member'}</button>
-          </div>
-        </form>
+        <input
+          className="input mb-3" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search the directory..."
+        />
+        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-3">{error}</div>}
+        <div className="flex-1 overflow-auto space-y-1 -mx-2 px-2">
+          {directory === null && <p className="text-sm text-muted">Loading...</p>}
+          {directory !== null && filtered.length === 0 && (
+            <p className="text-sm text-muted">{directory.length === 0 ? 'Everyone in the directory is already on this project.' : 'No matches.'}</p>
+          )}
+          {filtered.map(p => (
+            <button
+              key={p.id} onClick={() => addPerson(p)} disabled={addingId === p.id}
+              className="w-full flex items-center gap-2.5 py-2 px-2 rounded-lg hover:bg-surface-2 transition-colors text-left disabled:opacity-50"
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
+                style={{ backgroundColor: p.avatar_color || '#4ade80' }}
+              >
+                {(p.full_name || p.email || 'U')[0].toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{p.full_name || '(no name)'}</p>
+                <p className="text-xs text-muted capitalize truncate">{p.role} · {p.email}</p>
+              </div>
+              <span className="text-xs text-accent shrink-0">{addingId === p.id ? 'Adding...' : '+ Add'}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={onClose} className="btn-secondary w-full mt-4">Done</button>
       </div>
     </div>
   )
@@ -1058,12 +1069,12 @@ export default function ProjectDetail() {
                   <div key={member.id} className="flex items-center gap-2.5">
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
-                      style={{ backgroundColor: member.color || '#4ade80' }}
+                      style={{ backgroundColor: member.avatar_color || '#4ade80' }}
                     >
-                      {(member.name || 'U')[0].toUpperCase()}
+                      {(member.full_name || 'U')[0].toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.name}</p>
+                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
                       <p className="text-xs text-muted capitalize">{member.role}</p>
                     </div>
                   </div>
@@ -1091,6 +1102,7 @@ export default function ProjectDetail() {
       {showAddMember && (
         <AddMemberModal
           projectId={projectId}
+          existingMemberIds={members.filter(Boolean).map(m => m.id)}
           onClose={() => setShowAddMember(false)}
           onAdded={loadData}
         />

@@ -55,8 +55,8 @@ export default function Profile() {
     }
   }
 
-  const roleColors = { admin: 'text-red-600 dark:text-red-400', pm: 'text-yellow-600 dark:text-yellow-400', foreman: 'text-accent' }
-  const roleLabels = { admin: 'Administrator', pm: 'Project Manager', foreman: 'Foreman' }
+  const roleColors = { admin: 'text-red-600 dark:text-red-400', pm: 'text-yellow-600 dark:text-yellow-400', superintendent: 'text-blue-600 dark:text-blue-400', foreman: 'text-accent' }
+  const roleLabels = { admin: 'Administrator', pm: 'Project Manager', superintendent: 'Superintendent', foreman: 'Foreman' }
 
   return (
     <Layout>

@@ -33,6 +33,16 @@ export default function Navbar() {
           >
             Projects
           </Link>
+          {profile?.role === 'admin' && (
+            <Link
+              to="/team"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                location.pathname.startsWith('/team') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
+              }`}
+            >
+              Team
+            </Link>
+          )}
         </nav>
       )}
 

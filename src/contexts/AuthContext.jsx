@@ -24,7 +24,7 @@ export function AuthProvider({ children }) {
       // app can still render rather than spinning forever
       const { data: { user: authUser } } = await supabase.auth.getUser()
       if (authUser) {
-        const fallback = { id: authUser.id, email: authUser.email, name: authUser.email?.split('@')[0] || 'User', role: 'foreman', color: '#4ade80' }
+        const fallback = { id: authUser.id, email: authUser.email, full_name: authUser.email?.split('@')[0] || 'User', role: 'foreman', avatar_color: '#4ade80' }
         setProfile(fallback)
         return fallback
       }
@@ -62,6 +62,13 @@ export function AuthProvider({ children }) {
       setUser(u)
       if (u) {
         fetchProfile(u.id)
+        // Drives the Team page's Invited/Active status — auth.users itself
+        // isn't queryable from client code, so this is the only record of
+        // "has this person ever actually signed in" available to the app.
+        if (event === 'SIGNED_IN') {
+          supabase.from('profiles').update({ last_login_at: new Date().toISOString() }).eq('id', u.id)
+            .then(({ error }) => { if (error) console.error('[AuthContext] last_login_at update failed:', error) })
+        }
       } else {
         setProfile(null)
       }
