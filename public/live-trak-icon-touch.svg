@@ -39,13 +39,13 @@
        aggressively than this icon's own margins account for, so brackets
        placed close to the edge get visually clipped by that mask. -->
   <g stroke="#ffffff" stroke-width="1.1" opacity="0.9">
-    <line x1="7"  y1="9"  x2="12" y2="9"/>
-    <line x1="7"  y1="9"  x2="7"  y2="14"/>
-    <line x1="49" y1="9"  x2="44" y2="9"/>
-    <line x1="49" y1="9"  x2="49" y2="14"/>
-    <line x1="7"  y1="47" x2="12" y2="47"/>
-    <line x1="7"  y1="47" x2="7"  y2="42"/>
-    <line x1="49" y1="47" x2="44" y2="47"/>
-    <line x1="49" y1="47" x2="49" y2="42"/>
+    <line x1="6"  y1="9"  x2="10" y2="9"/>
+    <line x1="6"  y1="9"  x2="6"  y2="13"/>
+    <line x1="50" y1="9"  x2="46" y2="9"/>
+    <line x1="50" y1="9"  x2="50" y2="13"/>
+    <line x1="6"  y1="47" x2="10" y2="47"/>
+    <line x1="6"  y1="47" x2="6"  y2="43"/>
+    <line x1="50" y1="47" x2="46" y2="47"/>
+    <line x1="50" y1="47" x2="50" y2="43"/>
   </g>
 </svg>
