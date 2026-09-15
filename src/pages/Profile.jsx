@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { supabase } from '../lib/supabase'
 
 const PRESET_COLORS = [
   '#4ade80', '#22d3ee', '#f472b6', '#fb923c', '#a78bfa',
@@ -33,6 +34,35 @@ export default function Profile() {
     const next = !pencilOnly
     setPencilOnly(next)
     try { localStorage.setItem('live-trak_pencil_only', String(next)) } catch {}
+  }
+
+  // People invited via magic link (see Team.jsx) never set a password —
+  // this is how they get one, so they can sign back in through the normal
+  // email+password form after their first (link-based) session ends.
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
+  const [passwordSaved, setPasswordSaved] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
+
+  async function handleSetPassword(e) {
+    e.preventDefault()
+    setPasswordError('')
+    setPasswordSaved(false)
+    if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters.'); return }
+    if (newPassword !== confirmPassword) { setPasswordError('Passwords don\'t match.'); return }
+    setSavingPassword(true)
+    try {
+      const { error: pwErr } = await supabase.auth.updateUser({ password: newPassword })
+      if (pwErr) throw pwErr
+      setNewPassword(''); setConfirmPassword('')
+      setPasswordSaved(true)
+      setTimeout(() => setPasswordSaved(false), 3000)
+    } catch (err) {
+      setPasswordError(err.message)
+    } finally {
+      setSavingPassword(false)
+    }
   }
 
   async function handleSave(e) {
@@ -184,6 +214,48 @@ export default function Profile() {
                 ) : 'Save Changes'}
               </button>
             </div>
+          </form>
+        </div>
+
+        {/* Password */}
+        <div className="card mb-4">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Password</h2>
+          <p className="text-xs text-muted mb-4">
+            {profile?.email ? `Set a password so you can sign in with ${profile.email} and a password next time, instead of needing a new email link.` : 'Set a password to sign in with email and password next time.'}
+          </p>
+          <form onSubmit={handleSetPassword} className="space-y-4">
+            <div>
+              <label className="label">New Password</label>
+              <input
+                type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                className="input" placeholder="••••••••" autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label className="label">Confirm Password</label>
+              <input
+                type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                className="input" placeholder="••••••••" autoComplete="new-password"
+              />
+            </div>
+            {passwordError && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{passwordError}</div>
+            )}
+            <button type="submit" disabled={savingPassword} className="btn-primary w-full flex items-center justify-center gap-2">
+              {savingPassword ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+                  Saving...
+                </>
+              ) : passwordSaved ? (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  Password set!
+                </>
+              ) : 'Set Password'}
+            </button>
           </form>
         </div>
 
