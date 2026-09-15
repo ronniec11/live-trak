@@ -26,8 +26,9 @@ const ROLE_OPTIONS = [
 
 const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map(r => [r.value, r.label]))
 
-function PersonModal({ person, onClose, onSaved }) {
+function PersonModal({ person, currentUserId, onClose, onSaved }) {
   const isEdit = !!person
+  const isSelf = isEdit && person.id === currentUserId
   const [form, setForm] = useState({
     full_name: person?.full_name || '',
     email: person?.email || '',
@@ -130,9 +131,12 @@ function PersonModal({ person, onClose, onSaved }) {
           </div>
           <div>
             <label className="label">Role</label>
-            <select className="input" value={form.role} onChange={e => set('role', e.target.value)}>
+            <select className="input" value={form.role} onChange={e => set('role', e.target.value)} disabled={isSelf}>
               {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
+            {isSelf && (
+              <p className="text-xs text-muted mt-1">You can't change your own role — have another admin do it, so you can't accidentally lock yourself out.</p>
+            )}
           </div>
           <div>
             <label className="label">Avatar Color</label>
@@ -274,7 +278,7 @@ export default function Team() {
         <PersonModal onClose={() => setShowAdd(false)} onSaved={loadPeople} />
       )}
       {editPerson && (
-        <PersonModal person={editPerson} onClose={() => setEditPerson(null)} onSaved={loadPeople} />
+        <PersonModal person={editPerson} currentUserId={profile?.id} onClose={() => setEditPerson(null)} onSaved={loadPeople} />
       )}
     </Layout>
   )
