@@ -3683,33 +3683,40 @@ export default function Canvas() {
         <div className="ct-hdiv" />
         <span ref={pageTitleRef} style={{fontSize:13,fontWeight:700,color:'var(--ct-text)',whiteSpace:'nowrap',flexShrink:0}}>Loading…</span>
         <div className="ct-hdiv" />
-        <div className="ct-hgroup">
-          <span className="ct-hlbl">Scale</span>
-          <select ref={scaleSelectRef} className="ct-select" defaultValue="1:8">
-            <option value="1:1">1" = 1"</option>
-            <option value="1:32">1/32" = 1'</option>
-            <option value="3:64">3/64" = 1'</option>
-            <option value="1:16">1/16" = 1'</option>
-            <option value="3:32">3/32" = 1'</option>
-            <option value="1:8">1/8" = 1'</option>
-            <option value="3:16">3/16" = 1'</option>
-            <option value="1:4">1/4" = 1'</option>
-            <option value="3:8">3/8" = 1'</option>
-            <option value="1:2">1/2" = 1'</option>
-            <option value="3:4">3/4" = 1'</option>
-            <option value="1:0">1" = 1'</option>
-            <option value="1.5:0">1-1/2" = 1'</option>
-            <option value="custom">Custom…</option>
-          </select>
-        </div>
-        <div ref={customWrapRef} style={{display:'none',alignItems:'center',gap:4}}>
-          <input ref={cNumerRef} type="number" className="ct-num-input" defaultValue="1" min="0.001" step="0.125" style={{width:44}} />
-          <span style={{color:'var(--ct-muted)',fontSize:12}}>" =</span>
-          <input ref={cDenomRef} type="number" className="ct-num-input" defaultValue="1" min="0.001" step="1" style={{width:44}} />
-          <span style={{color:'var(--ct-muted)',fontSize:12}}>'</span>
-        </div>
+        {/* Scale — hidden from Foreman entirely (not just read-only): the
+            select is unmounted, not disabled, so a foreman can't touch it
+            and accidentally throw off SF math for everyone. The imperative
+            code already null-guards scaleSelectRef (onScaleChange,
+            addPage's sv fallback, the saved-scale restore on page load),
+            so a page still opens and reads at whatever scale it was saved
+            at even with no select present. */}
         {canvasProfile?.role !== 'foreman' && (
           <>
+            <div className="ct-hgroup">
+              <span className="ct-hlbl">Scale</span>
+              <select ref={scaleSelectRef} className="ct-select" defaultValue="1:8">
+                <option value="1:1">1" = 1"</option>
+                <option value="1:32">1/32" = 1'</option>
+                <option value="3:64">3/64" = 1'</option>
+                <option value="1:16">1/16" = 1'</option>
+                <option value="3:32">3/32" = 1'</option>
+                <option value="1:8">1/8" = 1'</option>
+                <option value="3:16">3/16" = 1'</option>
+                <option value="1:4">1/4" = 1'</option>
+                <option value="3:8">3/8" = 1'</option>
+                <option value="1:2">1/2" = 1'</option>
+                <option value="3:4">3/4" = 1'</option>
+                <option value="1:0">1" = 1'</option>
+                <option value="1.5:0">1-1/2" = 1'</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <div ref={customWrapRef} style={{display:'none',alignItems:'center',gap:4}}>
+              <input ref={cNumerRef} type="number" className="ct-num-input" defaultValue="1" min="0.001" step="0.125" style={{width:44}} />
+              <span style={{color:'var(--ct-muted)',fontSize:12}}>" =</span>
+              <input ref={cDenomRef} type="number" className="ct-num-input" defaultValue="1" min="0.001" step="1" style={{width:44}} />
+              <span style={{color:'var(--ct-muted)',fontSize:12}}>'</span>
+            </div>
             <div className="ct-hdiv" />
             <button ref={calibBtnRef} className="ct-hbtn" onClick={() => api.current.startCalib?.()}>Calibrate</button>
             <span ref={calibInfoRef} className="ct-calib-info" style={{display:'none'}} />
