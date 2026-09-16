@@ -16,6 +16,7 @@ const REPORT_COLUMNS = [
   { key: 'crewSize', label: 'Crew Size' },
   { key: 'hoursWorked', label: 'Hours Worked' },
   { key: 'sfPerPersonHour', label: 'SF per Person-Hour' },
+  { key: 'photoCount', label: 'Photos' },
 ]
 
 function todayISO() {
@@ -56,6 +57,7 @@ function shapeRow(s) {
     crewSize: crew ?? '',
     hoursWorked: hours ?? '',
     sfPerPersonHour: sfPerPersonHour != null ? sfPerPersonHour.toFixed(1) : '',
+    photoCount: Array.isArray(s.photos) ? s.photos.length : 0,
   }
 }
 
@@ -95,7 +97,8 @@ export default function Reports() {
       const pageIds = (pgs || []).map(p => p.id)
       if (pageIds.length === 0) { setRows([]); setHasRun(true); return }
 
-      const FULL_COLUMNS = 'id, page_id, user_id, name, sf, lf, work_date, created_at, count_data, crew_size, hours_worked, profiles(full_name), pages(name, project_id, projects(name))'
+      const FULL_COLUMNS = 'id, page_id, user_id, name, sf, lf, work_date, created_at, count_data, crew_size, hours_worked, photos, profiles(full_name), pages(name, project_id, projects(name))'
+      const NO_PHOTOS_COLUMNS = 'id, page_id, user_id, name, sf, lf, work_date, created_at, count_data, crew_size, hours_worked, profiles(full_name), pages(name, project_id, projects(name))'
       const NO_LF_COLUMNS = 'id, page_id, user_id, name, sf, work_date, created_at, count_data, crew_size, hours_worked, profiles(full_name), pages(name, project_id, projects(name))'
       const MINIMAL_COLUMNS = 'id, page_id, user_id, name, sf, work_date, created_at, count_data, profiles(full_name), pages(name, project_id, projects(name))'
 
@@ -109,9 +112,14 @@ export default function Reports() {
 
       let { data, error: sessErr } = await buildQuery(FULL_COLUMNS)
       let missingMigration = false
-      // lf and crew_size/hours_worked are two independent migrations — either
-      // (or both) might not have been run yet, so these fall back one at a
-      // time rather than assuming they're always missing together.
+      // photos, lf, and crew_size/hours_worked are three independent
+      // migrations — any subset might not have been run yet, so these fall
+      // back one at a time rather than assuming they're always missing together.
+      if (sessErr && /\bphotos\b/.test(sessErr.message)) {
+        console.warn('[Reports] photos column not found, retrying without it — run the migration noted in Canvas.jsx / supabase-schema.sql.')
+        missingMigration = true
+        ;({ data, error: sessErr } = await buildQuery(NO_PHOTOS_COLUMNS))
+      }
       if (sessErr && /\blf\b/.test(sessErr.message)) {
         console.warn('[Reports] lf column not found, retrying without it — run the migration noted in Canvas.jsx / supabase-schema.sql.')
         missingMigration = true
@@ -203,7 +211,7 @@ export default function Reports() {
 
         {!error && hasRun && migrationMissing && (
           <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-800 dark:text-yellow-200">
-            Some columns (Linear Footage and/or Crew Size / Hours Worked) don't exist in the database yet, so those fields are blank below for every row. Run the migrations noted in Canvas.jsx / supabase-schema.sql (ALTER TABLE ... lf / lf_data / crew_size / hours_worked) in the Supabase SQL editor, then run this report again.
+            Some columns (Linear Footage, Crew Size / Hours Worked, and/or Photos) don't exist in the database yet, so those fields are blank below for every row. Run the migrations noted in Canvas.jsx / supabase-schema.sql (ALTER TABLE ... lf / lf_data / crew_size / hours_worked / photos) in the Supabase SQL editor, then run this report again.
           </div>
         )}
 
@@ -233,6 +241,7 @@ export default function Reports() {
                     <th className="py-2 pr-4 text-right">Crew</th>
                     <th className="py-2 pr-4 text-right">Hours</th>
                     <th className="py-2 pr-4 text-right">SF/Person-Hr</th>
+                    <th className="py-2 pr-4 text-right">Photos</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -249,6 +258,7 @@ export default function Reports() {
                       <td className="py-2 pr-4 text-right">{r.crewSize || '—'}</td>
                       <td className="py-2 pr-4 text-right">{r.hoursWorked || '—'}</td>
                       <td className="py-2 pr-4 text-right">{r.sfPerPersonHour || '—'}</td>
+                      <td className="py-2 pr-4 text-right">{r.photoCount || '—'}</td>
                     </tr>
                   ))}
                 </tbody>

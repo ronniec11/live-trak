@@ -205,6 +205,15 @@ ALTER PUBLICATION supabase_realtime ADD TABLE sessions;
 -- lf is the session's total linear footage (denormalized, like sf/count);
 -- lf_data holds {w, h, lines: [{points, color}, ...]} — same cross-device
 -- rescaling shape as count_data.
+--
+-- Add photos the same way, for completion photos attached to a session
+-- (addable from the Save Session dialog and editable via the session edit
+-- modal in Canvas.jsx, shown as thumbnails in the session card and as a
+-- count in the Reports.jsx production report):
+--   ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS photos jsonb DEFAULT '[]';
+-- photos is a JSON array of public Storage URLs (uploaded to the
+-- floor-plans bucket next to the session's hl/pen canvas snapshots), not
+-- inlined image data.
 
 -- ============================================
 -- STORAGE — floor-plans bucket

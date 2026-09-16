@@ -21,6 +21,13 @@ import './Canvas.css'
 // lf is the session's total linear footage (denormalized, like sf/count);
 // lf_data holds {w, h, lines: [{points, color}, ...]} — same cross-device
 // rescaling shape as count_data.
+//
+// NOTE: Run this migration to enable completion photos, addable from the
+// Save Session dialog and editable later via the session edit modal:
+// ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS photos jsonb DEFAULT '[]';
+// photos is an array of public Storage URLs (uploaded to the floor-plans
+// bucket next to the session's hl/pen canvas snapshots — see
+// uploadPhotosToStorage), not inlined image data.
 
 const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
@@ -106,12 +113,16 @@ export default function Canvas() {
   const editCrewRef      = useRef(null)
   const editHoursRef     = useRef(null)
   const editDateRef      = useRef(null)
+  const editPhotosRef    = useRef(null)   // thumbnail strip container
+  const editPhotoInputRef = useRef(null)  // hidden <input type=file>
   // save session modal
   const saveModalRef     = useRef(null)
   const saveNameRef      = useRef(null)
   const saveDateRef      = useRef(null)
   const saveCrewRef      = useRef(null)
   const saveHoursRef     = useRef(null)
+  const savePhotosRef    = useRef(null)   // thumbnail strip container
+  const savePhotoInputRef = useRef(null)  // hidden <input type=file>
   // history modal
   const histModalRef     = useRef(null)
   const calMonthLblRef   = useRef(null)
@@ -172,6 +183,15 @@ export default function Canvas() {
     let userProfile    = null   // fetched once in init()
     let dbProjectId    = null   // from page record
     const deletedSessionIds = new Set()
+
+    // Photos — completion photos attached to a session. savePendingPhotos
+    // holds Files picked in the Save Session dialog (uploaded once the
+    // session is created, since it has no supabaseId until then).
+    // editPendingPhotos/editKeptPhotoUrls split the edit modal's photos into
+    // newly-picked Files vs. existing Storage URLs the user hasn't removed.
+    let savePendingPhotos = []
+    let editPendingPhotos = []
+    let editKeptPhotoUrls = []
 
     let calibrating   = false
     let calibPt1      = null
@@ -2098,12 +2118,66 @@ export default function Canvas() {
       if (saveDateRef.current)  saveDateRef.current.value  = getCurrentDate()
       if (saveCrewRef.current)  saveCrewRef.current.value  = ''
       if (saveHoursRef.current) saveHoursRef.current.value = ''
+      savePendingPhotos = []
+      renderSavePhotos()
       if (saveModalRef.current) saveModalRef.current.classList.add('open')
       setTimeout(() => saveNameRef.current?.focus(), 0)
     }
 
     function closeSaveModal() {
       if (saveModalRef.current) saveModalRef.current.classList.remove('open')
+    }
+
+    // ── PHOTOS (Save Session + edit modal thumbnail pickers) ───────────────────
+    function makePhotoThumb(src, onRemove) {
+      const wrap = document.createElement('div'); wrap.className = 'ct-modal-photo'
+      const img = document.createElement('img'); img.src = src
+      const rm  = document.createElement('button'); rm.type = 'button'; rm.className = 'rm'
+      rm.textContent = '✕'; rm.title = 'Remove'
+      rm.addEventListener('click', ev => { ev.stopPropagation(); onRemove() })
+      wrap.append(img, rm)
+      return wrap
+    }
+
+    function renderSavePhotos() {
+      const container = savePhotosRef.current
+      if (!container) return
+      container.innerHTML = ''
+      savePendingPhotos.forEach((file, i) => {
+        container.appendChild(makePhotoThumb(URL.createObjectURL(file), () => {
+          savePendingPhotos.splice(i, 1); renderSavePhotos()
+        }))
+      })
+    }
+
+    function handleSavePhotoPick(e) {
+      const files = Array.from(e.target.files || [])
+      savePendingPhotos.push(...files)
+      e.target.value = ''
+      renderSavePhotos()
+    }
+
+    function renderEditPhotos() {
+      const container = editPhotosRef.current
+      if (!container) return
+      container.innerHTML = ''
+      editKeptPhotoUrls.forEach((url, i) => {
+        container.appendChild(makePhotoThumb(url, () => {
+          editKeptPhotoUrls.splice(i, 1); renderEditPhotos()
+        }))
+      })
+      editPendingPhotos.forEach((file, i) => {
+        container.appendChild(makePhotoThumb(URL.createObjectURL(file), () => {
+          editPendingPhotos.splice(i, 1); renderEditPhotos()
+        }))
+      })
+    }
+
+    function handleEditPhotoPick(e) {
+      const files = Array.from(e.target.files || [])
+      editPendingPhotos.push(...files)
+      e.target.value = ''
+      renderEditPhotos()
     }
 
     async function confirmSaveSession() {
@@ -2147,7 +2221,10 @@ export default function Canvas() {
         lfLines: snapLFLines,
         crewSize, hoursWorked,
         pageId: activePage.id, pageName: activePage.name,
+        photos: [],
+        _pendingPhotoFiles: savePendingPhotos,
       }
+      savePendingPhotos = []
       activePage.sessions.push(session)
       invalidateSessions()
 
@@ -2167,7 +2244,7 @@ export default function Canvas() {
 
       // Persist to Supabase
       const saved = await saveSessionToSupabase(session)
-      if (saved) showToast('Session saved!')
+      if (saved) { showToast('Session saved!'); renderSessions() }
     }
 
     // Uploads a session canvas to Storage instead of inlining it as base64 in
@@ -2192,15 +2269,42 @@ export default function Canvas() {
       }
     }
 
+    // Uploads completion photos (plain Files from a file input, not canvas
+    // snapshots) to the same floor-plans bucket/session folder as the
+    // hl/pen canvases. Returns the public URLs that actually made it up —
+    // a failed individual photo is dropped rather than failing the whole
+    // session save.
+    async function uploadPhotosToStorage(files, storageKey) {
+      if (!files || files.length === 0) return []
+      const urls = await Promise.all(files.map(async (file, i) => {
+        try {
+          const ext = (file.type && file.type.split('/')[1]) || 'jpg'
+          const path = `${dbProjectId}/sessions/${pageId}/${storageKey}_photo${i}.${ext}`
+          const { error } = await supabase.storage
+            .from('floor-plans')
+            .upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' })
+          if (error) { console.warn('[Canvas] Photo upload failed:', error); return null }
+          const { data } = supabase.storage.from('floor-plans').getPublicUrl(path)
+          return data.publicUrl
+        } catch (e) {
+          console.warn('[Canvas] Photo upload failed:', e)
+          return null
+        }
+      }))
+      return urls.filter(Boolean)
+    }
+
     async function saveSessionToSupabase(session) {
       try {
         const storageKey = Date.now()
-        const [highlight_data, pen_data] = await Promise.all([
+        const [highlight_data, pen_data, photos] = await Promise.all([
           uploadCanvasToStorage(session.hlCanvas, storageKey, 'hl').then(url => url || session.hlCanvas.toDataURL('image/png')),
           session.penCanvas
             ? uploadCanvasToStorage(session.penCanvas, storageKey, 'pen').then(url => url || session.penCanvas.toDataURL('image/png'))
             : null,
+          uploadPhotosToStorage(session._pendingPhotoFiles, storageKey),
         ])
+        session.photos = photos
         const insertPayload = {
           page_id:        pageId,
           project_id:     dbProjectId,
@@ -2229,6 +2333,7 @@ export default function Canvas() {
           lf_data:        session.lfLines?.length > 0
             ? { w: activePage.image.width, h: activePage.image.height, lines: session.lfLines }
             : null,
+          photos,
           updated_at:     new Date().toISOString(),
         }
 
@@ -2256,6 +2361,15 @@ export default function Canvas() {
           ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
           if (!error && session.lf) {
             alert('Session saved, but Linear Footage was NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor, then redraw the line(s) via Paint More.')
+          }
+        }
+        if (error && /\bphotos\b/.test(error.message)) {
+          // Same idea, for the photos column.
+          console.warn('[Canvas] photos column missing on insert, retrying without it.')
+          const { photos: _photos, ...rest } = insertPayload
+          ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
+          if (!error && session.photos?.length) {
+            alert('Session saved, but Photos were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (photos ALTER TABLE) in the Supabase SQL editor, then re-add them via the session\'s edit (pencil) button.')
           }
         }
         if (error) throw error
@@ -2337,6 +2451,18 @@ export default function Canvas() {
         const metaDiv = document.createElement('div'); metaDiv.className = 'ct-scard-meta'
         metaDiv.textContent = [pg.name, formatMD(s.date), s.time, (s.userName || s.name)].filter(Boolean).join(' · ')
         card.appendChild(metaDiv)
+
+        if (s.photos && s.photos.length > 0) {
+          const photoRow = document.createElement('div'); photoRow.className = 'ct-scard-photos'
+          s.photos.forEach(url => {
+            const thumb = document.createElement('img')
+            thumb.src = url; thumb.className = 'ct-scard-photo'; thumb.alt = 'Completion photo'
+            thumb.addEventListener('click', ev => { ev.stopPropagation(); window.open(url, '_blank') })
+            photoRow.appendChild(thumb)
+          })
+          card.appendChild(photoRow)
+        }
+
         card.addEventListener('click', () => toggleSolo(s))
         list.appendChild(card)
       })
@@ -2465,6 +2591,9 @@ export default function Canvas() {
       if (editColorsRef.current) editColorsRef.current.querySelectorAll('.ct-modal-cc').forEach(el => el.classList.toggle('sel', el.dataset.c === s.color))
       if (editCrewRef.current) editCrewRef.current.value = s.crewSize ?? ''
       if (editHoursRef.current) editHoursRef.current.value = s.hoursWorked ?? ''
+      editKeptPhotoUrls = [...(s.photos || [])]
+      editPendingPhotos = []
+      renderEditPhotos()
       if (editModalRef.current) editModalRef.current.classList.add('open')
     }
     function closeEditModal() { if (editModalRef.current) editModalRef.current.classList.remove('open') }
@@ -2487,11 +2616,17 @@ export default function Canvas() {
       if (sel) s.color = sel.dataset.c
       s.crewSize    = (newCrew != null && !isNaN(newCrew)) ? newCrew : null
       s.hoursWorked = (newHours != null && !isNaN(newHours)) ? newHours : null
+      const newPhotoFiles = editPendingPhotos
+      const keptPhotoUrls = editKeptPhotoUrls
+      editPendingPhotos = []; editKeptPhotoUrls = []
       editTarget = null; closeEditModal(); invalidateSessions()
       renderSessions(); updateSF(); redrawAll()
+      const uploadedUrls = await uploadPhotosToStorage(newPhotoFiles, s.supabaseId || Date.now())
+      s.photos = [...keptPhotoUrls, ...uploadedUrls]
+      renderSessions()
       if (s.supabaseId) {
         console.log('[Canvas] Updating session in Supabase:', s.supabaseId, s.name)
-        const payload = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked }
+        const payload = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked, photos: s.photos }
         let { error } = await supabase.from('sessions').update(payload).eq('id', s.supabaseId)
         let crewHoursDropped = false
         if (error && /crew_size|hours_worked/.test(error.message)) {
@@ -2516,6 +2651,16 @@ export default function Canvas() {
         }
         if (!error && lfDropped) {
           alert('Session saved, but Linear Footage was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor, then re-enter it.')
+        }
+        let photosDropped = false
+        if (error && /\bphotos\b/.test(error.message)) {
+          console.warn('[Canvas] photos column missing, retrying without it — run the migration noted at the top of this file.')
+          photosDropped = true
+          const { photos, ...rest } = payload
+          ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+        }
+        if (!error && photosDropped) {
+          alert('Session saved, but Photos were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (photos ALTER TABLE) in the Supabase SQL editor, then re-add them.')
         }
         if (error) {
           console.error('[Canvas] saveEdit update failed:', error)
@@ -3268,6 +3413,7 @@ export default function Canvas() {
           time:         dbSess.created_at ? new Date(dbSess.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '',
           crewSize:     dbSess.crew_size ?? null,
           hoursWorked:  dbSess.hours_worked ?? null,
+          photos:       Array.isArray(dbSess.photos) ? dbSess.photos : [],
           supabaseId:   dbSess.id,
         })
       }
@@ -3656,6 +3802,7 @@ export default function Canvas() {
       closeEditModal, saveEdit, startPaintEdit, startCountEdit,
       cancelSessionEdit, commitSessionEdit,
       closeSaveModal, confirmSaveSession,
+      handleSavePhotoPick, handleEditPhotoPick,
       ctxSetTool,
     }
 
@@ -3907,6 +4054,13 @@ export default function Canvas() {
             <label className="ct-modal-lbl">Color</label>
             <div ref={editColorsRef} className="ct-modal-colors" />
           </div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Photos (optional)</label>
+            <div ref={editPhotosRef} className="ct-modal-photos" />
+            <input ref={editPhotoInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
+              onChange={e => api.current.handleEditPhotoPick?.(e)} />
+            <div className="ct-modal-btn" onClick={() => editPhotoInputRef.current?.click()}>+ Add Photos</div>
+          </div>
           <div className="ct-modal-row">
             <div className="ct-modal-btn" onClick={() => api.current.closeEditModal?.()}>Cancel</div>
             <div className="ct-modal-btn paint" onClick={() => api.current.startPaintEdit?.()}>+ Paint More</div>
@@ -3934,6 +4088,13 @@ export default function Canvas() {
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Hours Worked (optional)</label>
             <input ref={saveHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="e.g. 4.5" />
+          </div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Photos (optional)</label>
+            <div ref={savePhotosRef} className="ct-modal-photos" />
+            <input ref={savePhotoInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
+              onChange={e => api.current.handleSavePhotoPick?.(e)} />
+            <div className="ct-modal-btn" onClick={() => savePhotoInputRef.current?.click()}>+ Add Photos</div>
           </div>
           <div className="ct-modal-row">
             <div className="ct-modal-btn" onClick={() => api.current.closeSaveModal?.()}>Cancel</div>
