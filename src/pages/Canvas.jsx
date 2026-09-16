@@ -3422,7 +3422,15 @@ export default function Canvas() {
           // OVERLAY_MAX_DIM regardless of the tile pyramid's own resolution —
           // OSD_OVERLAY_SCALE below converts activePage.zoom into this
           // smaller space so drawing/calibration coordinates stay correct.
-          const OVERLAY_MAX_DIM = 4096
+          // Every session on a page keeps its own hlCanvas+penCanvas resident
+          // at this size for as long as the page is open (see
+          // loadSessionsFromSupabase) — on a heavily-marked-up sheet at the
+          // old 4096 cap (~48MB/canvas), that grows unbounded and crashes
+          // iOS Safari (confirmed on Hendrix/Building 1 at 11 sessions,
+          // ~1GB+). 2048 (~12MB/canvas) buys real headroom for now; the real
+          // fix (bounding memory regardless of session count, independent of
+          // this constant) is a separate, more carefully-tested change.
+          const OVERLAY_MAX_DIM = 2048
           osdOverlayScale = Math.min(1, OVERLAY_MAX_DIM / Math.max(pg.tile_meta.width, pg.tile_meta.height))
           const placeholderImg = {
             width: Math.round(pg.tile_meta.width * osdOverlayScale),
