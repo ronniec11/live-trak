@@ -220,7 +220,15 @@ function formatRatePerSF(cost, totalSfTarget) {
   return `$${(cost / totalSfTarget).toFixed(2)}/SF`
 }
 
-function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage, canViewCost }) {
+const GripIcon = () => (
+  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+    <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+    <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+    <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+  </svg>
+)
+
+function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage, canViewCost, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(project.name)
   const [editDesc, setEditDesc] = useState(project.description || '')
@@ -275,10 +283,24 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
 
   return (
     <div
+      data-project-id={project.id}
       onClick={editing ? undefined : onClick}
-      className="card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group"
+      className={`card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group ${
+        isDragging ? 'opacity-40' : ''
+      } ${isDropTarget ? 'ring-2 ring-accent' : ''}`}
     >
       <div className="flex items-start justify-between mb-3">
+        {canReorder && (
+          <button
+            onPointerDown={e => { e.stopPropagation(); onDragStart(e, project.id) }}
+            onClick={e => e.stopPropagation()}
+            className="btn-ghost p-1 mr-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing text-muted"
+            style={{ touchAction: 'none' }}
+            title="Drag to reorder"
+          >
+            <GripIcon />
+          </button>
+        )}
         <div className="flex-1 min-w-0">
           {editing ? (
             <div className="space-y-1.5" onClick={e => e.stopPropagation()}>
@@ -440,10 +462,72 @@ export default function Projects() {
 
   const canCreate = profile?.role === 'admin' || profile?.role === 'pm'
   const canViewCost = profile?.role !== 'foreman'
+  const canReorderRole = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
+
+  const [dragId, setDragId] = useState(null)
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 })
+  const [hoverId, setHoverId] = useState(null)
+
+  // Reordering is only meaningful against the full, unfiltered list — with a
+  // search/status filter active there's no sensible place to drop a card
+  // relative to items that are hidden.
+  const canReorder = canReorderRole && filterStatus === 'all' && !searchTerm
 
   function handleUpdateProject(id, patch) {
     setProjects(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p))
   }
+
+  function handleDragStart(e, projectId) {
+    setDragId(projectId)
+    setDragPos({ x: e.clientX, y: e.clientY })
+  }
+
+  useEffect(() => {
+    if (!dragId) return
+
+    function onMove(e) {
+      setDragPos({ x: e.clientX, y: e.clientY })
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const target = el?.closest('[data-project-id]')
+      const targetId = target?.getAttribute('data-project-id')
+      setHoverId(targetId && targetId !== dragId ? targetId : null)
+    }
+
+    async function onUp() {
+      const droppedOnId = hoverId
+      setDragId(null)
+      setHoverId(null)
+      if (!droppedOnId) return
+
+      let reordered
+      setProjects(ps => {
+        const fromIdx = ps.findIndex(p => p.id === dragId)
+        const toIdx = ps.findIndex(p => p.id === droppedOnId)
+        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) { reordered = ps; return ps }
+        const next = [...ps]
+        const [moved] = next.splice(fromIdx, 1)
+        next.splice(toIdx, 0, moved)
+        reordered = next
+        return next
+      })
+
+      if (reordered) {
+        await Promise.all(
+          reordered.map((p, idx) =>
+            p.sort_order === idx ? null : supabase.rpc('set_project_sort_order', { target_project_id: p.id, new_order: idx })
+          )
+        )
+        setProjects(ps => ps.map((p, idx) => ({ ...p, sort_order: idx })))
+      }
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [dragId, hoverId])
 
   async function loadProjects() {
     const userId = user?.id
@@ -462,6 +546,7 @@ export default function Projects() {
       const { data, error } = await supabase
         .from('projects')
         .select('*')
+        .order('sort_order', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false })
 
       console.log('[Projects] fetch result:', { count: data?.length, error })
@@ -629,6 +714,10 @@ export default function Projects() {
                 onClick={() => navigate(`/projects/${project.id}`)}
                 canManage={canCreate}
                 canViewCost={canViewCost}
+                canReorder={canReorder}
+                isDragging={dragId === project.id}
+                isDropTarget={hoverId === project.id}
+                onDragStart={handleDragStart}
                 onRename={(id, name) => setProjects(ps => ps.map(p => p.id === id ? { ...p, name } : p))}
                 onUpdateProject={handleUpdateProject}
               />
@@ -636,6 +725,16 @@ export default function Projects() {
           </div>
         )}
       </div>
+
+      {dragId && (
+        <div
+          className="fixed z-[100] pointer-events-none px-3 py-2 rounded-lg bg-surface border border-accent shadow-xl text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2"
+          style={{ left: dragPos.x + 14, top: dragPos.y + 14 }}
+        >
+          <GripIcon />
+          {projects.find(p => p.id === dragId)?.name}
+        </div>
+      )}
 
       {showCreate && (
         <CreateProjectModal
