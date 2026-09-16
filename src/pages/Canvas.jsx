@@ -27,15 +27,6 @@ const COLORS = [
   '#ef4444','#06b6d4','#84cc16','#f59e0b','#ffffff','#64748b',
   '#14b8a6','#6366f1','#fb7185','#d946ef',
 ]
-// A sheet accumulates one full-resolution hlCanvas + penCanvas per session
-// forever (~50-100MB pair at iPad's capped overlay size) — on a
-// heavily-marked-up sheet that adds up past what iOS Safari tolerates
-// before it silently kills the tab. Only the N most recently created
-// sessions keep their raw canvases resident; older ones stay composited
-// into the persistent sessionsHL/sessionsPen cache and get their raw
-// canvases released (kept only as hlUrl/penUrl for on-demand re-decode via
-// ensureSessionCanvases, e.g. when soloing or "paint more"-editing one).
-const RECENT_SESSION_CANVAS_LIMIT = 5
 const SCALES = {
   '1:1':{n:1,d:1/12},'1:32':{n:1/32,d:1},'3:64':{n:3/64,d:1},
   '1:16':{n:1/16,d:1},'3:32':{n:3/32,d:1},'1:8':{n:1/8,d:1},
@@ -252,115 +243,66 @@ export default function Canvas() {
 
     function invalidateSessions() { sessionsValid = false }
 
-    let sessionsRebuildInFlight = false
-
-    // Re-decodes a session's hlCanvas/penCanvas from its stored URL if they've
-    // been released by releaseOldSessionCanvases() below. No-ops instantly
-    // for the common case (already resident). Call before anything that
-    // reads s.hlCanvas/s.penCanvas synchronously (solo view, "paint more").
-    async function ensureSessionCanvases(s) {
-      if (s.hlCanvas || (!s.hlUrl && !s.penUrl) || !activePage?.image) return
-      const img = activePage.image
-      const [hl, pen] = await Promise.all([
-        s.hlUrl ? loadCanvasFromDataUrl(s.hlUrl, img.width, img.height) : null,
-        s.penUrl ? loadCanvasFromDataUrl(s.penUrl, img.width, img.height) : null,
-      ])
-      if (hl) s.hlCanvas = hl
-      if (pen) s.penCanvas = pen
-    }
-
-    // Only the RECENT_SESSION_CANVAS_LIMIT most-recently-created sessions
-    // (higher sessionCounter id = newer) keep their raw canvases resident —
-    // everyone else already lives in the sessionsHL/sessionsPen composite
-    // built by rebuildSessionsCacheAsync, so their raw pixels are released
-    // (kept only as hlUrl/penUrl for ensureSessionCanvases to re-decode on
-    // demand). Never releases a session with no URL to recover from, or one
-    // currently soloed/under edit (those need synchronous access).
-    function releaseOldSessionCanvases() {
-      const keep = new Set()
-      if (soloSession) keep.add(soloSession.id)
-      if (editTarget?.s) keep.add(editTarget.s.id)
-      const byRecency = [...activePage.sessions].sort((a, b) => b.id - a.id)
-      byRecency.forEach((s, i) => {
-        if (keep.has(s.id) || i < RECENT_SESSION_CANVAS_LIMIT) return
-        if (!s.hlUrl && !s.penUrl) return
-        s.hlCanvas = null
-        s.penCanvas = null
-      })
-    }
-
-    // Cheap synchronous guard used by hot paths (redrawAll, live-stroke
-    // clipping). Never does a lossy rebuild: if the composite is already
-    // valid it's a no-op (the common case); if a real rebuild is needed
-    // (invalidated, or activePage.image resized) it kicks off the async
-    // version in the background and leaves the current — stale but complete
-    // — composite in place until that finishes and swaps in a fresh one.
     function rebuildSessionsCache() {
       if (!activePage || !activePage.image) return
+      // Belt-and-suspenders: if activePage.image's own dimensions ever end up
+      // different from the cache's (e.g. a race during load, or the tiled
+      // iPad placeholder's size settling after this cache was first built),
+      // force a rebuild even though sessionsValid says it's fine — a stale-
+      // sized cache is exactly what makes every session render shrunk into
+      // the top-left corner instead of over the actual floor plan.
       const sizeStale = sessionsHL.width !== activePage.image.width || sessionsHL.height !== activePage.image.height
-      if (sessionsValid && !sizeStale) return
-      if (sessionsRebuildInFlight) return
-      rebuildSessionsCacheAsync()
-    }
-
-    // Does the real compositing work, re-decoding any released session
-    // canvases first. Builds into a scratch buffer and swaps it into
-    // sessionsHL/sessionsPen atomically so nothing flickers mid-rebuild,
-    // then releases raw canvases outside the recent window again.
-    async function rebuildSessionsCacheAsync() {
-      if (!activePage || !activePage.image || sessionsRebuildInFlight) return
-      sessionsRebuildInFlight = true
-      try {
-        const img = activePage.image
-        await Promise.all(activePage.sessions.map(s => ensureSessionCanvases(s)))
-
-        const scratchHL  = document.createElement('canvas')
-        const scratchPen = document.createElement('canvas')
-        scratchHL.width  = scratchPen.width  = img.width
-        scratchHL.height = scratchPen.height = img.height
-        const hlc  = scratchHL.getContext('2d')
-        const penc = scratchPen.getContext('2d')
-        if (!hlc || !penc) { console.warn('[Canvas] rebuildSessionsCacheAsync: no 2d context'); return }
-
-        console.log('[Canvas] rebuilding sessions cache, count:', activePage.sessions.length, 'img:', img.width + 'x' + img.height)
-        activePage.sessions.forEach(s => {
-          if (s._hidden || !s.hlCanvas || s.hlCanvas.width === 0) return
-          const mismatched = s.hlCanvas.width !== img.width || s.hlCanvas.height !== img.height
-          const tinted = tintCanvas(s.hlCanvas, s.color)
-          // tintCanvas returning null means the color tint failed (invalid
-          // dims, no 2d context) — draw the untinted source instead of
-          // skipping the session outright, so the markup is at least visible
-          // (in whatever color it was originally painted) rather than missing.
-          const toDraw = tinted || s.hlCanvas
-          // Draw scaled to the CURRENT page size rather than at native
-          // resolution when they don't match — a session saved/decoded at a
-          // different size (a stale cache, a since-changed calibration, a
-          // race during load) would otherwise render shrunk into the
-          // top-left corner instead of proportionally covering the same
-          // area it was painted over.
-          if (mismatched) hlc.drawImage(toDraw, 0, 0, img.width, img.height)
-          else hlc.drawImage(toDraw, 0, 0)
-        })
-        activePage.sessions.forEach(s => {
-          if (!s.penCanvas || s._hidden) return
-          if (s.penCanvas.width !== img.width || s.penCanvas.height !== img.height) {
-            penc.drawImage(s.penCanvas, 0, 0, img.width, img.height)
-          } else {
-            penc.drawImage(s.penCanvas, 0, 0)
-          }
-        })
-
-        sessionsHL = scratchHL
-        sessionsPen = scratchPen
-        if (sessionsCount.width !== img.width || sessionsCount.height !== img.height) {
-          sessionsCount.width = img.width; sessionsCount.height = img.height
-        }
-        sessionsValid = true
-        releaseOldSessionCanvases()
-      } finally {
-        sessionsRebuildInFlight = false
+      if (sessionsValid && !sizeStale) {
+        console.log('[Canvas] rebuildSessionsCache skipped - valid:', sessionsValid)
+        return
       }
-      redrawAll()
+      if (sizeStale && sessionsValid) {
+        console.warn('[Canvas] sessionsHL size stale vs activePage.image — forcing rebuild:',
+          sessionsHL.width + 'x' + sessionsHL.height, 'vs', activePage.image.width + 'x' + activePage.image.height)
+      }
+      const img = activePage.image
+      console.log('[Canvas] rebuilding sessions cache, count:', activePage.sessions.length, 'img:', img.width + 'x' + img.height)
+      for (const c of [sessionsHL, sessionsPen, sessionsCount]) {
+        c.width = img.width; c.height = img.height
+      }
+      const hlc  = sessionsHL.getContext('2d')
+      const penc = sessionsPen.getContext('2d')
+      if (!hlc || !penc) { console.warn('[Canvas] rebuildSessionsCache: no 2d context'); return }
+      hlc.clearRect(0, 0, img.width, img.height)
+      penc.clearRect(0, 0, img.width, img.height)
+      activePage.sessions.forEach(s => {
+        if (s._hidden || !s.hlCanvas || s.hlCanvas.width === 0) return
+        const mismatched = s.hlCanvas.width !== img.width || s.hlCanvas.height !== img.height
+        if (mismatched) {
+          console.warn('[Canvas] Session hlCanvas size mismatch vs page image:', s.id,
+            s.hlCanvas.width + 'x' + s.hlCanvas.height, 'vs', img.width + 'x' + img.height, '— scaling to fit')
+        }
+        console.log('[Canvas] Drawing session to cache:', s.name, s.color, s.hlCanvas.width, 'x', s.hlCanvas.height)
+        const tinted = tintCanvas(s.hlCanvas, s.color)
+        // tintCanvas returning null means the color tint failed (invalid
+        // dims, no 2d context) — draw the untinted source instead of
+        // skipping the session outright, so the markup is at least visible
+        // (in whatever color it was originally painted) rather than missing.
+        const toDraw = tinted || s.hlCanvas
+        if (!tinted) console.warn('[Canvas] tintCanvas returned null for session, drawing untinted:', s.id)
+        // Draw scaled to the CURRENT page size rather than at native
+        // resolution when they don't match — a session saved/decoded at a
+        // different size (a stale cache, a since-changed calibration, a
+        // race during load) would otherwise render shrunk into the
+        // top-left corner instead of proportionally covering the same
+        // area it was painted over.
+        if (mismatched) hlc.drawImage(toDraw, 0, 0, img.width, img.height)
+        else hlc.drawImage(toDraw, 0, 0)
+      })
+      activePage.sessions.forEach(s => {
+        if (!s.penCanvas || s._hidden) return
+        if (s.penCanvas.width !== img.width || s.penCanvas.height !== img.height) {
+          penc.drawImage(s.penCanvas, 0, 0, img.width, img.height)
+        } else {
+          penc.drawImage(s.penCanvas, 0, 0)
+        }
+      })
+      sessionsValid = true
     }
 
     // history
@@ -2259,11 +2201,6 @@ export default function Canvas() {
             ? uploadCanvasToStorage(session.penCanvas, storageKey, 'pen').then(url => url || session.penCanvas.toDataURL('image/png'))
             : null,
         ])
-        // Kept so a later ensureSessionCanvases() can re-decode this session
-        // once it ages out of the recent window and its raw canvases are
-        // released (see RECENT_SESSION_CANVAS_LIMIT).
-        session.hlUrl = highlight_data
-        session.penUrl = pen_data
         const insertPayload = {
           page_id:        pageId,
           project_id:     dbProjectId,
@@ -2339,19 +2276,15 @@ export default function Canvas() {
       if (!confirm(`Delete session "${sess?.name || 'Untitled'}"? This cannot be undone.`)) return
       pg.sessions = pg.sessions.filter(s => s.id !== sId)
       if (soloSession?.id === sId) soloSession = null
-      invalidateSessions(); await rebuildSessionsCacheAsync(); renderSessions(); updateSF()
+      invalidateSessions(); redrawAll(); renderSessions(); updateSF()
       if (sess?.supabaseId) {
         deletedSessionIds.add(sess.supabaseId)
         await supabase.from('sessions').delete().eq('id', sess.supabaseId)
       }
     }
 
-    async function toggleSolo(sess) {
+    function toggleSolo(sess) {
       soloSession = (soloSession?.id === sess.id) ? null : sess
-      // Solo view draws soloSession.hlCanvas/penCanvas directly (see the draw
-      // loop below) — make sure it's actually resident before that happens,
-      // in case it had been released for being outside the recent window.
-      if (soloSession) await ensureSessionCanvases(soloSession)
       redrawAll(); renderSessions(); updateSF()
     }
 
@@ -2555,7 +2488,7 @@ export default function Canvas() {
       s.crewSize    = (newCrew != null && !isNaN(newCrew)) ? newCrew : null
       s.hoursWorked = (newHours != null && !isNaN(newHours)) ? newHours : null
       editTarget = null; closeEditModal(); invalidateSessions()
-      await rebuildSessionsCacheAsync(); renderSessions(); updateSF()
+      renderSessions(); updateSF(); redrawAll()
       if (s.supabaseId) {
         console.log('[Canvas] Updating session in Supabase:', s.supabaseId, s.name)
         const payload = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked }
@@ -2594,13 +2527,9 @@ export default function Canvas() {
     }
 
     // ── PAINT MORE ────────────────────────────────────────────────────────────
-    async function startPaintEdit(forceCountTool = false) {
+    function startPaintEdit(forceCountTool = false) {
       if (!editTarget) return
       const {s} = editTarget
-      // The edit target is protected from future releases once editTarget is
-      // set, but may already have been released (its canvases set to null)
-      // before the edit modal was opened — re-decode from its stored URL if so.
-      await ensureSessionCanvases(s)
       activeRect = null; rectHandle = null
       activePoly = null; polyDragMode = null; polyVertexIdx = null
       activeLFLine = null; lfDragMode = null; lfVertexIdx = null
@@ -2655,7 +2584,7 @@ export default function Canvas() {
 
     function startCountEdit() { startPaintEdit(true) }
 
-    async function cancelSessionEdit() {
+    function cancelSessionEdit() {
       if (!editTarget) return
       activeRect = null; rectHandle = null
       activePoly = null; polyDragMode = null; polyVertexIdx = null
@@ -2667,10 +2596,10 @@ export default function Canvas() {
       livePenCtx.clearRect(0, 0, livePenCanvas.width, livePenCanvas.height)
       liveCountMarkers = []; liveLFLines = []; undoStack = []; invalidateSessions()
       if (editBannerRef.current) editBannerRef.current.classList.remove('show')
-      restoreFooter(); await rebuildSessionsCacheAsync(); updateSF(); renderSessions()
+      restoreFooter(); redrawAll(); updateSF(); renderSessions()
     }
 
-    async function commitSessionEdit() {
+    function commitSessionEdit() {
       if (!editTarget) return
       if (activeRect) bakeActiveRect()
       if (activePoly) bakePolygon()
@@ -2698,7 +2627,7 @@ export default function Canvas() {
       livePenCtx.clearRect(0, 0, livePenCanvas.width, livePenCanvas.height)
       liveCountMarkers = []; liveLFLines = []; undoStack = []; editingSession = false; editTarget = null
       invalidateSessions(); if (editBannerRef.current) editBannerRef.current.classList.remove('show')
-      restoreFooter(); await rebuildSessionsCacheAsync(); renderSessions(); updateSF()
+      restoreFooter(); redrawAll(); renderSessions(); updateSF()
       // Persist updated session to Supabase (fire-and-forget, uploads canvases
       // to Storage instead of inlining as base64 — see uploadCanvasToStorage)
       if (s.supabaseId) {
@@ -2709,10 +2638,6 @@ export default function Canvas() {
               ? uploadCanvasToStorage(newPen, s.supabaseId, 'pen').then(url => url || newPen.toDataURL('image/png'))
               : null,
           ])
-          // Keep in sync so a future release/re-decode of this session (once
-          // it ages out of the recent window) fetches the edited pixels.
-          s.hlUrl = highlight_data
-          s.penUrl = pen_data
           const count_data = s.countMarkers.length > 0
             ? { w: activePage.image.width, h: activePage.image.height, markers: s.countMarkers }
             : null
@@ -3337,8 +3262,6 @@ export default function Canvas() {
           count:        countMarkers.length || 0,
           lf:           parseFloat(dbSess.lf) || 0,
           hlCanvas, penCanvas, countMarkers, lfLines,
-          hlUrl:        dbSess.highlight_data || null,
-          penUrl:       dbSess.pen_data || null,
           pageId:       activePage.id,
           pageName:     activePage.name,
           date,
@@ -3351,16 +3274,16 @@ export default function Canvas() {
 
       console.log('[Canvas] Sessions loaded:', activePage.sessions.length)
       invalidateSessions()
-      await rebuildSessionsCacheAsync(); renderSessions(); updateSF(); updateProgressBar(); saveDayToHistory()
+      redrawAll(); renderSessions(); updateSF(); updateProgressBar(); saveDayToHistory()
       // Defensive second pass on Safari/iPad: every session's canvas is
       // already fully decoded by this point (this line runs after the
       // await-based loop above), so this isn't expected to change anything —
       // but it's cheap insurance against whatever timing quirk is behind
       // sessions loading correctly yet not appearing on iPad.
       if (isSafari || isIPad) {
-        setTimeout(async () => {
+        setTimeout(() => {
           invalidateSessions()
-          await rebuildSessionsCacheAsync(); renderSessions(); updateSF()
+          redrawAll(); renderSessions(); updateSF()
         }, 100)
       }
     }
@@ -3413,11 +3336,10 @@ export default function Canvas() {
             name: data.name || 'Team member', color: data.color || '#4ade80',
             userColor: data.userColor || '#4ade80', userName: data.userName || 'Team member',
             sf: row.sf_calculated || 0, hlCanvas, penCanvas, countMarkers: [],
-            hlUrl: row.highlight_data || null, penUrl: row.pen_data || null,
             pageId: activePage.id, pageName: activePage.name, time: data.time || '', date,
             supabaseId: row.id,
           })
-          invalidateSessions(); await rebuildSessionsCacheAsync(); renderSessions(); updateSF()
+          invalidateSessions(); redrawAll(); renderSessions(); updateSF()
           showToast('New session from a team member')
         })
         .subscribe()
