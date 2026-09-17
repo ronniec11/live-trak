@@ -510,10 +510,14 @@ export default function Projects() {
       }
 
       let reordered
+      let noOpDetail = ''
       setProjects(ps => {
         const fromIdx = ps.findIndex(p => p.id === draggedId)
         const toIdx = ps.findIndex(p => p.id === droppedOnId)
-        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) { reordered = null; return ps }
+        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) {
+          noOpDetail = `draggedId=${draggedId} droppedOnId=${droppedOnId} fromIdx=${fromIdx} toIdx=${toIdx} count=${ps.length}`
+          reordered = null; return ps
+        }
         const next = [...ps]
         const [moved] = next.splice(fromIdx, 1)
         next.splice(toIdx, 0, moved)
@@ -522,7 +526,7 @@ export default function Projects() {
       })
 
       if (!reordered) {
-        setDebugMsg('DEBUG: reorder was a no-op (from/to index not found or identical) — nothing was saved.')
+        setDebugMsg('DEBUG: reorder was a no-op — ' + noOpDetail)
         return
       }
 
