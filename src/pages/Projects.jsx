@@ -467,12 +467,10 @@ export default function Projects() {
   const [dragId, setDragId] = useState(null)
   const [dragPos, setDragPos] = useState({ x: 0, y: 0 })
   const [hoverId, setHoverId] = useState(null)
-  // TEMPORARY DIAGNOSTIC (remove once the revert-on-reload reorder bug is
-  // confirmed fixed): an on-page banner instead of alert() — iOS Safari
-  // home-screen (standalone) web apps can silently swallow alert() in some
-  // versions, which is why the alert-based version of this check showed
-  // nothing at all even though the code was confirmed live in production.
-  const [debugMsg, setDebugMsg] = useState('')
+  // An on-page banner rather than alert() — iOS Safari home-screen
+  // (standalone) web apps can silently swallow alert(), so a real DOM
+  // element is the only reliable way to surface a save failure there.
+  const [reorderError, setReorderError] = useState('')
 
   // Reordering is only meaningful against the full, unfiltered list — with a
   // search/status filter active there's no sensible place to drop a card
@@ -504,84 +502,43 @@ export default function Projects() {
       const draggedId = dragId
       setDragId(null)
       setHoverId(null)
-      if (!droppedOnId) {
-        setDebugMsg('DEBUG: drop had no target (hoverId was null) — nothing was saved.')
-        return
-      }
+      if (!droppedOnId) return
 
-      // Compute the reorder directly off the current `projects` value rather
-      // than fishing it out of a setProjects(ps => ...) updater's side
-      // effect — these pointerup/pointermove listeners are plain window
-      // listeners outside React's event handling, so that updater is not
-      // guaranteed to run synchronously before the code below reads its
-      // result. That gap made every single reorder look like a no-op with
-      // nothing to show for it, regardless of whether the drag itself was
-      // valid — this was the actual bug, not anything iPad/RPC/DB-specific.
+      // Computed directly off the current `projects` value rather than via
+      // a setProjects(ps => ...) updater's side effect — these
+      // pointerup/pointermove listeners are plain window listeners outside
+      // React's event handling, so that updater was never guaranteed to
+      // run before the code reading its result did, which used to make
+      // every single reorder silently no-op before anything was ever sent
+      // to the database.
       const fromIdx = projects.findIndex(p => p.id === draggedId)
       const toIdx = projects.findIndex(p => p.id === droppedOnId)
-      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) {
-        setDebugMsg(`DEBUG: reorder was a no-op — draggedId=${draggedId} droppedOnId=${droppedOnId} fromIdx=${fromIdx} toIdx=${toIdx} count=${projects.length}`)
-        return
-      }
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return
       const reordered = [...projects]
       const [moved] = reordered.splice(fromIdx, 1)
       reordered.splice(toIdx, 0, moved)
       setProjects(reordered)
 
-      // No longer skips RPC calls for entries whose sort_order already
-      // equals their new index — that comparison was a plausible source of
-      // this bug being invisible (if it ever mismatched types/values, every
-      // call could get skipped with nothing to show for it) and isn't worth
-      // the savings for a small project list.
       try {
         const results = await Promise.all(
           reordered.map((p, idx) => supabase.rpc('set_project_sort_order', { target_project_id: p.id, new_order: idx }))
         )
-        console.log('[Projects] set_project_sort_order results:', results)
-
         const failedRpc = results.find(r => r?.error)
         const noOpRpc = results.find(r => !r?.error && r?.data === false)
         if (failedRpc) {
           console.error('[Projects] set_project_sort_order failed:', failedRpc.error)
-          setDebugMsg('DEBUG: RPC failed — ' + (failedRpc.error.message || JSON.stringify(failedRpc.error)))
+          setReorderError('Reordering was not saved: ' + (failedRpc.error.message || 'unknown error'))
           return
         }
         if (noOpRpc) {
           console.error('[Projects] set_project_sort_order ran but updated no row (role check failed).')
-          setDebugMsg('DEBUG: RPC ran but updated 0 rows — role check likely failed.')
+          setReorderError('Reordering was not saved — your account role is not allowed to reorder projects.')
           return
         }
-
-        // Belt-and-suspenders: read the rows straight back rather than
-        // trusting the RPC response, since this bug has already proven to
-        // look like success right up until the next page load.
-        const ids = reordered.map(p => p.id)
-        const { data: check, error: checkErr } = await supabase
-          .from('projects').select('id, sort_order').in('id', ids)
-        // TEMPORARY DIAGNOSTIC (remove once the revert-on-reload bug is
-        // confirmed fixed): always surface the verified outcome on-page —
-        // alert() was found to show nothing at all on the reporting
-        // device's iOS home-screen (standalone) web app, even though the
-        // code was confirmed live in production, so a real DOM banner is
-        // used instead of a system dialog.
-        if (checkErr) {
-          console.error('[Projects] Reorder verification query failed:', checkErr)
-          setDebugMsg('DEBUG: verification query failed — ' + (checkErr.message || JSON.stringify(checkErr)))
-        } else {
-          const byId = Object.fromEntries((check || []).map(r => [r.id, r.sort_order]))
-          const mismatch = reordered.find((p, idx) => Number(byId[p.id]) !== idx)
-          if (mismatch) {
-            console.error('[Projects] Reorder did not persist as expected. DB now has:', byId, 'expected order:', ids)
-            setDebugMsg('DEBUG: MISMATCH — DB does not match what was just saved: ' + JSON.stringify(byId))
-          } else {
-            setDebugMsg('DEBUG: reorder confirmed saved in the database: ' + JSON.stringify(byId))
-          }
-        }
-
         setProjects(ps => ps.map((p, idx) => ({ ...p, sort_order: idx })))
       } catch (err) {
         console.error('[Projects] Reorder save threw:', err)
-        setDebugMsg('DEBUG: threw an exception — ' + (err.message || String(err)))
+        setReorderError('Reordering failed to save: ' + (err.message || String(err)))
       }
     }
 
@@ -672,16 +629,16 @@ export default function Projects() {
 
   return (
     <Layout>
-      {debugMsg && (
+      {reorderError && (
         <div
-          onClick={() => setDebugMsg('')}
+          onClick={() => setReorderError('')}
           style={{
             position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
             background: '#facc15', color: '#000', fontSize: '12px',
             padding: '10px 12px', wordBreak: 'break-word', cursor: 'pointer',
           }}
         >
-          {debugMsg} <strong>(tap to dismiss)</strong>
+          {reorderError} <strong>(tap to dismiss)</strong>
         </div>
       )}
       <div className="max-w-5xl mx-auto px-4 py-6">
