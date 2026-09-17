@@ -511,26 +511,53 @@ export default function Projects() {
         return next
       })
 
-      if (reordered) {
+      if (!reordered) return
+
+      // No longer skips RPC calls for entries whose sort_order already
+      // equals their new index — that comparison was a plausible source of
+      // this bug being invisible (if it ever mismatched types/values, every
+      // call could get skipped with nothing to show for it) and isn't worth
+      // the savings for a small project list.
+      try {
         const results = await Promise.all(
-          reordered.map((p, idx) =>
-            p.sort_order === idx ? null : supabase.rpc('set_project_sort_order', { target_project_id: p.id, new_order: idx })
-          )
+          reordered.map((p, idx) => supabase.rpc('set_project_sort_order', { target_project_id: p.id, new_order: idx }))
         )
-        // set_project_sort_order now returns whether it actually updated a
-        // row (see supabase-migration-project-order.sql) — the UPDATE's own
-        // role check can match zero rows without ever raising a Postgres
-        // error, which used to look identical to success here.
+        console.log('[Projects] set_project_sort_order results:', results)
+
         const failedRpc = results.find(r => r?.error)
-        const noOpRpc = results.find(r => r && !r.error && r.data === false)
+        const noOpRpc = results.find(r => !r?.error && r?.data === false)
         if (failedRpc) {
           console.error('[Projects] set_project_sort_order failed:', failedRpc.error)
-          alert('Reordering was not saved — it will revert next time this page loads. Run supabase-migration-project-order.sql in the Supabase SQL editor, then try again.')
-        } else if (noOpRpc) {
-          console.error('[Projects] set_project_sort_order ran but updated no row (role check likely failed).')
-          alert('Reordering was not saved — your account role may not be allowed to reorder projects, or supabase-migration-project-order.sql needs to be re-run (it changed to a boolean return type). It will revert next time this page loads.')
+          alert('Reordering was not saved: ' + (failedRpc.error.message || JSON.stringify(failedRpc.error)))
+          return
         }
+        if (noOpRpc) {
+          console.error('[Projects] set_project_sort_order ran but updated no row (role check failed).')
+          alert('Reordering was not saved — your account role is not allowed to reorder projects (admin/pm/superintendent only).')
+          return
+        }
+
+        // Belt-and-suspenders: read the rows straight back rather than
+        // trusting the RPC response, since this bug has already proven to
+        // look like success right up until the next page load.
+        const ids = reordered.map(p => p.id)
+        const { data: check, error: checkErr } = await supabase
+          .from('projects').select('id, sort_order').in('id', ids)
+        if (checkErr) {
+          console.error('[Projects] Reorder verification query failed:', checkErr)
+        } else {
+          const byId = Object.fromEntries((check || []).map(r => [r.id, r.sort_order]))
+          const mismatch = reordered.find((p, idx) => Number(byId[p.id]) !== idx)
+          if (mismatch) {
+            console.error('[Projects] Reorder did not persist as expected. DB now has:', byId, 'expected order:', ids)
+            alert('Reordering saved but the database still shows the old order — please screenshot this and send it over:\n' + JSON.stringify(byId))
+          }
+        }
+
         setProjects(ps => ps.map((p, idx) => ({ ...p, sort_order: idx })))
+      } catch (err) {
+        console.error('[Projects] Reorder save threw:', err)
+        alert('Reordering failed to save: ' + (err.message || String(err)))
       }
     }
 
