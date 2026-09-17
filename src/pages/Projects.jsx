@@ -512,11 +512,20 @@ export default function Projects() {
       })
 
       if (reordered) {
-        await Promise.all(
+        const results = await Promise.all(
           reordered.map((p, idx) =>
             p.sort_order === idx ? null : supabase.rpc('set_project_sort_order', { target_project_id: p.id, new_order: idx })
           )
         )
+        const failed = results.find(r => r?.error)
+        if (failed) {
+          // Swallowing this used to mean a reorder looked like it worked —
+          // the local list updated — but never actually persisted, so it
+          // silently reverted the next time projects were reloaded (e.g.
+          // navigating into a project and back). Surface it loudly instead.
+          console.error('[Projects] set_project_sort_order failed:', failed.error)
+          alert('Reordering was not saved — it will revert next time this page loads. Run supabase-migration-project-order.sql in the Supabase SQL editor, then try again.')
+        }
         setProjects(ps => ps.map((p, idx) => ({ ...p, sort_order: idx })))
       }
     }
