@@ -25,12 +25,26 @@ FROM ordered WHERE ordered.id = p.id;
 -- plain UPDATE). This function only ever touches sort_order, so it can
 -- safely allow Superintendent too, matching canManage elsewhere in the
 -- app, without reopening that gap.
+--
+-- Returns whether a row was actually updated. The WHERE clause's role
+-- check can silently match zero rows (wrong/missing role, or auth.uid()
+-- not matching a profiles row) without ever raising a Postgres error — a
+-- plain `RETURNS void` version of this function looks like it succeeded
+-- to the client in that case, and the reorder then reverts on next load
+-- with no indication why. Returning false lets the client tell the two
+-- apart and say so.
 CREATE OR REPLACE FUNCTION public.set_project_sort_order(target_project_id uuid, new_order numeric)
-RETURNS void
-LANGUAGE sql SECURITY DEFINER
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  affected integer;
+BEGIN
   UPDATE projects SET sort_order = new_order
   WHERE id = target_project_id
   AND (SELECT role FROM profiles WHERE id = auth.uid()) IN ('admin', 'pm', 'superintendent');
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  RETURN affected > 0;
+END;
 $$;

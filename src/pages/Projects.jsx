@@ -517,14 +517,18 @@ export default function Projects() {
             p.sort_order === idx ? null : supabase.rpc('set_project_sort_order', { target_project_id: p.id, new_order: idx })
           )
         )
-        const failed = results.find(r => r?.error)
-        if (failed) {
-          // Swallowing this used to mean a reorder looked like it worked —
-          // the local list updated — but never actually persisted, so it
-          // silently reverted the next time projects were reloaded (e.g.
-          // navigating into a project and back). Surface it loudly instead.
-          console.error('[Projects] set_project_sort_order failed:', failed.error)
+        // set_project_sort_order now returns whether it actually updated a
+        // row (see supabase-migration-project-order.sql) — the UPDATE's own
+        // role check can match zero rows without ever raising a Postgres
+        // error, which used to look identical to success here.
+        const failedRpc = results.find(r => r?.error)
+        const noOpRpc = results.find(r => r && !r.error && r.data === false)
+        if (failedRpc) {
+          console.error('[Projects] set_project_sort_order failed:', failedRpc.error)
           alert('Reordering was not saved — it will revert next time this page loads. Run supabase-migration-project-order.sql in the Supabase SQL editor, then try again.')
+        } else if (noOpRpc) {
+          console.error('[Projects] set_project_sort_order ran but updated no row (role check likely failed).')
+          alert('Reordering was not saved — your account role may not be allowed to reorder projects, or supabase-migration-project-order.sql needs to be re-run (it changed to a boolean return type). It will revert next time this page loads.')
         }
         setProjects(ps => ps.map((p, idx) => ({ ...p, sort_order: idx })))
       }
