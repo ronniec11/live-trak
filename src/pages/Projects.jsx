@@ -340,9 +340,10 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
       onPointerUp={clearLongPress}
       onPointerCancel={clearLongPress}
       onClick={handleCardClick}
-      className={`card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group ${
+      className={`card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group select-none ${
         isDragging ? 'opacity-40' : ''
       } ${isDropTarget ? 'ring-2 ring-accent' : ''} ${pressing ? 'scale-[0.98]' : ''}`}
+      style={{ WebkitTouchCallout: 'none' }}
     >
       <div className="flex items-start justify-between mb-3">
         {canReorder && (
