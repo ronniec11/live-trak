@@ -543,14 +543,22 @@ export default function Projects() {
         const ids = reordered.map(p => p.id)
         const { data: check, error: checkErr } = await supabase
           .from('projects').select('id, sort_order').in('id', ids)
+        // TEMPORARY DIAGNOSTIC (remove once the revert-on-reload bug is
+        // confirmed fixed): always alert with the verified outcome, since
+        // every fix attempt so far has produced zero visible change on the
+        // reporting device and there's no other way to see what's actually
+        // happening there.
         if (checkErr) {
           console.error('[Projects] Reorder verification query failed:', checkErr)
+          alert('Reorder verification query failed: ' + (checkErr.message || JSON.stringify(checkErr)))
         } else {
           const byId = Object.fromEntries((check || []).map(r => [r.id, r.sort_order]))
           const mismatch = reordered.find((p, idx) => Number(byId[p.id]) !== idx)
           if (mismatch) {
             console.error('[Projects] Reorder did not persist as expected. DB now has:', byId, 'expected order:', ids)
-            alert('Reordering saved but the database still shows the old order — please screenshot this and send it over:\n' + JSON.stringify(byId))
+            alert('MISMATCH — DB does not match what was just saved:\n' + JSON.stringify(byId))
+          } else {
+            alert('Reorder confirmed saved in the database:\n' + JSON.stringify(byId))
           }
         }
 
