@@ -233,6 +233,57 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
   const [editName, setEditName] = useState(project.name)
   const [editDesc, setEditDesc] = useState(project.description || '')
   const [saving, setSaving] = useState(false)
+  const [pressing, setPressing] = useState(false)
+
+  // Long-press-anywhere-on-the-card reorder trigger — the grip handle is a
+  // tiny, precise target that's hard to hit reliably with a fingertip.
+  // Holding still for ~450ms starts the drag; a normal tap or a swipe
+  // (movement past a small threshold, e.g. scrolling the list) cancels it
+  // and behaves as before. Presses that start on an actual control (a
+  // button, input, etc.) are left alone so their own tap/edit behavior
+  // still works.
+  const longPressTimerRef = useRef(null)
+  const pointerStartRef = useRef(null)
+  const longPressFiredRef = useRef(false)
+
+  function clearLongPress() {
+    clearTimeout(longPressTimerRef.current)
+    pointerStartRef.current = null
+    setPressing(false)
+  }
+
+  function handleCardPointerDown(e) {
+    if (!canReorder || editing) return
+    if (e.target.closest('button, input, textarea, a')) return
+    pointerStartRef.current = { x: e.clientX, y: e.clientY }
+    longPressFiredRef.current = false
+    setPressing(true)
+    clearTimeout(longPressTimerRef.current)
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true
+      setPressing(false)
+      onDragStart(e, project.id)
+    }, 450)
+  }
+
+  function handleCardPointerMove(e) {
+    if (!pointerStartRef.current) return
+    const dx = e.clientX - pointerStartRef.current.x
+    const dy = e.clientY - pointerStartRef.current.y
+    if (Math.hypot(dx, dy) > 10) clearLongPress()
+  }
+
+  function handleCardClick(e) {
+    // Swallow the click that follows a long-press-triggered drag so it
+    // doesn't also navigate into the project right as the user meant to
+    // pick it up.
+    if (longPressFiredRef.current) {
+      e.preventDefault(); e.stopPropagation()
+      longPressFiredRef.current = false
+      return
+    }
+    if (!editing) onClick?.(e)
+  }
 
   const dailyPct = project.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / project.daily_sf_target) * 100))
@@ -284,10 +335,14 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
   return (
     <div
       data-project-id={project.id}
-      onClick={editing ? undefined : onClick}
+      onPointerDown={handleCardPointerDown}
+      onPointerMove={handleCardPointerMove}
+      onPointerUp={clearLongPress}
+      onPointerCancel={clearLongPress}
+      onClick={handleCardClick}
       className={`card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group ${
         isDragging ? 'opacity-40' : ''
-      } ${isDropTarget ? 'ring-2 ring-accent' : ''}`}
+      } ${isDropTarget ? 'ring-2 ring-accent' : ''} ${pressing ? 'scale-[0.98]' : ''}`}
     >
       <div className="flex items-start justify-between mb-3">
         {canReorder && (
@@ -542,11 +597,20 @@ export default function Projects() {
       }
     }
 
+    // Once a drag is active (started either from the grip or a long-press
+    // anywhere on the card), stop touchmove from also scrolling the page —
+    // needed now that the whole card can start a drag, not just the small
+    // grip handle. Must be a non-passive listener; pointermove alone can't
+    // block native scrolling.
+    function preventScroll(e) { e.preventDefault() }
+
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('touchmove', preventScroll, { passive: false })
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('touchmove', preventScroll)
     }
   }, [dragId, hoverId, projects])
 
