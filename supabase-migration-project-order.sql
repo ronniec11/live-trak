@@ -33,6 +33,11 @@ FROM ordered WHERE ordered.id = p.id;
 -- to the client in that case, and the reorder then reverts on next load
 -- with no indication why. Returning false lets the client tell the two
 -- apart and say so.
+--
+-- The DROP is required (not just CREATE OR REPLACE) because this used to
+-- return void — Postgres refuses to change a function's return type
+-- in place.
+DROP FUNCTION IF EXISTS public.set_project_sort_order(uuid, numeric);
 CREATE OR REPLACE FUNCTION public.set_project_sort_order(target_project_id uuid, new_order numeric)
 RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER
