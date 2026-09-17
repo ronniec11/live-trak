@@ -509,26 +509,24 @@ export default function Projects() {
         return
       }
 
-      let reordered
-      let noOpDetail = ''
-      setProjects(ps => {
-        const fromIdx = ps.findIndex(p => p.id === draggedId)
-        const toIdx = ps.findIndex(p => p.id === droppedOnId)
-        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) {
-          noOpDetail = `draggedId=${draggedId} droppedOnId=${droppedOnId} fromIdx=${fromIdx} toIdx=${toIdx} count=${ps.length}`
-          reordered = null; return ps
-        }
-        const next = [...ps]
-        const [moved] = next.splice(fromIdx, 1)
-        next.splice(toIdx, 0, moved)
-        reordered = next
-        return next
-      })
-
-      if (!reordered) {
-        setDebugMsg('DEBUG: reorder was a no-op — ' + noOpDetail)
+      // Compute the reorder directly off the current `projects` value rather
+      // than fishing it out of a setProjects(ps => ...) updater's side
+      // effect — these pointerup/pointermove listeners are plain window
+      // listeners outside React's event handling, so that updater is not
+      // guaranteed to run synchronously before the code below reads its
+      // result. That gap made every single reorder look like a no-op with
+      // nothing to show for it, regardless of whether the drag itself was
+      // valid — this was the actual bug, not anything iPad/RPC/DB-specific.
+      const fromIdx = projects.findIndex(p => p.id === draggedId)
+      const toIdx = projects.findIndex(p => p.id === droppedOnId)
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) {
+        setDebugMsg(`DEBUG: reorder was a no-op — draggedId=${draggedId} droppedOnId=${droppedOnId} fromIdx=${fromIdx} toIdx=${toIdx} count=${projects.length}`)
         return
       }
+      const reordered = [...projects]
+      const [moved] = reordered.splice(fromIdx, 1)
+      reordered.splice(toIdx, 0, moved)
+      setProjects(reordered)
 
       // No longer skips RPC calls for entries whose sort_order already
       // equals their new index — that comparison was a plausible source of
@@ -593,7 +591,7 @@ export default function Projects() {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [dragId, hoverId])
+  }, [dragId, hoverId, projects])
 
   async function loadProjects() {
     const userId = user?.id
