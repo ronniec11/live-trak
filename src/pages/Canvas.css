@@ -397,7 +397,7 @@
 .ct-rep-rates { font-size: 12px; color: var(--ct-muted); margin-top: 10px; }
 .ct-rep-rates strong { color: var(--ct-text); }
 .ct-rep-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.ct-rep-photo { width: 110px; height: 110px; object-fit: cover; border-radius: 6px; border: 3px solid; cursor: pointer; }
+.ct-rep-photo { width: 110px; height: 110px; object-fit: cover; border-radius: 6px; border: 1.5px solid; cursor: pointer; }
 /* Printing goes through a hidden iframe with its own fully self-contained,
    light-only document (see printDailyReportPDF() in Canvas.jsx) rather than
    printing this overlay in place — iOS Safari's print pipeline rendered a

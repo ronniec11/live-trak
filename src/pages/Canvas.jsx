@@ -3406,7 +3406,7 @@ export default function Canvas() {
   .rates { font-size: 12px; color: #374151; margin-top: 10px; }
   .rates strong { color: #1c1c1a; }
   .photos-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; page-break-inside: avoid; break-inside: avoid; }
-  .photo { width: 110px; height: 110px; object-fit: cover; border-radius: 6px; border: 3px solid; }
+  .photo { width: 110px; height: 110px; object-fit: cover; border-radius: 6px; border: 1.5px solid; }
 </style>
 </head>
 <body>
@@ -3448,12 +3448,24 @@ export default function Canvas() {
       if (!frame) return
       const doc = frame.contentWindow.document
       doc.open(); doc.write(html); doc.close()
-      // Let the iframe finish laying out before invoking print — calling it
-      // synchronously right after write() can race the initial render.
-      setTimeout(() => {
+      // A fixed short delay was enough for the iframe to finish laying out
+      // before this used to just call print(), but photos are real network
+      // fetches (unlike the snapshot, a data: URL that's already fully
+      // in-memory) — whichever ones hadn't finished downloading yet by the
+      // time Safari's print pipeline snapshotted the page came out blank.
+      // Wait for every image to actually finish (load or error) instead,
+      // with a hard cap so one slow/broken photo can never hang printing.
+      const imgs = Array.from(doc.images)
+      const whenLoaded = Promise.all(imgs.map(img => img.complete
+        ? Promise.resolve()
+        : new Promise(resolve => {
+            img.addEventListener('load', resolve, { once: true })
+            img.addEventListener('error', resolve, { once: true })
+          })))
+      Promise.race([whenLoaded, new Promise(resolve => setTimeout(resolve, 6000))]).then(() => {
         frame.contentWindow.focus()
         frame.contentWindow.print()
-      }, 150)
+      })
     }
 
     // ── RESIZE ────────────────────────────────────────────────────────────────
