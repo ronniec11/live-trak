@@ -2727,7 +2727,7 @@ export default function Canvas() {
     }
 
     // ── PAINT MORE ────────────────────────────────────────────────────────────
-    function startPaintEdit(forceCountTool = false) {
+    function startPaintEdit() {
       if (!editTarget) return
       const {s} = editTarget
       activeRect = null; rectHandle = null
@@ -2754,19 +2754,21 @@ export default function Canvas() {
       // (final render always re-tints to s.color regardless, but the color
       // picked here is what the live preview shows before that happens).
       if (s.color) pickColor(s.color)
-      // Auto-select tool: count if forced or the session is count-only; LF
-      // if it's LF-only (this used to fall through to rect, which left the
-      // LF tool's own Undo-pop-last-line — the only way to remove an old LF
+      // Auto-select tool: count if the session is count-only; LF if it's
+      // LF-only (this used to fall through to rect, which left the LF
+      // tool's own Undo-pop-last-line — the only way to remove an old LF
       // line — unreachable without first noticing and manually switching
       // tools); pen if it's pen-only; otherwise rect — the app's default
       // tool for area work. A baked rectangle and a freehand highlight
       // stroke are the same pixels once saved, so there's no way to tell
       // which one originally made an SF-bearing session; defaulting to rect
       // (rather than highlight) matches how it's used everywhere else.
+      // Every tool (including Count) stays reachable afterward via the
+      // sidebar, so this is just a starting guess, not a restriction.
       const hasHL  = canvasHasPixels(liveHlCanvas, liveHlCtx)
       const hasPen = canvasHasPixels(livePenCanvas, livePenCtx)
       const hasLF  = liveLFLines.length > 0
-      if (forceCountTool || (!hasHL && !hasPen && !hasLF && liveCountMarkers.length > 0)) {
+      if (!hasHL && !hasPen && !hasLF && liveCountMarkers.length > 0) {
         setTool('count')
       } else if (hasLF && !hasHL && !hasPen) {
         setTool('lf')
@@ -2788,8 +2790,6 @@ export default function Canvas() {
       footerRef.current.querySelector('#ct-commit-edit-btn').addEventListener('click', commitSessionEdit)
       redrawAll(); updateSF()
     }
-
-    function startCountEdit() { startPaintEdit(true) }
 
     function cancelSessionEdit() {
       if (!editTarget) return
@@ -4053,7 +4053,7 @@ export default function Canvas() {
       doZoom, resetView,
       openHistory, closeHistory, calPrevMonth, calNextMonth, closeDailyReport, printDailyReportPDF,
       openReportSetup, closeReportSetup, setReportScope, renderReportSessionList, generateSheetReport,
-      closeEditModal, saveEdit, startPaintEdit, startCountEdit,
+      closeEditModal, saveEdit, startPaintEdit,
       cancelSessionEdit, commitSessionEdit,
       closeSaveModal, confirmSaveSession,
       handleSavePhotoPick, handleEditPhotoPick,
@@ -4284,24 +4284,23 @@ export default function Canvas() {
             <input ref={editSFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="SF" disabled title="Only changes from the actual painted markup — use Edit Markup" />
           </div>
           <div className="ct-modal-field">
-            <label className="ct-modal-lbl">Linear Footage (optional)</label>
+            <label className="ct-modal-lbl">Linear Footage</label>
             <input ref={editLFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="LF" disabled title="Only changes from the actual painted markup — use Edit Markup" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Count Items</label>
-            <span ref={editCountRef} className="ct-modal-input" style={{ display: 'block', cursor: 'not-allowed', opacity: 0.5, marginBottom: 6 }} title="Only changes from the actual placed markers — use Edit Count on Canvas">0 items</span>
-            <div className="ct-modal-btn paint" style={{ width: '100%', boxSizing: 'border-box' }} onClick={() => api.current.startCountEdit?.()}>+ Edit Count on Canvas</div>
+            <span ref={editCountRef} className="ct-modal-input" style={{ display: 'block', cursor: 'not-allowed', opacity: 0.5 }} title="Only changes from the actual placed markers — use Edit Markup">0 items</span>
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Date Performed</label>
             <input ref={editDateRef} className="ct-modal-input" type="date" />
           </div>
           <div className="ct-modal-field">
-            <label className="ct-modal-lbl">Crew Size (optional)</label>
+            <label className="ct-modal-lbl">Crew Size</label>
             <input ref={editCrewRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="e.g. 3" />
           </div>
           <div className="ct-modal-field">
-            <label className="ct-modal-lbl">Hours Worked (optional)</label>
+            <label className="ct-modal-lbl">Hours Worked</label>
             <input ref={editHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="e.g. 4.5" />
           </div>
           <div className="ct-modal-field">
