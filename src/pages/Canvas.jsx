@@ -3263,6 +3263,10 @@ export default function Canvas() {
           date: formatDate(s.date), time: s.time || '', name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
         })),
+        // Flattened across all included sessions — each photo keeps its own
+        // session's color so it's still clear which session it came from
+        // once they're all shown together.
+        photos: included.flatMap(s => (s.photos || []).map(url => ({ url, color: s.color || '#4ade80', name: s.name }))),
         totalSF:    included.reduce((a, s) => a + s.sf, 0),
         totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
         totalCrew:  included.reduce((a, s) => a + (s.crewSize || 0), 0),
@@ -3306,6 +3310,15 @@ export default function Canvas() {
       const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
       return `<div class="${cls}">SF / Man-Hour: <strong>${rate(data.sfPerManHour)}</strong> &nbsp;&nbsp;•&nbsp;&nbsp; SF / Day: <strong>${rate(data.sfPerDay)}</strong></div>`
     }
+    // Each photo's border is tinted with its own session's color, same
+    // color used for that session's dot/snapshot markup, so it's still
+    // clear which session a photo belongs to once they're all together.
+    function reportPhotosHtml(data, gridCls, itemCls) {
+      if (!data.photos?.length) return ''
+      const items = data.photos.map(p => `
+        <img class="${itemCls}" src="${p.url}" alt="${p.name}" title="${p.name}" style="border-color:${p.color};" />`).join('')
+      return `<div class="${gridCls}">${items}</div>`
+    }
     function renderSheetReport() {
       const data = lastReportData
       if (!data) return
@@ -3340,8 +3353,14 @@ export default function Canvas() {
             </tr>
           </tfoot>
         </table>
-        ${reportRatesHtml(data, 'ct-rep-rates')}`
-      if (reportBodyRef.current) reportBodyRef.current.innerHTML = html
+        ${reportRatesHtml(data, 'ct-rep-rates')}
+        ${reportPhotosHtml(data, 'ct-rep-photos', 'ct-rep-photo')}`
+      if (reportBodyRef.current) {
+        reportBodyRef.current.innerHTML = html
+        reportBodyRef.current.querySelectorAll('.ct-rep-photo').forEach(img => {
+          img.addEventListener('click', () => window.open(img.src, '_blank'))
+        })
+      }
     }
     function closeDailyReport() {
       if (reportModalRef.current) reportModalRef.current.classList.remove('open')
@@ -3386,6 +3405,8 @@ export default function Canvas() {
   tr { page-break-inside: avoid; break-inside: avoid; }
   .rates { font-size: 12px; color: #374151; margin-top: 10px; }
   .rates strong { color: #1c1c1a; }
+  .photos-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; page-break-inside: avoid; break-inside: avoid; }
+  .photo { width: 110px; height: 110px; object-fit: cover; border-radius: 6px; border: 3px solid; }
 </style>
 </head>
 <body>
@@ -3419,6 +3440,7 @@ export default function Canvas() {
     </tfoot>
   </table>
   ${reportRatesHtml(data, 'rates')}
+  ${reportPhotosHtml(data, 'photos-grid', 'photo')}
 </body>
 </html>`
 
