@@ -3222,6 +3222,22 @@ export default function Canvas() {
         totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
         totalCrew:  included.reduce((a, s) => a + (s.crewSize || 0), 0),
         totalHours: included.reduce((a, s) => a + (s.hoursWorked || 0), 0),
+        // Man-hours is per-session crew×hours, summed — not totalCrew×totalHours,
+        // which would be wrong whenever crew size or hours vary session to
+        // session. sfPerDay divides by DISTINCT calendar days actually worked
+        // in the included sessions (not the date range's span), so a report
+        // scoped to a week with only 2 working days in it isn't diluted by
+        // the other 5.
+        sfPerManHour: (() => {
+          const manHours = included.reduce((a, s) => a + (s.crewSize || 0) * (s.hoursWorked || 0), 0)
+          const sf = included.reduce((a, s) => a + s.sf, 0)
+          return manHours > 0 ? sf / manHours : null
+        })(),
+        sfPerDay: (() => {
+          const days = new Set(included.map(s => s.date)).size
+          const sf = included.reduce((a, s) => a + s.sf, 0)
+          return days > 0 ? sf / days : null
+        })(),
       }
       if (genBtn) { genBtn.textContent = 'Generate Report'; genBtn.style.pointerEvents = ''; genBtn.style.opacity = '' }
       renderSheetReport()
@@ -3239,6 +3255,11 @@ export default function Canvas() {
           <td class="${numClass}">${r.crew || '–'}</td>
           <td class="${numClass}">${r.hours ? r.hours.toFixed(1) : '–'}</td>
         </tr>`).join('')
+    }
+    // Shared by the on-screen view and the printable version.
+    function reportRatesHtml(data, cls) {
+      const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
+      return `<div class="${cls}">SF / Man-Hour: <strong>${rate(data.sfPerManHour)}</strong> &nbsp;&nbsp;•&nbsp;&nbsp; SF / Day: <strong>${rate(data.sfPerDay)}</strong></div>`
     }
     function renderSheetReport() {
       const data = lastReportData
@@ -3273,7 +3294,8 @@ export default function Canvas() {
               <td class="ct-rep-num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
             </tr>
           </tfoot>
-        </table>`
+        </table>
+        ${reportRatesHtml(data, 'ct-rep-rates')}`
       if (reportBodyRef.current) reportBodyRef.current.innerHTML = html
     }
     function closeDailyReport() {
@@ -3317,6 +3339,8 @@ export default function Canvas() {
   td.num, th.num { text-align: right; }
   tfoot td { font-weight: 800; border-top: 2px solid #1c1c1a; border-bottom: none; }
   tr { page-break-inside: avoid; break-inside: avoid; }
+  .rates { font-size: 12px; color: #374151; margin-top: 10px; }
+  .rates strong { color: #1c1c1a; }
 </style>
 </head>
 <body>
@@ -3349,6 +3373,7 @@ export default function Canvas() {
       </tr>
     </tfoot>
   </table>
+  ${reportRatesHtml(data, 'rates')}
 </body>
 </html>`
 

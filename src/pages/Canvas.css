@@ -391,6 +391,8 @@
 .ct-rep-table th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ct-muted); font-weight: 700; }
 .ct-rep-num { text-align: right; }
 .ct-rep-table tfoot td { font-weight: 800; border-top: 2px solid var(--ct-border); border-bottom: none; }
+.ct-rep-rates { font-size: 12px; color: var(--ct-muted); margin-top: 10px; }
+.ct-rep-rates strong { color: var(--ct-text); }
 /* Printing goes through a hidden iframe with its own fully self-contained,
    light-only document (see printDailyReportPDF() in Canvas.jsx) rather than
    printing this overlay in place — iOS Safari's print pipeline rendered a
