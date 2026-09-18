@@ -806,6 +806,7 @@ export default function Canvas() {
         hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
+        lf:  snapshotLFLines(),
       })
       if (undoStack.length > MAX_UNDO) undoStack.shift()
       liveHlCtx.save()
@@ -930,6 +931,7 @@ export default function Canvas() {
         hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
+        lf:  snapshotLFLines(),
       })
       if (undoStack.length > MAX_UNDO) undoStack.shift()
       liveHlCtx.save()
@@ -955,6 +957,7 @@ export default function Canvas() {
       return len
     }
     function toLF(px) { return activePage ? px / activePage.ppf : 0 }
+    function snapshotLFLines() { return liveLFLines.map(l => ({ ...l, points: l.points.map(p => ({ ...p })) })) }
 
     function hitLFVertex(sx, sy) {
       if (!activeLFLine || !activePage) return null
@@ -1248,6 +1251,7 @@ export default function Canvas() {
           hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
           pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
           cnt: [...liveCountMarkers],
+          lf:  snapshotLFLines(),
         })
         if (undoStack.length > MAX_UNDO) undoStack.shift()
         const pt = s2i(pos.x, pos.y)
@@ -1472,6 +1476,31 @@ export default function Canvas() {
           ctx.lineTo(ix, iy)
           ctx.stroke()
           ctx.restore()
+        }
+        // LF lines are vector data (liveLFLines), drawn on a separate layer
+        // from these two pixel canvases — the destination-out strokes above
+        // never touch them, so without this an LF line could only ever be
+        // removed one-at-a-time via Undo while the LF tool itself was
+        // selected (and Paint More didn't even auto-select it for an
+        // LF-only session — see startPaintEdit). Erasing near either
+        // endpoint of the current stroke removes the whole line it belongs
+        // to, same granularity as everything else the eraser does.
+        if (liveLFLines.length > 0) {
+          const testPts = prev ? [prev, { x: ix, y: iy }] : [{ x: ix, y: iy }]
+          const before = liveLFLines.length
+          liveLFLines = liveLFLines.filter(line => {
+            for (const pt of testPts) {
+              if (line.points.length === 1) {
+                if (Math.hypot(pt.x - line.points[0].x, pt.y - line.points[0].y) < r) return false
+                continue
+              }
+              for (let i = 1; i < line.points.length; i++) {
+                if (distToSegment(pt, line.points[i - 1], line.points[i]) < r) return false
+              }
+            }
+            return true
+          })
+          if (liveLFLines.length !== before) drawMarkersLayer()
         }
         scheduleRedraw()
       }
@@ -1814,6 +1843,7 @@ export default function Canvas() {
         hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
+        lf:  snapshotLFLines(),
       })
       if (undoStack.length > MAX_UNDO) undoStack.shift()
       const pt = s2i(pos.x, pos.y)
@@ -2107,6 +2137,10 @@ export default function Canvas() {
       liveHlCtx.putImageData(snap.hl, 0, 0)
       livePenCtx.putImageData(snap.pen, 0, 0)
       if (snap.cnt) liveCountMarkers = snap.cnt
+      // Erasing (below) can now remove an LF line mid-stroke since it's
+      // vector data the pixel-based eraser never touched on its own —
+      // restore it too, so undoing an erase stroke fully reverts it.
+      if (snap.lf) liveLFLines = snap.lf
       redrawAll(); updateSF()
       updateUnsaved(checkHasLiveContent())
     }
@@ -2709,22 +2743,29 @@ export default function Canvas() {
         hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
+        lf:  snapshotLFLines(),
       }]
       // Resume with the same color the session was painted in, so new
       // strokes look consistent with the existing markup while editing
       // (final render always re-tints to s.color regardless, but the color
       // picked here is what the live preview shows before that happens).
       if (s.color) pickColor(s.color)
-      // Auto-select tool: count if forced or the session is count-only; pen
-      // if it's pen-only; otherwise rect — the app's default tool for area
-      // work. A baked rectangle and a freehand highlight stroke are the same
-      // pixels once saved, so there's no way to tell which one originally
-      // made an SF-bearing session; defaulting to rect (rather than
-      // highlight) matches how it's used everywhere else in the app.
+      // Auto-select tool: count if forced or the session is count-only; LF
+      // if it's LF-only (this used to fall through to rect, which left the
+      // LF tool's own Undo-pop-last-line — the only way to remove an old LF
+      // line — unreachable without first noticing and manually switching
+      // tools); pen if it's pen-only; otherwise rect — the app's default
+      // tool for area work. A baked rectangle and a freehand highlight
+      // stroke are the same pixels once saved, so there's no way to tell
+      // which one originally made an SF-bearing session; defaulting to rect
+      // (rather than highlight) matches how it's used everywhere else.
       const hasHL  = canvasHasPixels(liveHlCanvas, liveHlCtx)
       const hasPen = canvasHasPixels(livePenCanvas, livePenCtx)
-      if (forceCountTool || (!hasHL && !hasPen && liveCountMarkers.length > 0)) {
+      const hasLF  = liveLFLines.length > 0
+      if (forceCountTool || (!hasHL && !hasPen && !hasLF && liveCountMarkers.length > 0)) {
         setTool('count')
+      } else if (hasLF && !hasHL && !hasPen) {
+        setTool('lf')
       } else if (hasPen && !hasHL) {
         setTool('pen')
       } else {
