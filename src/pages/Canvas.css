@@ -285,6 +285,8 @@
 .ct-modal-btn.save:hover { background: var(--ct-accent-dim); }
 .ct-modal-btn.paint { border-color: #60a5fa; color: #60a5fa; }
 .ct-modal-btn.paint:hover { background: rgba(96,165,250,0.1); }
+.ct-modal-btn.photo { border-color: #f97316; color: #f97316; }
+.ct-modal-btn.photo:hover { background: rgba(249,115,22,0.1); }
 .ct-modal-btn.sel { background: var(--ct-accent); border-color: var(--ct-accent); color: #000; }
 .ct-modal-photos { display: flex; flex-wrap: wrap; gap: 6px; }
 .ct-modal-photos:not(:empty) { margin-bottom: 8px; }

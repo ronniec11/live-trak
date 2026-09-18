@@ -4312,7 +4312,7 @@ export default function Canvas() {
             <div ref={editPhotosRef} className="ct-modal-photos" />
             <input ref={editPhotoInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
               onChange={e => api.current.handleEditPhotoPick?.(e)} />
-            <div className="ct-modal-btn" onClick={() => editPhotoInputRef.current?.click()}>+ Add Photos</div>
+            <div className="ct-modal-btn photo" onClick={() => editPhotoInputRef.current?.click()}>+ Add Photos</div>
           </div>
           <div className="ct-modal-row">
             <div className="ct-modal-btn" onClick={() => api.current.closeEditModal?.()}>Cancel</div>
@@ -4347,7 +4347,7 @@ export default function Canvas() {
             <div ref={savePhotosRef} className="ct-modal-photos" />
             <input ref={savePhotoInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
               onChange={e => api.current.handleSavePhotoPick?.(e)} />
-            <div className="ct-modal-btn" onClick={() => savePhotoInputRef.current?.click()}>+ Add Photos</div>
+            <div className="ct-modal-btn photo" onClick={() => savePhotoInputRef.current?.click()}>+ Add Photos</div>
           </div>
           <div className="ct-modal-row">
             <div className="ct-modal-btn" onClick={() => api.current.closeSaveModal?.()}>Cancel</div>
