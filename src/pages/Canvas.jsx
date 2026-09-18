@@ -3210,6 +3210,17 @@ export default function Canvas() {
     // reading storage URLs back into a canvas without tainting it.
     async function loadCanvasFromDataUrl(dataUrl, targetW, targetH) {
       if (!dataUrl) return null
+      // A "Paint More" edit re-uploads to the SAME Storage path every time
+      // (see uploadCanvasToStorage — the path is keyed by session id, not a
+      // fresh timestamp), so the URL stored in highlight_data/pen_data never
+      // changes across edits even though the file content does. Without
+      // busting the cache here, the browser (or an intermediate CDN) can
+      // keep serving the pre-edit image on reload, making an erase/repaint
+      // look like it silently reverted even though it saved correctly.
+      // Irrelevant (and unsafe to touch) for legacy `data:` URLs, which
+      // never hit the network at all.
+      const isDataUrl = dataUrl.startsWith('data:')
+      const fetchUrl = isDataUrl ? dataUrl : dataUrl + (dataUrl.includes('?') ? '&' : '?') + '_t=' + Date.now()
       // Cross-device sessions: a source saved on desktop (uncapped flat-image
       // resolution) can be far bigger than this device needs. Decoding it at
       // native size first (a canvas potentially 80M+ pixels) then downscaling
@@ -3222,7 +3233,7 @@ export default function Canvas() {
       // materializing the full-resolution intermediate.
       if (targetW && targetH && typeof createImageBitmap === 'function') {
         try {
-          const res = await fetch(dataUrl)
+          const res = await fetch(fetchUrl, { cache: 'no-store' })
           const blob = await res.blob()
           const bitmap = await createImageBitmap(blob, {
             resizeWidth: targetW, resizeHeight: targetH, resizeQuality: 'high',
@@ -3239,7 +3250,7 @@ export default function Canvas() {
       try {
         const img = new Image()
         img.crossOrigin = 'anonymous'
-        const loaded = new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl })
+        const loaded = new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = fetchUrl })
         const timedOut = new Promise((_, reject) => setTimeout(() => reject(new Error('Image load timed out')), 10000))
         await Promise.race([loaded, timedOut])
         const c = document.createElement('canvas'); c.width = img.width; c.height = img.height
