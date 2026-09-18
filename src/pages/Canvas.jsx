@@ -2662,7 +2662,7 @@ export default function Canvas() {
       // below) — they're derived from the actual painted markup, and typing
       // a number in directly (bypassing the markup entirely) is exactly the
       // habit this is meant to prevent. The only way to change them is
-      // "+ Paint More", which recalculates from the canvas on commit. This
+      // "Edit Markup", which recalculates from the canvas on commit. This
       // used to also silently round both values to whole numbers on every
       // save (even ones that never touched these fields), since the number
       // input's displayed value was itself rounded and got read back in.
@@ -4281,15 +4281,15 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Square Footage</label>
-            <input ref={editSFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="SF" disabled title="Only changes from the actual painted markup — use + Paint More" />
+            <input ref={editSFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="SF" disabled title="Only changes from the actual painted markup — use Edit Markup" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Linear Footage (optional)</label>
-            <input ref={editLFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="LF" disabled title="Only changes from the actual painted markup — use + Paint More" />
+            <input ref={editLFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="LF" disabled title="Only changes from the actual painted markup — use Edit Markup" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Count Items</label>
-            <span ref={editCountRef} className="ct-modal-input" style={{ display: 'block', cursor: 'default', marginBottom: 6 }}>0 items</span>
+            <span ref={editCountRef} className="ct-modal-input" style={{ display: 'block', cursor: 'not-allowed', opacity: 0.5, marginBottom: 6 }} title="Only changes from the actual placed markers — use Edit Count on Canvas">0 items</span>
             <div className="ct-modal-btn paint" style={{ width: '100%', boxSizing: 'border-box' }} onClick={() => api.current.startCountEdit?.()}>+ Edit Count on Canvas</div>
           </div>
           <div className="ct-modal-field">
@@ -4317,7 +4317,7 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-row">
             <div className="ct-modal-btn" onClick={() => api.current.closeEditModal?.()}>Cancel</div>
-            <div className="ct-modal-btn paint" onClick={() => api.current.startPaintEdit?.()}>+ Paint More</div>
+            <div className="ct-modal-btn paint" onClick={() => api.current.startPaintEdit?.()}>Edit Markup</div>
             <div className="ct-modal-btn save" onClick={() => api.current.saveEdit?.()}>Save Changes</div>
           </div>
         </div>
