@@ -2652,17 +2652,21 @@ export default function Canvas() {
       if (!editTarget) return
       const {s} = editTarget
       const newName = editNameRef.current?.value.trim()
-      const newSF   = parseFloat(editSFRef.current?.value)
-      const newLF   = parseFloat(editLFRef.current?.value)
       const newDate = editDateRef.current?.value
       const sel     = editColorsRef.current?.querySelector('.ct-modal-cc.sel')
       const crewRaw  = editCrewRef.current?.value
       const hoursRaw = editHoursRef.current?.value
       const newCrew  = crewRaw  ? parseInt(crewRaw, 10) : null
       const newHours = hoursRaw ? parseFloat(hoursRaw) : null
+      // SF/LF/Count are read-only here on purpose (see the disabled inputs
+      // below) — they're derived from the actual painted markup, and typing
+      // a number in directly (bypassing the markup entirely) is exactly the
+      // habit this is meant to prevent. The only way to change them is
+      // "+ Paint More", which recalculates from the canvas on commit. This
+      // used to also silently round both values to whole numbers on every
+      // save (even ones that never touched these fields), since the number
+      // input's displayed value was itself rounded and got read back in.
       if (newName) s.name = newName
-      if (!isNaN(newSF) && newSF >= 0) s.sf = newSF
-      s.lf = (!isNaN(newLF) && newLF >= 0) ? newLF : 0
       if (newDate) s.date = newDate
       if (sel) s.color = sel.dataset.c
       s.crewSize    = (newCrew != null && !isNaN(newCrew)) ? newCrew : null
@@ -4277,20 +4281,20 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Square Footage</label>
-            <input ref={editSFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="SF" />
+            <input ref={editSFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="SF" disabled title="Only changes from the actual painted markup — use + Paint More" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Linear Footage (optional)</label>
-            <input ref={editLFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="LF" />
-          </div>
-          <div className="ct-modal-field">
-            <label className="ct-modal-lbl">Date Performed</label>
-            <input ref={editDateRef} className="ct-modal-input" type="date" />
+            <input ref={editLFRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="LF" disabled title="Only changes from the actual painted markup — use + Paint More" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Count Items</label>
             <span ref={editCountRef} className="ct-modal-input" style={{ display: 'block', cursor: 'default', marginBottom: 6 }}>0 items</span>
             <div className="ct-modal-btn paint" style={{ width: '100%', boxSizing: 'border-box' }} onClick={() => api.current.startCountEdit?.()}>+ Edit Count on Canvas</div>
+          </div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Date Performed</label>
+            <input ref={editDateRef} className="ct-modal-input" type="date" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Crew Size (optional)</label>

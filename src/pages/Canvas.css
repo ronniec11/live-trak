@@ -268,6 +268,7 @@
   font-size: 13px; padding: 7px 9px; border-radius: 6px; outline: none;
 }
 .ct-modal-input:focus { border-color: var(--ct-accent); }
+.ct-modal-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .ct-modal-colors { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
 .ct-modal-cc { width: 24px; height: 24px; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.1s; }
 .ct-modal-cc:hover { transform: scale(1.15); }
