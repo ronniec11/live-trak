@@ -3298,17 +3298,25 @@ export default function Canvas() {
 <meta charset="utf-8">
 <title>Sheet Report - ${data.sheetName}</title>
 <style>
+  @page { margin: 0.5in; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 32px; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
   .desc { font-size: 13px; font-weight: 600; color: #16a34a; margin: 2px 0; }
-  .sub { font-size: 12px; color: #6b7280; margin-bottom: 16px; }
-  img.snap { max-width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 20px; display: block; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+  .sub { font-size: 12px; color: #6b7280; margin-bottom: 14px; }
+  /* Capped by height (not just width) and orientation-independent — sized
+     to fit comfortably above the table on a single page in EITHER
+     orientation. Unconstrained height let a wide/landscape sheet image
+     scale to the full page width, which in landscape (more width, less
+     page height available) made it render tall enough to push the table
+     onto extra pages even for a small report. */
+  img.snap { display: block; max-width: 100%; max-height: 3.8in; width: auto; height: auto; margin: 0 auto 14px; border: 1px solid #e5e7eb; border-radius: 8px; page-break-inside: avoid; break-inside: avoid; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
   th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; font-weight: 700; }
   td.num, th.num { text-align: right; }
   tfoot td { font-weight: 800; border-top: 2px solid #1c1c1a; border-bottom: none; }
+  tr { page-break-inside: avoid; break-inside: avoid; }
 </style>
 </head>
 <body>
