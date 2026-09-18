@@ -156,7 +156,7 @@ export default function Profile() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <label className="label mb-0.5">Apple Pencil Only</label>
-                <p className="text-xs text-muted">On this device, markup tools (Highlight, Rectangle, Polygon, Linear Ft, Count, Pen, Erase) only respond to the Apple Pencil. A finger can still drag to pan and pinch to zoom.</p>
+                <p className="text-xs text-muted">On this device, markup tools (Highlight, Rectangle, Polygon, Linear Ft, Count, Pen, Erase) only respond to the Apple Pencil. A resting palm is ignored — panning and zooming still work with two fingers.</p>
               </div>
               <button
                 type="button"

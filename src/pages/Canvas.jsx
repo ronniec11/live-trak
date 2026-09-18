@@ -1590,7 +1590,6 @@ export default function Canvas() {
     // time a floor plan is opened.
     let pencilOnlyMode = false
     try { pencilOnlyMode = localStorage.getItem('live-trak_pencil_only') === 'true' } catch {}
-    let fingerPanning = false, fingerPanLast = null
 
     // Pencil double-tap-to-erase: Apple Pencil's own barrel double-tap
     // gesture (UIPencilInteraction) never reaches web content at all — Safari
@@ -1706,7 +1705,6 @@ export default function Canvas() {
         touchPainting = false; lastTouchPt = null; rectHandle = null
         polyDragMode = null; polyVertexIdx = null
         lfDragMode = null; lfVertexIdx = null
-        fingerPanning = false; fingerPanLast = null
         const r = drawEl.getBoundingClientRect()
         const t0 = e.touches[0], t1 = e.touches[1]
         const mx = ((t0.clientX + t1.clientX) / 2) - r.left
@@ -1719,10 +1717,14 @@ export default function Canvas() {
       const pos = getTouchPos(e)
       if (calibrating) { handleCalibClick(pos.x, pos.y); return }
       if (pencilOnlyMode && !stylusTouch) {
-        // A lone finger, with markup restricted to the Pencil, only pans —
-        // it never draws, erases, or places anything.
-        fingerPanning = true
-        fingerPanLast = pos
+        // A lone finger with Pencil-only markup on is almost always a
+        // resting palm, not a deliberate gesture — nobody drags one finger
+        // to pan while also holding a pencil down to draw. This used to
+        // treat it as a one-finger pan, which is exactly what made a palm
+        // resting on the glass drag the view around while trying to hold
+        // still and draw. It's ignored entirely now: it doesn't draw, pan,
+        // or place anything. Moving the view stays reserved for the
+        // explicit two-finger gesture above.
         return
       }
       if (stylusTouch) {
@@ -1871,12 +1873,6 @@ export default function Canvas() {
         pinchLastMid = {x: mx, y: my}
         return
       }
-      if (fingerPanning) {
-        const pos = getTouchPos(e)
-        panByScreenDelta(pos.x - fingerPanLast.x, pos.y - fingerPanLast.y)
-        fingerPanLast = pos
-        return
-      }
       if (tool === 'rect' && rectHandle) {
         const pos = getTouchPos(e)
         const pt = s2i(pos.x, pos.y)
@@ -1941,7 +1937,6 @@ export default function Canvas() {
       rectHandle = null
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
-      fingerPanning = false; fingerPanLast = null
       cancelAnimationFrame(rafId); rafId = 0
       clipLiveHLAgainstSessions()
       redrawAll(); updateSF()
