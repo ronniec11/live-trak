@@ -4348,8 +4348,10 @@ export default function Canvas() {
               onChange={e => api.current.handleEditPhotoPick?.(e)} />
             <div className="ct-modal-btn photo" onClick={() => editPhotoInputRef.current?.click()}>+ Add Photos</div>
           </div>
+          <div className="ct-modal-row" style={{ justifyContent: 'center' }}>
+            <div className="ct-modal-btn" style={{ flex: 'none', minWidth: 120 }} onClick={() => api.current.closeEditModal?.()}>Cancel</div>
+          </div>
           <div className="ct-modal-row">
-            <div className="ct-modal-btn" onClick={() => api.current.closeEditModal?.()}>Cancel</div>
             <div className="ct-modal-btn paint" onClick={() => api.current.startPaintEdit?.()}>Edit Markup</div>
             <div className="ct-modal-btn save" onClick={() => api.current.saveEdit?.()}>Save Changes</div>
           </div>
