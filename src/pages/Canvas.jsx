@@ -144,6 +144,7 @@ export default function Canvas() {
   const reportStartInputRef    = useRef(null)
   const reportEndInputRef      = useRef(null)
   const reportSessionListRef   = useRef(null)
+  const reportGenerateBtnRef   = useRef(null)
 
   const api = useRef({})
 
@@ -387,13 +388,18 @@ export default function Canvas() {
     }
 
     // ── PAGE MANAGEMENT ───────────────────────────────────────────────────────
-    function addPage(img, name, ppiIn, tileMeta = null) {
+    // sourceUrl is the original floor_plan_url this page was rendered from —
+    // kept around even for tiled pages (whose `image` is just a
+    // {width,height} placeholder, not real pixels) so a sheet report can
+    // re-render a snapshot base directly from the source file instead of
+    // trying to read pixels back out of the OSD/WebGL tile viewer.
+    function addPage(img, name, ppiIn, tileMeta = null, sourceUrl = null) {
       const sv = scaleSelectRef.current?.value || '1:8'
       const s  = SCALES[sv] || SCALES['1:8']
       const pg = {
         id: Date.now(), name, image: img,
         ppf: ppiIn ? (s.n / s.d) * ppiIn : ppf(s.n, s.d),
-        scale: sv, ppi: ppiIn || null, tileMeta,
+        scale: sv, ppi: ppiIn || null, tileMeta, sourceUrl,
         sessions: [], zoom: 1, pan: {x:0, y:0},
       }
       pages = [pg]; activePage = pg
@@ -3115,26 +3121,74 @@ export default function Canvas() {
         list.appendChild(row)
       })
     }
+    // Re-renders the ORIGINAL floor plan file (PDF or raster) straight from
+    // its source URL, independent of OpenSeadragon/tiles entirely. Used for
+    // a tiled page's report snapshot, since activePage.image there is just a
+    // {width,height} placeholder — OSD owns the actual pixels, split across
+    // a tile pyramid, and none of it is real <img>/<canvas> data we could
+    // draw from directly. Screenshotting OSD's own canvas was considered and
+    // rejected: this OSD version defaults to a WebGL drawer, which can
+    // require preserveDrawingBuffer and can taint the canvas on read-back
+    // depending on the tile source's CORS behavior — re-rendering the
+    // source file the same way the non-tiled path already does sidesteps
+    // all of that with code this file already trusts.
+    async function renderFloorPlanBase(url, targetW, targetH) {
+      const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
+      let src
+      if (isPdf) {
+        const pdfjsLib = await import('pdfjs-dist')
+        const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+        const pdfDoc = await pdfjsLib.getDocument({ url, withCredentials: false }).promise
+        const page = await pdfDoc.getPage(1)
+        const baseViewport = page.getViewport({ scale: 1 })
+        const viewport = page.getViewport({ scale: targetW / baseViewport.width })
+        const offscreen = document.createElement('canvas')
+        offscreen.width = Math.round(viewport.width); offscreen.height = Math.round(viewport.height)
+        await page.render({ canvasContext: offscreen.getContext('2d'), viewport }).promise
+        src = offscreen
+      } else {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url })
+        src = img
+      }
+      const c = document.createElement('canvas')
+      c.width = targetW; c.height = targetH
+      c.getContext('2d').drawImage(src, 0, 0, targetW, targetH)
+      return c
+    }
     // Composites just the given sessions onto the sheet's base image — same
     // 30%-highlight/full-opacity-pen convention as exportAll(), so a report
     // scoped to one session only shows that session's markup, not everyone
-    // else's. Tiled pages have no rasterized base image on this device to
-    // composite into (same limitation as exportAll).
-    function buildSheetSnapshot(sessions) {
-      if (!activePage?.image || activePage.tileMeta) return null
+    // else's.
+    async function buildSheetSnapshot(sessions) {
+      const w = activePage?.image?.width, h = activePage?.image?.height
+      if (!w || !h) return null
+      let base
+      if (activePage.tileMeta) {
+        if (!activePage.sourceUrl) return null
+        try {
+          base = await renderFloorPlanBase(activePage.sourceUrl, w, h)
+        } catch (e) {
+          console.warn('[Canvas] Snapshot base render failed for tiled page:', e)
+          return null
+        }
+      } else {
+        base = activePage.image
+      }
       const exp = document.createElement('canvas')
-      exp.width = activePage.image.width; exp.height = activePage.image.height
-      if (exp.width === 0 || exp.height === 0) return null
+      exp.width = w; exp.height = h
       const ec = exp.getContext('2d')
       if (!ec) return null
-      ec.drawImage(activePage.image, 0, 0)
+      ec.drawImage(base, 0, 0, w, h)
       ec.globalAlpha = 0.3
       sessions.forEach(s => { if (s.hlCanvas) ec.drawImage(s.hlCanvas, 0, 0) })
       ec.globalAlpha = 1
       sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0) })
       return exp.toDataURL('image/png')
     }
-    function generateSheetReport() {
+    async function generateSheetReport() {
       if (!activePage) return
       const list = reportSessionListRef.current
       const checkedIds = list
@@ -3145,17 +3199,21 @@ export default function Canvas() {
         .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))
       if (!included.length) { alert('Select at least one session to include in the report.'); return }
 
+      const genBtn = reportGenerateBtnRef.current
+      if (genBtn) { genBtn.textContent = 'Generating…'; genBtn.style.pointerEvents = 'none'; genBtn.style.opacity = '0.6' }
+
       const [start, end] = getReportDateBounds()
       const range = reportScope === 'day' ? formatDate(start)
         : reportScope === 'range' ? `${formatDate(start)} – ${formatDate(end)}`
         : 'All Time'
+      const snapshot = await buildSheetSnapshot(included)
 
       lastReportData = {
         sheetName: activePage.name,
         label: projectName || activePage.name || 'Floor Plan',
         range,
         generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
-        snapshot: buildSheetSnapshot(included),
+        snapshot,
         rows: included.map(s => ({
           date: formatDate(s.date), time: s.time || '', name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
@@ -3165,6 +3223,7 @@ export default function Canvas() {
         totalCrew:  included.reduce((a, s) => a + (s.crewSize || 0), 0),
         totalHours: included.reduce((a, s) => a + (s.hoursWorked || 0), 0),
       }
+      if (genBtn) { genBtn.textContent = 'Generate Report'; genBtn.style.pointerEvents = ''; genBtn.style.opacity = '' }
       renderSheetReport()
       closeReportSetup()
       if (reportModalRef.current) reportModalRef.current.classList.add('open')
@@ -3697,7 +3756,7 @@ export default function Canvas() {
             width: Math.round(pg.tile_meta.width * osdOverlayScale),
             height: Math.round(pg.tile_meta.height * osdOverlayScale),
           }
-          addPage(placeholderImg, pg.name, 72 * TILE_BASE_SCALE * osdOverlayScale, pg.tile_meta)
+          addPage(placeholderImg, pg.name, 72 * TILE_BASE_SCALE * osdOverlayScale, pg.tile_meta, url)
           setupOsdViewer(pg.tile_meta)
         } else {
         const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
@@ -3763,7 +3822,7 @@ export default function Canvas() {
           }
         }
 
-        addPage(img, pg.name, ppi)
+        addPage(img, pg.name, ppi, null, url)
 
         // Cache PDF render as PNG for faster future loads
         if (isPdf && !pg.cached_image_url) {
@@ -4291,7 +4350,7 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-row">
             <div className="ct-modal-btn" onClick={() => api.current.closeReportSetup?.()}>Cancel</div>
-            <div className="ct-modal-btn save" onClick={() => api.current.generateSheetReport?.()}>Generate Report</div>
+            <div ref={reportGenerateBtnRef} className="ct-modal-btn save" onClick={() => api.current.generateSheetReport?.()}>Generate Report</div>
           </div>
         </div>
       </div>
