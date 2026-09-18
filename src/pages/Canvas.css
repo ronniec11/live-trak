@@ -248,6 +248,11 @@
   display: none; position: fixed; inset: 0; z-index: 500;
   background: rgba(0,0,0,0.6); align-items: center; justify-content: center;
 }
+/* Opened from inside the History calendar (z-index 600) — without this it
+   rendered behind it, forcing History to be closed first to see it. */
+.ct-modal-overlay-over-cal {
+  z-index: 650;
+}
 .ct-modal-overlay.open { display: flex; }
 .ct-modal-box {
   background: var(--ct-surface); border: 1px solid var(--ct-border);

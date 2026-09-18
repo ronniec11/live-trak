@@ -4261,7 +4261,7 @@ export default function Canvas() {
         </div>
       </div>
 
-      <div ref={reportSetupModalRef} className="ct-modal-overlay">
+      <div ref={reportSetupModalRef} className="ct-modal-overlay ct-modal-overlay-over-cal">
         <div className="ct-modal-box" style={{ width: 340 }}>
           <div className="ct-modal-title">Sheet Report</div>
           <div className="ct-modal-field">
