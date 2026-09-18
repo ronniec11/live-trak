@@ -133,6 +133,17 @@ export default function Canvas() {
   const reportModalRef   = useRef(null)
   const reportBodyRef    = useRef(null)
   const printFrameRef    = useRef(null)
+  // sheet report setup modal (day/range/all-time + per-session picker)
+  const reportSetupModalRef    = useRef(null)
+  const reportScopeDayBtnRef   = useRef(null)
+  const reportScopeRangeBtnRef = useRef(null)
+  const reportScopeAllBtnRef   = useRef(null)
+  const reportDayFieldRef      = useRef(null)
+  const reportRangeFieldRef    = useRef(null)
+  const reportDayInputRef      = useRef(null)
+  const reportStartInputRef    = useRef(null)
+  const reportEndInputRef      = useRef(null)
+  const reportSessionListRef   = useRef(null)
 
   const api = useRef({})
 
@@ -3022,73 +3033,173 @@ export default function Canvas() {
       return new Date(ds+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
     }
 
-    // Renders the report INTO an in-app overlay (with its own Close button)
-    // rather than window.open()-ing a separate tab/window — on an
+    // ── SHEET REPORT ─────────────────────────────────────────────────────────
+    // Scoped to the sheet currently open (activePage), not every page in the
+    // project — a day, a date range, or all time, with a checkbox per
+    // matching session so a single day can still be narrowed down to just
+    // one session. Renders INTO an in-app overlay (with its own Close
+    // button) rather than window.open()-ing a separate tab/window — on an
     // installed-to-homescreen iPad PWA, window.open() either fails or just
     // navigates the single PWA window away from the app with no visible
     // browser chrome to get back with, leaving the user stranded on the
     // report with no way back. Printing is handled separately, via a
     // hidden iframe — see printDailyReportPDF() below.
-    // Shared data for both the in-app overlay and the print/PDF output —
-    // built once, rendered two ways below.
-    function buildReportData() {
-      const days = [...dayRecords].sort((a, b) => b.date.localeCompare(a.date))
-      const maxSF = Math.max(...days.map(d => d.sessions.reduce((a, s) => a + s.sf, 0)), 1)
-      let totalSF = 0, totalLF = 0, totalCrew = 0, totalHours = 0
-      const dayRows = days.map(d => {
-        const sf = d.sessions.reduce((a, s) => a + s.sf, 0)
-        const lf = d.sessions.reduce((a, s) => a + (s.lf || 0), 0)
-        const crew = d.sessions.reduce((a, s) => a + (s.crewSize || 0), 0)
-        const hours = d.sessions.reduce((a, s) => a + (s.hoursWorked || 0), 0)
-        totalSF += sf; totalLF += lf; totalCrew += crew; totalHours += hours
-        return {
-          date: d.date, dayColor: d.dayColor, sf, lf, crew, hours,
-          pct: d.target > 0 ? Math.round((sf / d.target) * 100) : null,
-          barPct: sf > 0 ? Math.max((sf / maxSF) * 100, 2) : 0,
-          sessionNames: d.sessions.map(s => s.name).join(', '),
-        }
-      })
-      return {
-        dayRows, totalSF, totalLF, totalCrew, totalHours,
-        label: projectName || activePage?.name || 'Floor Plan',
-        generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
-        range: days.length ? `${formatDate(days[days.length - 1].date)} – ${formatDate(days[0].date)}` : '',
-      }
-    }
+    let reportScope = 'day'    // 'day' | 'range' | 'all'
+    let lastReportData = null  // shared between the on-screen view and Print
 
-    function reportRowsHtml(data, barClass, trackClass, fillClass, numClass, sessClass) {
-      return data.dayRows.map(d => `
+    function openReportSetup() {
+      if (!activePage) return
+      reportScope = 'day'
+      const today = getCurrentDate()
+      if (reportDayInputRef.current)   reportDayInputRef.current.value   = calSelectedDate || today
+      if (reportStartInputRef.current) reportStartInputRef.current.value = calSelectedDate || today
+      if (reportEndInputRef.current)   reportEndInputRef.current.value   = today
+      syncReportScopeUI()
+      renderReportSessionList()
+      if (reportSetupModalRef.current) reportSetupModalRef.current.classList.add('open')
+    }
+    function closeReportSetup() {
+      if (reportSetupModalRef.current) reportSetupModalRef.current.classList.remove('open')
+    }
+    function setReportScope(scope) {
+      reportScope = scope
+      syncReportScopeUI()
+      renderReportSessionList()
+    }
+    function syncReportScopeUI() {
+      if (reportScopeDayBtnRef.current)   reportScopeDayBtnRef.current.classList.toggle('sel', reportScope === 'day')
+      if (reportScopeRangeBtnRef.current) reportScopeRangeBtnRef.current.classList.toggle('sel', reportScope === 'range')
+      if (reportScopeAllBtnRef.current)   reportScopeAllBtnRef.current.classList.toggle('sel', reportScope === 'all')
+      if (reportDayFieldRef.current)   reportDayFieldRef.current.style.display   = reportScope === 'day'   ? '' : 'none'
+      if (reportRangeFieldRef.current) reportRangeFieldRef.current.style.display = reportScope === 'range' ? '' : 'none'
+    }
+    // [start, end] inclusive, both null for 'all' (no date filtering at all).
+    function getReportDateBounds() {
+      if (reportScope === 'day') {
+        const d = reportDayInputRef.current?.value || getCurrentDate()
+        return [d, d]
+      }
+      if (reportScope === 'range') {
+        const s = reportStartInputRef.current?.value || getCurrentDate()
+        const e = reportEndInputRef.current?.value || getCurrentDate()
+        return s <= e ? [s, e] : [e, s]
+      }
+      return [null, null]
+    }
+    function renderReportSessionList() {
+      const list = reportSessionListRef.current
+      if (!list || !activePage) return
+      list.innerHTML = ''
+      const [start, end] = getReportDateBounds()
+      const matches = activePage.sessions
+        .filter(s => !start || (s.date >= start && s.date <= end))
+        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))
+      if (!matches.length) {
+        list.innerHTML = '<div style="font-size:12px;color:var(--ct-muted);padding:4px 0 8px">No sessions in this range.</div>'
+        return
+      }
+      matches.forEach(s => {
+        const row = document.createElement('label')
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;cursor:pointer;'
+        const cb = document.createElement('input')
+        cb.type = 'checkbox'; cb.checked = true; cb.value = s.id
+        const dot = document.createElement('span')
+        dot.style.cssText = `width:9px;height:9px;border-radius:3px;background:${s.color || '#4ade80'};flex-shrink:0;`
+        const txt = document.createElement('span')
+        txt.style.cssText = 'flex:1;color:var(--ct-text);'
+        txt.textContent = `${s.name} — ${formatDate(s.date)}${s.time ? ' · ' + s.time : ''}`
+        const amt = document.createElement('span')
+        amt.style.cssText = 'color:var(--ct-muted);'
+        amt.textContent = s.sf > 0 ? Math.round(s.sf).toLocaleString() + ' SF' : (s.lf ? Math.round(s.lf).toLocaleString() + ' LF' : '')
+        row.append(cb, dot, txt, amt)
+        list.appendChild(row)
+      })
+    }
+    // Composites just the given sessions onto the sheet's base image — same
+    // 30%-highlight/full-opacity-pen convention as exportAll(), so a report
+    // scoped to one session only shows that session's markup, not everyone
+    // else's. Tiled pages have no rasterized base image on this device to
+    // composite into (same limitation as exportAll).
+    function buildSheetSnapshot(sessions) {
+      if (!activePage?.image || activePage.tileMeta) return null
+      const exp = document.createElement('canvas')
+      exp.width = activePage.image.width; exp.height = activePage.image.height
+      if (exp.width === 0 || exp.height === 0) return null
+      const ec = exp.getContext('2d')
+      if (!ec) return null
+      ec.drawImage(activePage.image, 0, 0)
+      ec.globalAlpha = 0.3
+      sessions.forEach(s => { if (s.hlCanvas) ec.drawImage(s.hlCanvas, 0, 0) })
+      ec.globalAlpha = 1
+      sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0) })
+      return exp.toDataURL('image/png')
+    }
+    function generateSheetReport() {
+      if (!activePage) return
+      const list = reportSessionListRef.current
+      const checkedIds = list
+        ? Array.from(list.querySelectorAll('input[type=checkbox]:checked')).map(cb => Number(cb.value))
+        : []
+      const included = activePage.sessions
+        .filter(s => checkedIds.includes(s.id))
+        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))
+      if (!included.length) { alert('Select at least one session to include in the report.'); return }
+
+      const [start, end] = getReportDateBounds()
+      const range = reportScope === 'day' ? formatDate(start)
+        : reportScope === 'range' ? `${formatDate(start)} – ${formatDate(end)}`
+        : 'All Time'
+
+      lastReportData = {
+        sheetName: activePage.name,
+        label: projectName || activePage.name || 'Floor Plan',
+        range,
+        generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+        snapshot: buildSheetSnapshot(included),
+        rows: included.map(s => ({
+          date: formatDate(s.date), time: s.time || '', name: s.name, color: s.color,
+          sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
+        })),
+        totalSF:    included.reduce((a, s) => a + s.sf, 0),
+        totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
+        totalCrew:  included.reduce((a, s) => a + (s.crewSize || 0), 0),
+        totalHours: included.reduce((a, s) => a + (s.hoursWorked || 0), 0),
+      }
+      renderSheetReport()
+      closeReportSetup()
+      if (reportModalRef.current) reportModalRef.current.classList.add('open')
+    }
+    function reportRowsHtml(data, numClass) {
+      return data.rows.map(r => `
         <tr>
-          <td>${formatDate(d.date)}</td>
-          <td class="${sessClass}">${d.sessionNames || '–'}</td>
-          <td class="${barClass}"><div class="${trackClass}"><div class="${fillClass}" style="width:${d.barPct}%;background:${d.dayColor || '#4ade80'}"></div></div></td>
-          <td class="${numClass}">${Math.round(d.sf).toLocaleString()}</td>
-          <td class="${numClass}">${d.lf ? Math.round(d.lf).toLocaleString() : '–'}</td>
-          <td class="${numClass}">${d.crew || '–'}</td>
-          <td class="${numClass}">${d.hours ? d.hours.toFixed(1) : '–'}</td>
-          <td class="${numClass}">${d.pct !== null ? d.pct + '%' : '–'}</td>
+          <td>${r.date}</td>
+          <td>${r.time || '–'}</td>
+          <td><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${r.color || '#4ade80'};margin-right:6px;vertical-align:middle;"></span>${r.name}</td>
+          <td class="${numClass}">${r.sf ? Math.round(r.sf).toLocaleString() : '–'}</td>
+          <td class="${numClass}">${r.lf ? Math.round(r.lf).toLocaleString() : '–'}</td>
+          <td class="${numClass}">${r.crew || '–'}</td>
+          <td class="${numClass}">${r.hours ? r.hours.toFixed(1) : '–'}</td>
         </tr>`).join('')
     }
-
-    function openDailyReport() {
-      if (!dayRecords.length) { alert('No history to report yet — save a session first.'); return }
-      const data = buildReportData()
-      const rows = reportRowsHtml(data, 'ct-rep-bar-cell', 'ct-rep-bar-track', 'ct-rep-bar-fill', 'ct-rep-num', 'ct-rep-sess')
+    function renderSheetReport() {
+      const data = lastReportData
+      if (!data) return
+      const rows = reportRowsHtml(data, 'ct-rep-num')
       const html = `
-        <div class="ct-rep-title">${data.label}</div>
+        <div class="ct-rep-title">${data.label} — ${data.sheetName}</div>
         ${projectDescription ? `<div class="ct-rep-desc">${projectDescription}</div>` : ''}
         <div class="ct-rep-sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
+        ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
           <thead>
             <tr>
               <th>Date</th>
-              <th>Session(s)</th>
-              <th>SF / Day</th>
+              <th>Time</th>
+              <th>Session</th>
               <th class="ct-rep-num">SF</th>
               <th class="ct-rep-num">LF</th>
               <th class="ct-rep-num">Crew</th>
               <th class="ct-rep-num">Hours</th>
-              <th class="ct-rep-num">% of Target</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -3101,13 +3212,10 @@ export default function Canvas() {
               <td class="ct-rep-num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
               <td class="ct-rep-num">${data.totalCrew || '–'}</td>
               <td class="ct-rep-num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
-              <td class="ct-rep-num"></td>
             </tr>
           </tfoot>
         </table>`
-
       if (reportBodyRef.current) reportBodyRef.current.innerHTML = html
-      if (reportModalRef.current) reportModalRef.current.classList.add('open')
     }
     function closeDailyReport() {
       if (reportModalRef.current) reportModalRef.current.classList.remove('open')
@@ -3122,46 +3230,43 @@ export default function Canvas() {
     // chrome for it to capture, and no new window that could strand the
     // user the way window.open() did.
     function printDailyReportPDF() {
-      if (!dayRecords.length) { alert('No history to report yet — save a session first.'); return }
-      const data = buildReportData()
-      const rows = reportRowsHtml(data, 'bar-cell', 'bar-track', 'bar-fill', 'num', 'sess')
+      const data = lastReportData
+      if (!data) { alert('Generate a report first.'); return }
+      const rows = reportRowsHtml(data, 'num')
       const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Daily Production Report - ${data.label}</title>
+<title>Sheet Report - ${data.sheetName}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 32px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
   .desc { font-size: 13px; font-weight: 600; color: #16a34a; margin: 2px 0; }
-  .sub { font-size: 12px; color: #6b7280; margin-bottom: 20px; }
+  .sub { font-size: 12px; color: #6b7280; margin-bottom: 16px; }
+  img.snap { max-width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 20px; display: block; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
   th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; font-weight: 700; }
   td.num, th.num { text-align: right; }
-  .sess { max-width: 160px; }
-  .bar-cell { width: 160px; }
-  .bar-track { background: #f1f1ef; border-radius: 3px; height: 10px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 3px; }
   tfoot td { font-weight: 800; border-top: 2px solid #1c1c1a; border-bottom: none; }
 </style>
 </head>
 <body>
-  <h1>${data.label}</h1>
+  <h1>${data.label} — ${data.sheetName}</h1>
   ${projectDescription ? `<div class="desc">${projectDescription}</div>` : ''}
   <div class="sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
+  ${data.snapshot ? `<img class="snap" src="${data.snapshot}" />` : ''}
   <table>
     <thead>
       <tr>
         <th>Date</th>
-        <th>Session(s)</th>
-        <th>SF / Day</th>
+        <th>Time</th>
+        <th>Session</th>
         <th class="num">SF</th>
         <th class="num">LF</th>
         <th class="num">Crew</th>
         <th class="num">Hours</th>
-        <th class="num">% of Target</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -3174,7 +3279,6 @@ export default function Canvas() {
         <td class="num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
         <td class="num">${data.totalCrew || '–'}</td>
         <td class="num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
-        <td class="num"></td>
       </tr>
     </tfoot>
   </table>
@@ -3805,11 +3909,13 @@ export default function Canvas() {
     if (editModalRef.current) editModalRef.current.addEventListener('click', e => { if (e.target === editModalRef.current) closeEditModal() })
     if (histModalRef.current) histModalRef.current.addEventListener('click', e => { if (e.target === histModalRef.current) closeHistory() })
     if (saveModalRef.current) saveModalRef.current.addEventListener('click', e => { if (e.target === saveModalRef.current) closeSaveModal() })
+    if (reportSetupModalRef.current) reportSetupModalRef.current.addEventListener('click', e => { if (e.target === reportSetupModalRef.current) closeReportSetup() })
 
     api.current = {
       setTool, startCalib, cancelCalib,
       doZoom, resetView,
-      openHistory, closeHistory, calPrevMonth, calNextMonth, openDailyReport, closeDailyReport, printDailyReportPDF,
+      openHistory, closeHistory, calPrevMonth, calNextMonth, closeDailyReport, printDailyReportPDF,
+      openReportSetup, closeReportSetup, setReportScope, renderReportSessionList, generateSheetReport,
       closeEditModal, saveEdit, startPaintEdit, startCountEdit,
       cancelSessionEdit, commitSessionEdit,
       closeSaveModal, confirmSaveSession,
@@ -4149,8 +4255,43 @@ export default function Canvas() {
             </div>
           </div>
           <div className="ct-cal-footer">
-            <button className="ct-cal-btn" onClick={() => api.current.openDailyReport?.()}>Report</button>
+            <button className="ct-cal-btn" onClick={() => api.current.openReportSetup?.()}>Report</button>
             <button className="ct-cal-btn" onClick={() => api.current.closeHistory?.()}>Done</button>
+          </div>
+        </div>
+      </div>
+
+      <div ref={reportSetupModalRef} className="ct-modal-overlay">
+        <div className="ct-modal-box" style={{ width: 340 }}>
+          <div className="ct-modal-title">Sheet Report</div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Scope</label>
+            <div className="ct-modal-row" style={{ marginTop: 4 }}>
+              <div ref={reportScopeDayBtnRef}   className="ct-modal-btn sel" onClick={() => api.current.setReportScope?.('day')}>Day</div>
+              <div ref={reportScopeRangeBtnRef} className="ct-modal-btn"     onClick={() => api.current.setReportScope?.('range')}>Range</div>
+              <div ref={reportScopeAllBtnRef}   className="ct-modal-btn"     onClick={() => api.current.setReportScope?.('all')}>All Time</div>
+            </div>
+          </div>
+          <div ref={reportDayFieldRef} className="ct-modal-field">
+            <label className="ct-modal-lbl">Date</label>
+            <input ref={reportDayInputRef} className="ct-modal-input" type="date"
+              onChange={() => api.current.renderReportSessionList?.()} />
+          </div>
+          <div ref={reportRangeFieldRef} className="ct-modal-field" style={{ display: 'none' }}>
+            <label className="ct-modal-lbl">From</label>
+            <input ref={reportStartInputRef} className="ct-modal-input" type="date"
+              onChange={() => api.current.renderReportSessionList?.()} />
+            <label className="ct-modal-lbl" style={{ marginTop: 8 }}>To</label>
+            <input ref={reportEndInputRef} className="ct-modal-input" type="date"
+              onChange={() => api.current.renderReportSessionList?.()} />
+          </div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Sessions to include</label>
+            <div ref={reportSessionListRef} style={{ maxHeight: 220, overflowY: 'auto', marginTop: 4 }} />
+          </div>
+          <div className="ct-modal-row">
+            <div className="ct-modal-btn" onClick={() => api.current.closeReportSetup?.()}>Cancel</div>
+            <div className="ct-modal-btn save" onClick={() => api.current.generateSheetReport?.()}>Generate Report</div>
           </div>
         </div>
       </div>
@@ -4158,7 +4299,7 @@ export default function Canvas() {
       <div ref={reportModalRef} className="ct-report-overlay">
         <div className="ct-report-box">
           <div className="ct-report-header">
-            <div className="ct-report-hdr-title">Daily Production Report</div>
+            <div className="ct-report-hdr-title">Sheet Report</div>
             <div className="ct-report-hdr-btns">
               <button className="ct-cal-btn" onClick={() => api.current.printDailyReportPDF?.()}>Print / Save as PDF</button>
               <button className="ct-cal-btn" onClick={() => api.current.closeDailyReport?.()}>Close</button>
