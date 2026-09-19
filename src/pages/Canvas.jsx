@@ -4017,14 +4017,23 @@ export default function Canvas() {
             img = offscreen
           } else {
             img = new Image()
-            await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl })
+            // Reject with a real Error, not the raw load-failure event —
+            // an event object has no .message, which made this show a
+            // useless generic "Check console for details" with nothing
+            // console-visible on an iPad anyway.
+            await new Promise((resolve, reject) => {
+              img.onload = resolve
+              img.onerror = () => reject(new Error('Failed to decode the cached image file'))
+              img.src = blobUrl
+            })
           }
         } finally {
           URL.revokeObjectURL(blobUrl)
         }
       } catch (e) {
         console.error('[Canvas] Failed to render cached floor plan:', e)
-        uzShow('', 'Failed to load offline copy', e.message || 'Check console for details')
+        const kind = cachedPage.sourceIsPdf ? 'PDF' : 'image'
+        uzShow('', 'Failed to load offline copy', `${kind} render error: ${e?.message || String(e) || 'unknown'}`)
         return
       }
 
