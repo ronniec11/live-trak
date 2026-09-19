@@ -23,9 +23,16 @@ import { dbPut, dbGet, dbGetAll, requestPersistentStorage } from './offlineDb'
 
 const isIPadOrSafari = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
   || /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
-// Same cap used elsewhere in the app (Canvas.jsx's MAX_DIM) to keep a
-// rendered floor plan from being too large a canvas for iOS Safari.
-const MAX_CACHED_DIM = 4096
+// A tiled page's ONLINE path caps its overlay canvases at 2048 specifically
+// because every session on the sheet gets its own full-size hl+pen canvas
+// resident at once (see Canvas.jsx's OVERLAY_MAX_DIM) — a heavily-marked-up
+// sheet at 4096 was confirmed to crash iOS Safari from memory pressure
+// (multiple 4096×4096 canvases, ~64MB each, add up fast). The offline
+// render is exactly that same "many full-size session canvases" shape —
+// initFromCache decodes every cached session's markup to match this same
+// size — so it needs the same iPad-specific cap, not the more generous one
+// a non-tiled desktop page can afford.
+const MAX_CACHED_DIM = isIPadOrSafari ? 2048 : 4096
 
 async function fetchAsBlob(url) {
   const res = await fetch(url)
