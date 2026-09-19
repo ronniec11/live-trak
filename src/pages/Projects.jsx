@@ -4,7 +4,7 @@ import Layout from '../components/Layout'
 import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { listCachedProjects } from '../lib/offlineCache'
+import { listCachedProjects, downloadProjectForOffline, isProjectCached } from '../lib/offlineCache'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 
@@ -230,6 +230,58 @@ const GripIcon = () => (
   </svg>
 )
 
+// Compact icon-only download for full offline mode (see
+// src/lib/offlineCache.js) — sits on the project card itself so it's
+// available at a glance for whichever projects a foreman is about to head
+// out to, without needing to open each one first.
+function DownloadOfflineButton({ projectId }) {
+  const [state, setState] = useState('idle') // 'idle' | 'downloading' | 'done' | 'error'
+
+  useEffect(() => {
+    let cancelled = false
+    isProjectCached(projectId).then(cached => { if (!cancelled && cached) setState('done') })
+    return () => { cancelled = true }
+  }, [projectId])
+
+  async function handleDownload(e) {
+    e.stopPropagation()
+    if (state === 'downloading') return
+    setState('downloading')
+    try {
+      await downloadProjectForOffline(projectId)
+      setState('done')
+    } catch (err) {
+      console.error('[Projects] Download for offline failed:', err)
+      setState('error')
+      setTimeout(() => setState('idle'), 3000)
+    }
+  }
+
+  const titles = {
+    idle: 'Download for offline use',
+    downloading: 'Downloading…',
+    done: 'Downloaded for offline use — tap to refresh',
+    error: 'Download failed — tap to retry',
+  }
+
+  return (
+    <button
+      onClick={handleDownload}
+      disabled={state === 'downloading'}
+      className={`btn-ghost p-1.5 ml-1 shrink-0 ${state === 'done' ? 'text-accent' : state === 'error' ? 'text-red-500' : 'text-muted'}`}
+      title={titles[state]}
+    >
+      <svg className={`w-4 h-4 ${state === 'downloading' ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        {state === 'downloading' ? (
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+        ) : (
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        )}
+      </svg>
+    </button>
+  )
+}
+
 function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage, canViewCost, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(project.name)
@@ -415,6 +467,7 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
             }}
           />
         )}
+        {!editing && <DownloadOfflineButton projectId={project.id} />}
       </div>
 
       {/* Stats grid */}
