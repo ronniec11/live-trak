@@ -37,6 +37,23 @@ async function cachePage(pg, projectId, onProgress) {
   const sourceBlob = sourceUrl ? await fetchAsBlob(sourceUrl) : null
   const sourceIsPdf = !!sourceUrl && (/\.pdf($|\?)/i.test(sourceUrl) || sourceUrl.toLowerCase().includes('.pdf'))
 
+  // pdf.js is dynamically imported (kept out of the main bundle since most
+  // pages never need it — a tiled page like this one normally renders via
+  // OpenSeadragon online and never touches pdf.js at all), which makes that
+  // import itself a network request the first time anything in the page's
+  // lifetime actually needs it. Triggering it now, while there's still a
+  // connection, gets it into the browser's cache before offline rendering
+  // (initFromCache in Canvas.jsx) ever needs it — otherwise the offline
+  // render fails trying to fetch pdf.js's code, not the floor plan itself.
+  if (sourceIsPdf) {
+    try {
+      await import('pdfjs-dist')
+      await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+    } catch (e) {
+      console.warn('[offlineCache] Failed to pre-warm pdf.js for offline use:', e)
+    }
+  }
+
   const { data: dbSessions, error } = await supabase
     .from('sessions')
     .select('*, profiles(full_name, avatar_color)')
