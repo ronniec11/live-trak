@@ -72,25 +72,28 @@ function levelDims(fullW, fullH, maxLevel, level) {
   return { w: Math.max(1, Math.ceil(fullW / factor)), h: Math.max(1, Math.ceil(fullH / factor)) }
 }
 
-// Picks the smallest pyramid level that still fits within MAX_CACHED_DIM
-// (falling back to the very smallest level if even that doesn't fit — it's
-// generated small specifically so it always does, see tileGenerator.js's
-// pyramidLevels()) and stitches that level's tiles into one flat image.
-// A handful of missing/failed individual tiles are left blank rather than
-// failing the whole page — better an offline copy with a small gap than no
-// offline copy at all.
+// Picks the SMALLEST level that's still at least as big as MAX_CACHED_DIM
+// in some dimension (falling back to the largest level of all if even that
+// one is smaller — a sheet whose full pyramid never reaches the cap), not
+// the largest level that fits UNDER it. Pyramid levels only come in
+// power-of-2 steps, so "fits under" can land well below the target (e.g.
+// ~1300px instead of 2048px on a large sheet) and looks noticeably blurrier
+// than necessary — stitching a level that's a bit larger than the target
+// and downscaling it precisely afterward stays sharp, the same as scaling
+// any other image down.
 async function stitchTilesToImage(tileMeta) {
   const { baseUrl, width, height, tileSize, minLevel, maxLevel, format } = tileMeta
-  let level = minLevel
-  let dims = levelDims(width, height, maxLevel, minLevel)
-  for (let l = maxLevel; l >= minLevel; l--) {
+  let level = maxLevel
+  let dims = levelDims(width, height, maxLevel, maxLevel)
+  for (let l = minLevel; l <= maxLevel; l++) {
     const d = levelDims(width, height, maxLevel, l)
-    if (d.w <= MAX_CACHED_DIM && d.h <= MAX_CACHED_DIM) { level = l; dims = d; break }
+    level = l; dims = d
+    if (d.w >= MAX_CACHED_DIM || d.h >= MAX_CACHED_DIM) break
   }
 
-  const canvas = document.createElement('canvas')
-  canvas.width = dims.w; canvas.height = dims.h
-  const ctx = canvas.getContext('2d')
+  const stitched = document.createElement('canvas')
+  stitched.width = dims.w; stitched.height = dims.h
+  const sctx = stitched.getContext('2d')
 
   const cols = Math.ceil(dims.w / tileSize)
   const rows = Math.ceil(dims.h / tileSize)
@@ -100,7 +103,7 @@ async function stitchTilesToImage(tileMeta) {
       jobs.push((async () => {
         try {
           const img = await loadImage(`${baseUrl}/${level}/${col}_${row}.${format}`)
-          ctx.drawImage(img, col * tileSize, row * tileSize)
+          sctx.drawImage(img, col * tileSize, row * tileSize)
         } catch (e) {
           console.warn('[offlineCache] Tile failed, leaving blank:', level, col, row, e)
         }
@@ -108,7 +111,21 @@ async function stitchTilesToImage(tileMeta) {
     }
   }
   await Promise.all(jobs)
-  return new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
+
+  // The chosen level can come in larger than the cap (that's the point —
+  // see above) — downscale to it exactly, sharper than either an
+  // undersized level or upscaling one.
+  if (dims.w <= MAX_CACHED_DIM && dims.h <= MAX_CACHED_DIM) {
+    return new Promise(resolve => stitched.toBlob(resolve, 'image/png'))
+  }
+  const scale = MAX_CACHED_DIM / Math.max(dims.w, dims.h)
+  const final = document.createElement('canvas')
+  final.width = Math.round(dims.w * scale); final.height = Math.round(dims.h * scale)
+  const fctx = final.getContext('2d')
+  fctx.imageSmoothingEnabled = true
+  fctx.imageSmoothingQuality = 'high'
+  fctx.drawImage(stitched, 0, 0, final.width, final.height)
+  return new Promise(resolve => final.toBlob(resolve, 'image/png'))
 }
 
 // Renders a PDF's first page to a PNG Blob, live, via the given URL —
