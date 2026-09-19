@@ -82,7 +82,7 @@ export async function downloadProjectForOffline(projectId, onProgress) {
 
   for (const pg of (pages || [])) {
     onProgress?.(`Downloading ${pg.name}…`)
-    await cachePage(pg, projectId)
+    await cachePage(pg, projectId, onProgress)
   }
 
   await dbPut('cachedProjects', {

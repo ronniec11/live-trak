@@ -234,7 +234,7 @@ const GripIcon = () => (
 // src/lib/offlineCache.js) — sits on the project card itself so it's
 // available at a glance for whichever projects a foreman is about to head
 // out to, without needing to open each one first.
-function DownloadOfflineButton({ projectId }) {
+function DownloadOfflineButton({ projectId, projectName, onStatus }) {
   const [state, setState] = useState('idle') // 'idle' | 'downloading' | 'done' | 'error'
 
   useEffect(() => {
@@ -247,12 +247,15 @@ function DownloadOfflineButton({ projectId }) {
     e.stopPropagation()
     if (state === 'downloading') return
     setState('downloading')
+    onStatus?.({ text: `Downloading ${projectName} for offline use…`, isError: false })
     try {
-      await downloadProjectForOffline(projectId)
+      await downloadProjectForOffline(projectId, text => onStatus?.({ text, isError: false }))
       setState('done')
+      onStatus?.({ text: `${projectName} downloaded for offline use.`, isError: false })
     } catch (err) {
       console.error('[Projects] Download for offline failed:', err)
       setState('error')
+      onStatus?.({ text: `Failed to download ${projectName}: ${err.message || 'check console'}`, isError: true })
       setTimeout(() => setState('idle'), 3000)
     }
   }
@@ -282,7 +285,7 @@ function DownloadOfflineButton({ projectId }) {
   )
 }
 
-function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage, canViewCost, canReorder, isDragging, isDropTarget, onDragStart }) {
+function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateProject, canManage, canViewCost, canReorder, isDragging, isDropTarget, onDragStart, onDownloadStatus }) {
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(project.name)
   const [editDesc, setEditDesc] = useState(project.description || '')
@@ -467,7 +470,7 @@ function ProjectCard({ project, todaySF, allTimeSF, onClick, onRename, onUpdateP
             }}
           />
         )}
-        {!editing && <DownloadOfflineButton projectId={project.id} />}
+        {!editing && <DownloadOfflineButton projectId={project.id} projectName={project.name} onStatus={onDownloadStatus} />}
       </div>
 
       {/* Stats grid */}
@@ -583,6 +586,11 @@ export default function Projects() {
   // (standalone) web apps can silently swallow alert(), so a real DOM
   // element is the only reliable way to surface a save failure there.
   const [reorderError, setReorderError] = useState('')
+  // Shared with each card's DownloadOfflineButton so a status/failure is
+  // actually visible — alert() has been confirmed to silently do nothing
+  // on this iPad's home-screen (standalone) install, and the button's
+  // spin-then-revert on its own gives no indication of what happened.
+  const [downloadBanner, setDownloadBanner] = useState({ text: '', isError: false })
 
   // Reordering is only meaningful against the full, unfiltered list — with a
   // search/status filter active there's no sensible place to drop a card
@@ -777,6 +785,18 @@ export default function Projects() {
           {reorderError} <strong>(tap to dismiss)</strong>
         </div>
       )}
+      {downloadBanner.text && (
+        <div
+          onClick={() => setDownloadBanner({ text: '', isError: false })}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+            background: downloadBanner.isError ? '#ef4444' : '#60a5fa', color: '#000', fontSize: '12px',
+            padding: '10px 12px', wordBreak: 'break-word', cursor: 'pointer',
+          }}
+        >
+          {downloadBanner.text} <strong>(tap to dismiss)</strong>
+        </div>
+      )}
       <div className="max-w-5xl mx-auto px-4 py-6">
         {offlineMode && (
           <div className="mb-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
@@ -897,6 +917,7 @@ export default function Projects() {
                 onDragStart={handleDragStart}
                 onRename={(id, name) => setProjects(ps => ps.map(p => p.id === id ? { ...p, name } : p))}
                 onUpdateProject={handleUpdateProject}
+                onDownloadStatus={setDownloadBanner}
               />
             ))}
           </div>
