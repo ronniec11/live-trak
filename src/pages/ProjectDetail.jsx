@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
+import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
@@ -612,14 +613,17 @@ export default function ProjectDetail() {
                   </>
                 )}
               </div>
-              {canManage && (
-                <button onClick={() => setShowAddPage(true)} className="btn-primary flex items-center gap-1.5 shrink-0 text-xs">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                  </svg>
-                  Add Floor Plan
-                </button>
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                <OfflineSyncButton className="text-xs" />
+                {canManage && (
+                  <button onClick={() => setShowAddPage(true)} className="btn-primary flex items-center gap-1.5 text-xs">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Add Floor Plan
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
