@@ -4,6 +4,7 @@ import Layout from '../components/Layout'
 import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { listCachedProjects } from '../lib/offlineCache'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 
@@ -513,6 +514,7 @@ export default function Projects() {
   const [sfTodayByProject, setSfTodayByProject] = useState({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [offlineMode, setOfflineMode] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
@@ -622,6 +624,7 @@ export default function Projects() {
 
     setLoading(true)
     setLoadError('')
+    setOfflineMode(false)
 
     // 5-second hard timeout so the skeleton never spins forever
     const timeoutId = setTimeout(() => {
@@ -676,7 +679,21 @@ export default function Projects() {
       setSfTodayByProject(todayMap)
     } catch (err) {
       console.error('loadProjects error:', err)
-      setLoadError(err.message || 'Failed to load projects. Please try refreshing.')
+      // Fall back to whatever projects were downloaded for offline use (see
+      // src/lib/offlineCache.js and the Download for Offline button on the
+      // project page) rather than just showing an error with nothing to do
+      // about it.
+      try {
+        const cached = await listCachedProjects()
+        if (cached.length > 0) {
+          setProjects(cached.map(p => ({ ...p, sort_order: null })))
+          setOfflineMode(true)
+        } else {
+          setLoadError(err.message || 'Failed to load projects. Please try refreshing.')
+        }
+      } catch {
+        setLoadError(err.message || 'Failed to load projects. Please try refreshing.')
+      }
     } finally {
       clearTimeout(timeoutId)
       setLoading(false)
@@ -708,6 +725,11 @@ export default function Projects() {
         </div>
       )}
       <div className="max-w-5xl mx-auto px-4 py-6">
+        {offlineMode && (
+          <div className="mb-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
+            No connection — showing projects downloaded for offline use. Production totals aren't available until you're back online.
+          </div>
+        )}
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>

@@ -5,6 +5,7 @@ import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
+import { downloadProjectForOffline, getCachedProject, isProjectCached } from '../lib/offlineCache'
 
 const UPLOAD_TIMEOUT_MS = 30_000
 
@@ -293,6 +294,10 @@ export default function ProjectDetail() {
   const [todaySessions, setTodaySessions] = useState([])
   const [activePage, setActivePage] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [offlineMode, setOfflineMode] = useState(false)
+  const [downloadedOffline, setDownloadedOffline] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadStatus, setDownloadStatus] = useState('')
   const [showAddPage, setShowAddPage] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [editingTarget, setEditingTarget] = useState(false)
@@ -458,11 +463,13 @@ export default function ProjectDetail() {
   async function loadData() {
     setLoading(true)
     try {
-      const [{ data: proj }, { data: pgs }, { data: mems }] = await Promise.all([
+      const [{ data: proj, error: projErr }, { data: pgs, error: pgsErr }, { data: mems }] = await Promise.all([
         supabase.from('projects').select('*').eq('id', projectId).single(),
         supabase.from('pages').select('*').eq('project_id', projectId).order('created_at'),
         supabase.from('project_members').select('user_id, profiles(*)').eq('project_id', projectId),
       ])
+      if (projErr) throw projErr
+      if (pgsErr) throw pgsErr
 
       setProject(proj)
       setPages(pgs || [])
@@ -471,12 +478,50 @@ export default function ProjectDetail() {
       setTotalTargetInput(proj?.total_sf_target || 0)
       setCostInput(proj?.cost ?? '')
       if (pgs && pgs.length > 0) setActivePage(pgs[0])
+      setOfflineMode(false)
 
       await loadTodaySessions(pgs || [])
+      setDownloadedOffline(await isProjectCached(projectId))
     } catch (err) {
       console.error(err)
+      // No connection — fall back to whatever was downloaded for offline
+      // use (see the Download for Offline button below). Sessions/today's
+      // totals aren't part of that cache, so they're left empty here rather
+      // than attempting another network call that would just fail too.
+      try {
+        const cached = await getCachedProject(projectId)
+        if (cached) {
+          setProject(cached)
+          setPages(cached.pages || [])
+          setMembers([])
+          setTargetInput(cached.daily_sf_target || 0)
+          setTotalTargetInput(cached.total_sf_target || 0)
+          setCostInput(cached.cost ?? '')
+          if (cached.pages?.length > 0) setActivePage(cached.pages[0])
+          setOfflineMode(true)
+          setDownloadedOffline(true)
+        }
+      } catch (cacheErr) {
+        console.error('[ProjectDetail] offline cache fallback failed:', cacheErr)
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleDownloadForOffline() {
+    setDownloading(true)
+    setDownloadStatus('Starting…')
+    try {
+      await downloadProjectForOffline(projectId, text => setDownloadStatus(text))
+      setDownloadedOffline(true)
+      setDownloadStatus('Downloaded for offline use')
+    } catch (err) {
+      console.error('[ProjectDetail] Download for offline failed:', err)
+      setDownloadStatus('Download failed: ' + (err.message || 'check console'))
+    } finally {
+      setDownloading(false)
+      setTimeout(() => setDownloadStatus(''), 4000)
     }
   }
 
@@ -554,6 +599,16 @@ export default function ProjectDetail() {
       <div className="flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
         {/* Main area */}
         <div className="flex-1 overflow-auto">
+          {offlineMode && (
+            <div className="mx-4 mt-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
+              No connection — showing the copy downloaded for offline use. Open a sheet to keep working; it'll sync once you're back online.
+            </div>
+          )}
+          {downloadStatus && !downloading && (
+            <div className="mx-4 mt-4 px-4 py-2.5 rounded-lg bg-accent/10 border border-accent/30 text-sm text-accent">
+              {downloadStatus}
+            </div>
+          )}
           {/* Project header */}
           <div className="px-4 py-4 border-b border-border bg-surface/50">
             <div className="flex items-start gap-3">
@@ -615,6 +670,21 @@ export default function ProjectDetail() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <OfflineSyncButton className="text-xs" />
+                <button
+                  onClick={handleDownloadForOffline}
+                  disabled={downloading}
+                  className="btn-secondary flex items-center gap-1.5 text-xs"
+                  title="Downloads this project's floor plans and markup so it can be opened with no connection"
+                >
+                  <svg className={`w-3.5 h-3.5 ${downloading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    {downloading ? (
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    ) : (
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    )}
+                  </svg>
+                  {downloading ? (downloadStatus || 'Downloading…') : downloadedOffline ? 'Re-download for Offline' : 'Download for Offline'}
+                </button>
                 {canManage && (
                   <button onClick={() => setShowAddPage(true)} className="btn-primary flex items-center gap-1.5 text-xs">
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
