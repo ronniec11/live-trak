@@ -1,19 +1,13 @@
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import LiveTrakLogoDark from '../assets/live-trak-logo-full.svg'
 import LiveTrakLogoLight from '../assets/live-trak-logo-full-light.svg'
 
 export default function Navbar() {
-  const { profile, signOut } = useAuth()
+  const { profile } = useAuth()
   const { theme } = useTheme()
-  const navigate = useNavigate()
   const location = useLocation()
-
-  async function handleSignOut() {
-    await signOut()
-    navigate('/login', { replace: true })
-  }
 
   const isCanvas = location.pathname.includes('/canvas/')
 
@@ -62,12 +56,6 @@ export default function Navbar() {
             <span className="text-xs text-muted capitalize hidden md:block">({profile.role})</span>
           </Link>
         )}
-        <button
-          onClick={handleSignOut}
-          className="btn-ghost text-xs"
-        >
-          Sign out
-        </button>
       </div>
     </header>
   )

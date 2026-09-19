@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import OpenSeadragon from 'openseadragon'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
+import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOp } from '../lib/offlineSync'
 import './Canvas.css'
 
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
@@ -64,6 +65,8 @@ export default function Canvas() {
   const zoomBarRef       = useRef(null)
   const uploadZoneRef    = useRef(null)
   const unsavedBadgeRef  = useRef(null)   // "Unsaved changes" indicator
+  const offlineBadgeRef  = useRef(null)   // "N pending sync" indicator
+  const offlineBadgeTextRef = useRef(null)
   const editBannerRef    = useRef(null)
   const editBannerTxtRef = useRef(null)
   // header
@@ -2317,39 +2320,119 @@ export default function Canvas() {
 
     // Uploads completion photos (plain Files from a file input, not canvas
     // snapshots) to the same floor-plans bucket/session folder as the
-    // hl/pen canvases. Returns the public URLs that actually made it up —
-    // a failed individual photo is dropped rather than failing the whole
-    // session save.
+    // hl/pen canvases. Returns both the URLs that made it up AND the Files
+    // that didn't — a failed individual photo used to just silently vanish
+    // here (dropped, with nothing to show it ever existed) rather than
+    // failing the whole session save, which is exactly what happened with
+    // no signal in the field: the session/markup save could still succeed
+    // (small payload) while a multi-MB photo upload failed on the same
+    // flaky connection, and there was no path back to retry just that
+    // photo. Callers now queue `failed` for offline sync instead.
     async function uploadPhotosToStorage(files, storageKey) {
-      if (!files || files.length === 0) return []
-      const urls = await Promise.all(files.map(async (file, i) => {
+      if (!files || files.length === 0) return { urls: [], failed: [] }
+      const results = await Promise.all(files.map(async (file, i) => {
         try {
           const ext = (file.type && file.type.split('/')[1]) || 'jpg'
           const path = `${dbProjectId}/sessions/${pageId}/${storageKey}_photo${i}.${ext}`
           const { error } = await supabase.storage
             .from('floor-plans')
             .upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' })
-          if (error) { console.warn('[Canvas] Photo upload failed:', error); return null }
+          if (error) { console.warn('[Canvas] Photo upload failed:', error); return { file, ok: false } }
           const { data } = supabase.storage.from('floor-plans').getPublicUrl(path)
-          return data.publicUrl
+          return { url: data.publicUrl, ok: true }
         } catch (e) {
           console.warn('[Canvas] Photo upload failed:', e)
-          return null
+          return { file, ok: false }
         }
       }))
-      return urls.filter(Boolean)
+      return {
+        urls: results.filter(r => r.ok).map(r => r.url),
+        failed: results.filter(r => !r.ok).map(r => r.file),
+      }
+    }
+    // Queues photos that failed to upload (see uploadPhotosToStorage above)
+    // as a lightweight "add these photos" op reusing the 'update' op kind
+    // with empty fields — syncOneOp always sends `photos` on an update, so
+    // an empty fields object still produces a correct partial update that
+    // only touches the photos column, merging with whatever's already there.
+    async function queueFailedPhotos(session, failed, existingPhotoUrls) {
+      if (!failed.length || !session.supabaseId) return
+      try {
+        await enqueueSessionOp({
+          kind: 'update', pageId, projectId: dbProjectId, userId: user.id,
+          storageKey: `${session.supabaseId}_${Date.now()}`, supabaseId: session.supabaseId,
+          localSessionId: session.id, hlBlob: null, penBlob: null,
+          newPhotoBlobs: failed, keptPhotoUrls: existingPhotoUrls,
+          fields: {},
+        })
+        session._offlinePending = true
+        updatePendingSyncBadge()
+        showToast(failed.length === 1 ? '1 photo saved on this device — will upload automatically' : `${failed.length} photos saved on this device — will upload automatically`)
+      } catch (e) {
+        console.error('[Canvas] Failed to queue photos for offline sync:', e)
+      }
+    }
+
+    // ── OFFLINE SYNC ─────────────────────────────────────────────────────────
+    // Reattaches a synced op's real supabaseId/photos to whatever in-memory
+    // session it came from (matched by the local session.id stamped on the
+    // op when it was queued) — the queue itself only knows blobs/fields, it
+    // has no reference to this page's live session objects.
+    function applySyncedOp(op, result) {
+      const sess = activePage?.sessions.find(s => s.id === op.localSessionId)
+      if (!sess) return
+      if (result.supabaseId) sess.supabaseId = result.supabaseId
+      sess.photos = result.photos
+      delete sess._offlinePending
+      renderSessions()
+    }
+
+    async function updatePendingSyncBadge() {
+      let count = 0
+      try { count = (await getPendingOps()).length } catch {}
+      if (offlineBadgeRef.current) offlineBadgeRef.current.style.display = count > 0 ? 'flex' : 'none'
+      if (offlineBadgeTextRef.current) {
+        offlineBadgeTextRef.current.textContent = count === 1 ? '1 item pending sync' : `${count} items pending sync`
+      }
+    }
+
+    async function runOfflineSync() {
+      try {
+        const { synced } = await syncPendingOps(applySyncedOp)
+        if (synced > 0) showToast(synced === 1 ? '1 saved item synced' : `${synced} saved items synced`)
+      } catch (e) {
+        console.warn('[Canvas] Offline sync pass failed:', e)
+      } finally {
+        updatePendingSyncBadge()
+      }
     }
 
     async function saveSessionToSupabase(session) {
+      const storageKey = Date.now()
+      // Computed up front (no network involved) so they're ready to hand
+      // straight to the offline queue if the upload/insert below fails for
+      // connectivity reasons, instead of needing to be recomputed.
+      const fields = {
+        name: session.name, color: session.color, sf: session.sf, work_date: session.date,
+        count_data: session.countMarkers?.length > 0
+          ? { w: activePage.image.width, h: activePage.image.height, markers: session.countMarkers }
+          : null,
+        crew_size: session.crewSize ?? null,
+        hours_worked: session.hoursWorked ?? null,
+        lf: session.lf || null,
+        lf_data: session.lfLines?.length > 0
+          ? { w: activePage.image.width, h: activePage.image.height, lines: session.lfLines }
+          : null,
+      }
       try {
-        const storageKey = Date.now()
-        const [highlight_data, pen_data, photos] = await Promise.all([
+        const [highlight_data, pen_data, photoResult] = await Promise.all([
           uploadCanvasToStorage(session.hlCanvas, storageKey, 'hl').then(url => url || session.hlCanvas.toDataURL('image/png')),
           session.penCanvas
             ? uploadCanvasToStorage(session.penCanvas, storageKey, 'pen').then(url => url || session.penCanvas.toDataURL('image/png'))
             : null,
           uploadPhotosToStorage(session._pendingPhotoFiles, storageKey),
         ])
+        const photos = photoResult.urls
         session.photos = photos
         const insertPayload = {
           page_id:        pageId,
@@ -2421,8 +2504,35 @@ export default function Canvas() {
         if (error) throw error
         if (data?.id) session.supabaseId = data.id
         console.log('[Canvas] Session saved to Supabase, id:', data?.id)
+        if (photoResult.failed.length > 0) await queueFailedPhotos(session, photoResult.failed, photos)
         return true
       } catch (err) {
+        if (isNetworkError(err)) {
+          // No signal (or a flaky in-building connection that dropped
+          // mid-request) — queue it with the same fields/blobs rather than
+          // just failing and losing the work, which used to only survive by
+          // luck if the original request happened to still be pending when
+          // a connection came back.
+          console.warn('[Canvas] Save could not reach the network — queuing for offline sync:', err)
+          try {
+            const hlBlob = session.hlCanvas ? await new Promise(r => session.hlCanvas.toBlob(r, 'image/png')) : null
+            const penBlob = session.penCanvas ? await new Promise(r => session.penCanvas.toBlob(r, 'image/png')) : null
+            session._offlineOpId = await enqueueSessionOp({
+              kind: 'insert', pageId, projectId: dbProjectId, userId: user.id, storageKey,
+              localSessionId: session.id, hlBlob, penBlob,
+              newPhotoBlobs: session._pendingPhotoFiles || [], keptPhotoUrls: [],
+              fields,
+            })
+            session._offlinePending = true
+            updatePendingSyncBadge()
+            showToast('No connection — saved on this device, will sync automatically')
+            return true
+          } catch (queueErr) {
+            console.error('[Canvas] Failed to queue session for offline sync:', queueErr)
+            showToast('Save failed: ' + (queueErr.message || 'check console'), true)
+            return false
+          }
+        }
         console.error('[Canvas] Failed to save session:', err)
         showToast('Save failed: ' + (err.message || 'check console'), true)
         return false
@@ -2437,6 +2547,11 @@ export default function Canvas() {
       pg.sessions = pg.sessions.filter(s => s.id !== sId)
       if (soloSession?.id === sId) soloSession = null
       invalidateSessions(); redrawAll(); renderSessions(); updateSF()
+      // A session created entirely offline has no supabaseId yet — its
+      // initial save is still a queued 'insert' op. Without canceling that
+      // op too, a later successful sync would still create the row,
+      // resurrecting a session the user just deleted.
+      if (sess?._offlineOpId) await cancelOp(sess._offlineOpId)
       if (sess?.supabaseId) {
         deletedSessionIds.add(sess.supabaseId)
         await supabase.from('sessions').delete().eq('id', sess.supabaseId)
@@ -2671,52 +2786,78 @@ export default function Canvas() {
       editPendingPhotos = []; editKeptPhotoUrls = []
       editTarget = null; closeEditModal(); invalidateSessions()
       renderSessions(); updateSF(); redrawAll()
-      const uploadedUrls = await uploadPhotosToStorage(newPhotoFiles, s.supabaseId || Date.now())
-      s.photos = [...keptPhotoUrls, ...uploadedUrls]
+      const photoResult = await uploadPhotosToStorage(newPhotoFiles, s.supabaseId || Date.now())
+      s.photos = [...keptPhotoUrls, ...photoResult.urls]
       renderSessions()
+      if (photoResult.failed.length > 0) await queueFailedPhotos(s, photoResult.failed, s.photos)
       if (s.supabaseId) {
         console.log('[Canvas] Updating session in Supabase:', s.supabaseId, s.name)
-        const payload = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked, photos: s.photos }
-        let { error } = await supabase.from('sessions').update(payload).eq('id', s.supabaseId)
-        let crewHoursDropped = false
-        if (error && /crew_size|hours_worked/.test(error.message)) {
-          // Pre-migration DB — retry without the not-yet-existing columns.
-          // This "succeeds" (name/color/sf still save) but silently drops
-          // crew/hours, which looked like data loss before this alert existed
-          // — loud on purpose so it's never mistaken for a real save.
-          console.warn('[Canvas] crew_size/hours_worked columns missing, retrying without them — run the migration noted at the top of this file.')
-          crewHoursDropped = true
-          const { crew_size, hours_worked, ...rest } = payload
-          ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
-        }
-        if (!error && crewHoursDropped) {
-          alert('Session saved, but Crew Size / Hours Worked were NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (crew_size/hours_worked ALTER TABLE) in the Supabase SQL editor, then re-enter them.')
-        }
-        let lfDropped = false
-        if (error && /\blf\b/.test(error.message)) {
-          console.warn('[Canvas] lf column missing, retrying without it — run the migration noted at the top of this file.')
-          lfDropped = true
-          const { lf, ...rest } = payload
-          ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
-        }
-        if (!error && lfDropped) {
-          alert('Session saved, but Linear Footage was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor, then re-enter it.')
-        }
-        let photosDropped = false
-        if (error && /\bphotos\b/.test(error.message)) {
-          console.warn('[Canvas] photos column missing, retrying without it — run the migration noted at the top of this file.')
-          photosDropped = true
-          const { photos, ...rest } = payload
-          ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
-        }
-        if (!error && photosDropped) {
-          alert('Session saved, but Photos were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (photos ALTER TABLE) in the Supabase SQL editor, then re-add them.')
-        }
-        if (error) {
-          console.error('[Canvas] saveEdit update failed:', error)
-          alert('Failed to save session edit: ' + (error.message || JSON.stringify(error)))
-        } else {
+        const editFields = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked }
+        const payload = { ...editFields, photos: s.photos }
+        try {
+          let { error } = await supabase.from('sessions').update(payload).eq('id', s.supabaseId)
+          let crewHoursDropped = false
+          if (error && /crew_size|hours_worked/.test(error.message)) {
+            // Pre-migration DB — retry without the not-yet-existing columns.
+            // This "succeeds" (name/color/sf still save) but silently drops
+            // crew/hours, which looked like data loss before this alert existed
+            // — loud on purpose so it's never mistaken for a real save.
+            console.warn('[Canvas] crew_size/hours_worked columns missing, retrying without them — run the migration noted at the top of this file.')
+            crewHoursDropped = true
+            const { crew_size, hours_worked, ...rest } = payload
+            ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+          }
+          if (!error && crewHoursDropped) {
+            alert('Session saved, but Crew Size / Hours Worked were NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (crew_size/hours_worked ALTER TABLE) in the Supabase SQL editor, then re-enter them.')
+          }
+          let lfDropped = false
+          if (error && /\blf\b/.test(error.message)) {
+            console.warn('[Canvas] lf column missing, retrying without it — run the migration noted at the top of this file.')
+            lfDropped = true
+            const { lf, ...rest } = payload
+            ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+          }
+          if (!error && lfDropped) {
+            alert('Session saved, but Linear Footage was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor, then re-enter it.')
+          }
+          let photosDropped = false
+          if (error && /\bphotos\b/.test(error.message)) {
+            console.warn('[Canvas] photos column missing, retrying without it — run the migration noted at the top of this file.')
+            photosDropped = true
+            const { photos, ...rest } = payload
+            ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+          }
+          if (!error && photosDropped) {
+            alert('Session saved, but Photos were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (photos ALTER TABLE) in the Supabase SQL editor, then re-add them.')
+          }
+          if (error) throw error
           showToast('Session updated!')
+        } catch (err) {
+          if (isNetworkError(err)) {
+            // No signal — this used to be an unhandled promise rejection
+            // (saveEdit is called fire-and-forget from the modal's onClick,
+            // with nothing to catch it), meaning the edit silently vanished
+            // with no indication to the user at all. Queue it instead.
+            console.warn('[Canvas] saveEdit could not reach the network — queuing for offline sync:', err)
+            try {
+              await enqueueSessionOp({
+                kind: 'update', pageId, projectId: dbProjectId, userId: user.id,
+                storageKey: `${s.supabaseId}_${Date.now()}`, supabaseId: s.supabaseId,
+                localSessionId: s.id, hlBlob: null, penBlob: null,
+                newPhotoBlobs: [], keptPhotoUrls: s.photos || [],
+                fields: editFields,
+              })
+              s._offlinePending = true
+              updatePendingSyncBadge()
+              showToast('No connection — saved on this device, will sync automatically')
+            } catch (queueErr) {
+              console.error('[Canvas] Failed to queue session edit for offline sync:', queueErr)
+              alert('Failed to save session edit: ' + (queueErr.message || String(queueErr)))
+            }
+          } else {
+            console.error('[Canvas] saveEdit update failed:', err)
+            alert('Failed to save session edit: ' + (err.message || JSON.stringify(err)))
+          }
         }
       }
     }
@@ -2833,59 +2974,79 @@ export default function Canvas() {
       // Persist updated session to Supabase (fire-and-forget, uploads canvases
       // to Storage instead of inlining as base64 — see uploadCanvasToStorage)
       if (s.supabaseId) {
-        (async () => {
-          const [highlight_data, pen_data] = await Promise.all([
-            uploadCanvasToStorage(newHL, s.supabaseId, 'hl').then(url => url || newHL.toDataURL('image/png')),
-            newPen
-              ? uploadCanvasToStorage(newPen, s.supabaseId, 'pen').then(url => url || newPen.toDataURL('image/png'))
-              : null,
-          ])
-          const count_data = s.countMarkers.length > 0
+        const opFields = {
+          name: s.name, color: s.color, sf: s.sf,
+          count_data: s.countMarkers.length > 0
             ? { w: activePage.image.width, h: activePage.image.height, markers: s.countMarkers }
-            : null
-          const lf_data = s.lfLines?.length > 0
+            : null,
+          lf: s.lf || null,
+          lf_data: s.lfLines?.length > 0
             ? { w: activePage.image.width, h: activePage.image.height, lines: s.lfLines }
-            : null
-          console.log('[Canvas] commitSessionEdit saving count_data:', JSON.stringify(count_data))
-          // update, not upsert — this always targets an existing row
-          // (guarded by s.supabaseId above), and upsert() is implemented as
-          // INSERT ... ON CONFLICT DO UPDATE, which also evaluates the
-          // INSERT-path RLS policy (auth.uid() = user_id) against the
-          // attempted row. user_id was never included in this payload, so
-          // that check saw it as NULL and rejected every edit save with
-          // "new row violates row-level security policy" — a plain update()
-          // only evaluates the UPDATE policy against the row already in the
-          // table, which is what we actually want here.
-          const updatePayload = {
-            name:           s.name,
-            color:          s.color,
-            sf:             s.sf,
-            highlight_data,
-            pen_data,
-            count_data,
-            lf:             s.lf || null,
-            lf_data,
-            updated_at:     new Date().toISOString(),
-          }
-          let { error } = await supabase.from('sessions').update(updatePayload).eq('id', s.supabaseId)
-          if (error && /\blf\b|lf_data/.test(error.message)) {
-            console.warn('[Canvas] lf/lf_data columns missing on update, retrying without them.')
-            const { lf, lf_data: _lfData, ...rest } = updatePayload
-            ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
-            if (!error && s.lf) {
-              alert('Session saved, but Linear Footage was NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor.')
+            : null,
+        }
+        ;(async () => {
+          try {
+            const [highlight_data, pen_data] = await Promise.all([
+              uploadCanvasToStorage(newHL, s.supabaseId, 'hl').then(url => url || newHL.toDataURL('image/png')),
+              newPen
+                ? uploadCanvasToStorage(newPen, s.supabaseId, 'pen').then(url => url || newPen.toDataURL('image/png'))
+                : null,
+            ])
+            console.log('[Canvas] commitSessionEdit saving count_data:', JSON.stringify(opFields.count_data))
+            // update, not upsert — this always targets an existing row
+            // (guarded by s.supabaseId above), and upsert() is implemented as
+            // INSERT ... ON CONFLICT DO UPDATE, which also evaluates the
+            // INSERT-path RLS policy (auth.uid() = user_id) against the
+            // attempted row. user_id was never included in this payload, so
+            // that check saw it as NULL and rejected every edit save with
+            // "new row violates row-level security policy" — a plain update()
+            // only evaluates the UPDATE policy against the row already in the
+            // table, which is what we actually want here.
+            const updatePayload = { ...opFields, highlight_data, pen_data, updated_at: new Date().toISOString() }
+            let { error } = await supabase.from('sessions').update(updatePayload).eq('id', s.supabaseId)
+            if (error && /\blf\b|lf_data/.test(error.message)) {
+              console.warn('[Canvas] lf/lf_data columns missing on update, retrying without them.')
+              const { lf, lf_data: _lfData, ...rest } = updatePayload
+              ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+              if (!error && s.lf) {
+                alert('Session saved, but Linear Footage was NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor.')
+              }
             }
-          }
-          if (error) {
-            console.error('[Canvas] Failed to update session:', error)
+            if (error) throw error
+            console.log('[Canvas] Session updated in Supabase')
+            showToast('Session updated!')
+          } catch (err) {
+            if (isNetworkError(err)) {
+              // No signal — this "fire and forget" IIFE had no catch at all
+              // before, so a network failure here was an unhandled promise
+              // rejection: the paint update silently never reached the
+              // database, with nothing telling the user it hadn't. Queue it.
+              console.warn('[Canvas] commitSessionEdit could not reach the network — queuing for offline sync:', err)
+              try {
+                const hlBlob = await new Promise(r => newHL.toBlob(r, 'image/png'))
+                const penBlob = newPen ? await new Promise(r => newPen.toBlob(r, 'image/png')) : null
+                await enqueueSessionOp({
+                  kind: 'update', pageId, projectId: dbProjectId, userId: user.id,
+                  storageKey: `${s.supabaseId}_${Date.now()}`, supabaseId: s.supabaseId,
+                  localSessionId: s.id, hlBlob, penBlob,
+                  newPhotoBlobs: [], keptPhotoUrls: s.photos || [],
+                  fields: opFields,
+                })
+                s._offlinePending = true
+                updatePendingSyncBadge()
+                showToast('No connection — saved on this device, will sync automatically')
+              } catch (queueErr) {
+                console.error('[Canvas] Failed to queue markup update for offline sync:', queueErr)
+                alert('Failed to save session update: ' + (queueErr.message || String(queueErr)))
+              }
+              return
+            }
+            console.error('[Canvas] Failed to update session:', err)
             // upsert failing here (e.g. the "update your own sessions only"
             // RLS policy rejecting it) previously only logged to console and
             // silently skipped the success toast — easy to miss entirely,
             // especially on iPad with no console visible. Make it loud.
-            alert('Failed to save session update: ' + (error.message || JSON.stringify(error)))
-          } else {
-            console.log('[Canvas] Session updated in Supabase')
-            showToast('Session updated!')
+            alert('Failed to save session update: ' + (err.message || JSON.stringify(err)))
           }
         })()
       }
@@ -4091,9 +4252,21 @@ export default function Canvas() {
 
     init()
 
+    // Offline sync: catch up on anything queued from a previous visit as
+    // soon as this page opens (in case the device already has a connection
+    // now), retry whenever the browser reports coming back online, and
+    // poll periodically too — iOS Safari doesn't always fire the 'online'
+    // event reliably, and cellular signal can come and go without a clean
+    // transition either way.
+    runOfflineSync()
+    window.addEventListener('online', runOfflineSync)
+    const offlineSyncInterval = setInterval(runOfflineSync, 30000)
+
     return () => {
       cancelAnimationFrame(rafId)
       clearInterval(draftInterval)
+      clearInterval(offlineSyncInterval)
+      window.removeEventListener('online', runOfflineSync)
       if (osdViewer) osdViewer.destroy()
       if (realtimeSub) supabase.removeChannel(realtimeSub)
       drawEl.removeEventListener('mousedown', onDown)
@@ -4210,6 +4383,12 @@ export default function Canvas() {
           <div ref={unsavedBadgeRef} style={{display:'none',position:'absolute',top:10,right:10,zIndex:20,alignItems:'center',gap:5,background:'rgba(250,204,21,0.15)',border:'1px solid rgba(250,204,21,0.4)',borderRadius:20,padding:'3px 10px',fontSize:11,fontWeight:600,color:'#facc15',pointerEvents:'none'}}>
             <span style={{width:6,height:6,borderRadius:'50%',background:'#facc15',display:'inline-block'}} />
             Unsaved
+          </div>
+
+          {/* Offline queue badge — saves/photos waiting for a connection */}
+          <div ref={offlineBadgeRef} style={{display:'none',position:'absolute',top:44,right:10,zIndex:20,alignItems:'center',gap:5,background:'rgba(96,165,250,0.15)',border:'1px solid rgba(96,165,250,0.4)',borderRadius:20,padding:'3px 10px',fontSize:11,fontWeight:600,color:'#60a5fa',pointerEvents:'none'}}>
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#60a5fa',display:'inline-block'}} />
+            <span ref={offlineBadgeTextRef}>Pending sync</span>
           </div>
 
           <div ref={osdContainerRef} className="ct-canvas ct-osd-viewer" />

@@ -14,7 +14,7 @@ const PRESET_COLORS = [
 ]
 
 export default function Profile() {
-  const { profile, updateProfile } = useAuth()
+  const { profile, updateProfile, signOut } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
@@ -44,6 +44,11 @@ export default function Profile() {
   const [savingPassword, setSavingPassword] = useState(false)
   const [passwordSaved, setPasswordSaved] = useState(false)
   const [passwordError, setPasswordError] = useState('')
+
+  async function handleSignOut() {
+    await signOut()
+    navigate('/login', { replace: true })
+  }
 
   async function handleSetPassword(e) {
     e.preventDefault()
@@ -291,6 +296,12 @@ export default function Profile() {
             ))}
           </div>
           <p className="text-xs text-muted mt-3">Role changes require an administrator.</p>
+        </div>
+
+        <div className="card mt-4">
+          <button type="button" onClick={handleSignOut} className="btn-secondary w-full text-red-600 dark:text-red-400">
+            Sign Out
+          </button>
         </div>
       </div>
     </Layout>
