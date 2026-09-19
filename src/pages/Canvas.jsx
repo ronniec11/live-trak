@@ -2297,14 +2297,34 @@ export default function Canvas() {
       if (saved) { showToast('Session saved!'); renderSessions() }
     }
 
+    // Cheap re-encoding of an already-rasterized Blob into a data: URL, via
+    // FileReader rather than canvas.toDataURL() — used as the last-resort
+    // fallback when Storage upload fails, so that path doesn't re-rasterize
+    // the same large canvas a second time on top of the toBlob() already
+    // done to get this blob in the first place.
+    function blobToDataURL(blob) {
+      if (!blob) return Promise.resolve(null)
+      return new Promise(resolve => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = () => resolve(null)
+        reader.readAsDataURL(blob)
+      })
+    }
+
     // Uploads a session canvas to Storage instead of inlining it as base64 in
     // the DB row — large base64 highlight_data/pen_data has been silently
     // failing to decode as an <img> on iPad Safari. Falls back to a data URL
     // if the upload fails, so markup is never lost even when offline/erroring.
-    async function uploadCanvasToStorage(canvas, storageKey, type) {
+    // Accepts an already-encoded blob to reuse (the offline queue needs its
+    // own blob regardless, so callers preparing for that don't need to
+    // encode the same large canvas to PNG twice — a real cost on iPad,
+    // where multiple full-size session canvases already push memory close
+    // to the ceiling that's crashed this app before).
+    async function uploadCanvasToStorage(canvas, storageKey, type, precomputedBlob) {
       if (!canvas || canvas.width === 0) return null
       try {
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
+        const blob = precomputedBlob || await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
         if (!blob) return null
         const path = `${dbProjectId}/sessions/${pageId}/${storageKey}_${type}.png`
         const { error } = await supabase.storage
@@ -2412,7 +2432,13 @@ export default function Canvas() {
       const storageKey = Date.now()
       // Computed up front (no network involved) so they're ready to hand
       // straight to the offline queue if the upload/insert below fails for
-      // connectivity reasons, instead of needing to be recomputed.
+      // connectivity reasons, instead of needing to be recomputed — and so
+      // uploadCanvasToStorage can reuse them instead of re-encoding the same
+      // large canvas to PNG a second time (a real cost on iPad, where
+      // multiple full-size session canvases already push memory close to a
+      // ceiling that's crashed this app before).
+      const hlBlob = session.hlCanvas ? await new Promise(r => session.hlCanvas.toBlob(r, 'image/png')) : null
+      const penBlob = session.penCanvas ? await new Promise(r => session.penCanvas.toBlob(r, 'image/png')) : null
       const fields = {
         name: session.name, color: session.color, sf: session.sf, work_date: session.date,
         count_data: session.countMarkers?.length > 0
@@ -2427,9 +2453,9 @@ export default function Canvas() {
       }
       try {
         const [highlight_data, pen_data, photoResult] = await Promise.all([
-          uploadCanvasToStorage(session.hlCanvas, storageKey, 'hl').then(url => url || session.hlCanvas.toDataURL('image/png')),
+          uploadCanvasToStorage(session.hlCanvas, storageKey, 'hl', hlBlob).then(url => url || blobToDataURL(hlBlob)),
           session.penCanvas
-            ? uploadCanvasToStorage(session.penCanvas, storageKey, 'pen').then(url => url || session.penCanvas.toDataURL('image/png'))
+            ? uploadCanvasToStorage(session.penCanvas, storageKey, 'pen', penBlob).then(url => url || blobToDataURL(penBlob))
             : null,
           uploadPhotosToStorage(session._pendingPhotoFiles, storageKey),
         ])
@@ -2516,8 +2542,7 @@ export default function Canvas() {
           // a connection came back.
           console.warn('[Canvas] Save could not reach the network — queuing for offline sync:', err)
           try {
-            const hlBlob = session.hlCanvas ? await new Promise(r => session.hlCanvas.toBlob(r, 'image/png')) : null
-            const penBlob = session.penCanvas ? await new Promise(r => session.penCanvas.toBlob(r, 'image/png')) : null
+            // Reuses the blobs already computed above — no need to re-encode.
             session._offlineOpId = await enqueueSessionOp({
               kind: 'insert', pageId, projectId: dbProjectId, userId: user.id, storageKey,
               localSessionId: session.id, hlBlob, penBlob,
@@ -2986,11 +3011,17 @@ export default function Canvas() {
             : null,
         }
         ;(async () => {
+          // Computed once, up front, so uploadCanvasToStorage can reuse them
+          // (instead of re-encoding the same canvas to PNG a second time)
+          // and the offline queue below has them ready with no further
+          // encoding if the upload/update fails for connectivity reasons.
+          const hlBlob = await new Promise(r => newHL.toBlob(r, 'image/png'))
+          const penBlob = newPen ? await new Promise(r => newPen.toBlob(r, 'image/png')) : null
           try {
             const [highlight_data, pen_data] = await Promise.all([
-              uploadCanvasToStorage(newHL, s.supabaseId, 'hl').then(url => url || newHL.toDataURL('image/png')),
+              uploadCanvasToStorage(newHL, s.supabaseId, 'hl', hlBlob).then(url => url || blobToDataURL(hlBlob)),
               newPen
-                ? uploadCanvasToStorage(newPen, s.supabaseId, 'pen').then(url => url || newPen.toDataURL('image/png'))
+                ? uploadCanvasToStorage(newPen, s.supabaseId, 'pen', penBlob).then(url => url || blobToDataURL(penBlob))
                 : null,
             ])
             console.log('[Canvas] commitSessionEdit saving count_data:', JSON.stringify(opFields.count_data))
@@ -3024,8 +3055,7 @@ export default function Canvas() {
               // database, with nothing telling the user it hadn't. Queue it.
               console.warn('[Canvas] commitSessionEdit could not reach the network — queuing for offline sync:', err)
               try {
-                const hlBlob = await new Promise(r => newHL.toBlob(r, 'image/png'))
-                const penBlob = newPen ? await new Promise(r => newPen.toBlob(r, 'image/png')) : null
+                // Reuses the blobs already computed above — no need to re-encode.
                 await enqueueSessionOp({
                   kind: 'update', pageId, projectId: dbProjectId, userId: user.id,
                   storageKey: `${s.supabaseId}_${Date.now()}`, supabaseId: s.supabaseId,
