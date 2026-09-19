@@ -7,25 +7,35 @@
 //
 // A tiled page already has a pyramid rendered ONCE, at upload time (see
 // tileGenerator.js) — not on whichever device happens to be viewing it.
-// Stitching an appropriately-sized level of that pyramid into the offline
-// copy (stitchTilesToImage) reuses that existing render instead of asking
-// this device to redo it, the same "render once, every device just
-// downloads the result" model Autodesk/Procore use. It also means no
-// pdf.js dependency at all for these pages, sidestepping a confirmed iOS
-// Safari issue: pdf.js needs to load its worker script as a module, and
-// Safari's module-worker loading doesn't reliably use the HTTP cache with
-// zero connectivity even when that exact script was fetched moments
-// earlier ("setting up fake worker failed: importing a module script
-// failed" on-device, even after pre-warming it during download).
+// Downloading that whole pyramid (downloadTilePyramid) and feeding it back
+// to OpenSeadragon offline (buildOfflineTileSource, used from Canvas.jsx's
+// initFromCache) reuses that existing render and gets the exact same
+// zoom-dependent sharpness online viewing has — the same "render once,
+// every device just downloads the result" model Autodesk/Procore use.
+// Critically, this doesn't reopen the memory-crash risk a flat capped image
+// was originally chosen to avoid: OSD manages its own tile memory
+// independently of the overlay canvases (only ever holding the
+// currently-visible tiles, discarding the rest), so the overlay canvases —
+// where that risk actually lives (every session's full-size hl+pen
+// canvas) — stay capped exactly as they already are online, regardless of
+// how much tile data sits in IndexedDB. It also means no pdf.js dependency
+// at all for these pages, sidestepping a confirmed iOS Safari issue: pdf.js
+// needs to load its worker script as a module, and Safari's module-worker
+// loading doesn't reliably use the HTTP cache with zero connectivity even
+// when that exact script was fetched moments earlier ("setting up fake
+// worker failed: importing a module script failed" on-device, even after
+// pre-warming it during download).
 //
-// A page with no pyramid (never tiled) still needs pdf.js if its source is
-// a PDF — but that only ever runs here, during download, while there's
-// definitely a connection; a non-PDF (raster) source is cached as-is.
-// Either way, offline viewing always renders flat (no OpenSeadragon) —
-// initFromCache in Canvas.jsx just displays whatever single flat image
-// ended up cached, regardless of which of these three paths produced it.
+// If downloading the whole pyramid fails partway (e.g. connection drops
+// mid-download), this falls back to stitching one flat capped image from
+// whatever pyramid level fits (stitchTilesToImage) — worse fidelity at high
+// zoom, but still viewable offline rather than nothing. A page with no
+// pyramid at all (never tiled) falls back further still to rendering its
+// PDF directly — but that only ever runs here, during download, while
+// there's definitely a connection; a non-PDF (raster) source is cached
+// as-is.
 import { supabase } from './supabase'
-import { dbPut, dbGet, dbGetAll, requestPersistentStorage } from './offlineDb'
+import { dbPut, dbGet, dbGetAll, dbPutMany, dbGetAllByIndex, dbDeleteAllByIndex, requestPersistentStorage } from './offlineDb'
 
 const isIPadOrSafari = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
   || /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
@@ -128,6 +138,94 @@ async function stitchTilesToImage(tileMeta) {
   return new Promise(resolve => final.toBlob(resolve, 'image/png'))
 }
 
+// Downloads every tile across every level of a page's pyramid into
+// IndexedDB, keyed by pageId, with bounded concurrency (small tiles, but a
+// large sheet's full pyramid can run into the thousands — fetching them all
+// at once would be excessive). A handful of individual tile failures don't
+// fail the whole download; buildOfflineTileSource below just has a gap at
+// that spot, same trade-off stitchTilesToImage already makes.
+async function downloadTilePyramid(pg, onProgress) {
+  const { baseUrl, width, height, tileSize, minLevel, maxLevel, format } = pg.tile_meta
+
+  // Clear anything previously cached for this page first — re-downloading
+  // (e.g. after adding new markup) shouldn't leave stale tiles from an
+  // older pyramid mixed in with a newer one.
+  await dbDeleteAllByIndex('cachedTiles', 'pageId', pg.id)
+
+  const jobs = []
+  for (let level = minLevel; level <= maxLevel; level++) {
+    const { w, h } = levelDims(width, height, maxLevel, level)
+    const cols = Math.ceil(w / tileSize)
+    const rows = Math.ceil(h / tileSize)
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) jobs.push({ level, col, row })
+    }
+  }
+
+  const CONCURRENCY = 8
+  const records = []
+  let nextIdx = 0, done = 0
+  async function worker() {
+    while (nextIdx < jobs.length) {
+      const { level, col, row } = jobs[nextIdx++]
+      try {
+        const blob = await fetchAsBlob(`${baseUrl}/${level}/${col}_${row}.${format}`)
+        records.push({ id: `${pg.id}/${level}/${col}_${row}`, pageId: pg.id, blob })
+      } catch (e) {
+        console.warn('[offlineCache] Tile download failed, skipping:', level, col, row, e)
+      }
+      done++
+      if (done % 25 === 0 || done === jobs.length) {
+        onProgress?.(`${pg.name} — tiles ${done}/${jobs.length}`)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, worker))
+
+  // Require most tiles to have actually made it — a handful of gaps is
+  // fine, but if the connection genuinely died partway through, treat this
+  // as a failure so cachePage falls back to a flat stitched image instead
+  // of caching a mostly-empty pyramid.
+  if (records.length < jobs.length * 0.9) {
+    throw new Error(`Only ${records.length}/${jobs.length} tiles downloaded`)
+  }
+  await dbPutMany('cachedTiles', records)
+}
+
+// Builds an OpenSeadragon-compatible tile source backed by already-cached
+// blobs (see downloadTilePyramid) instead of network requests — passed to
+// Canvas.jsx's setupOsdViewer exactly like buildTileSource() is for the
+// online path (in tileGenerator.js), so OSD itself has no idea these aren't
+// coming from the network. Every blob: URL is created up front (cheap — it
+// doesn't decode anything) since OSD's getTileUrl must return synchronously,
+// not look one up asynchronously.
+export function buildOfflineTileSource(tileMeta, tileRecords) {
+  const urlMap = new Map()
+  for (const rec of tileRecords) {
+    // id shape is `${pageId}/${level}/${col}_${row}` — drop the pageId
+    // prefix, every record passed in here is already scoped to one page.
+    const key = rec.id.split('/').slice(1).join('/')
+    urlMap.set(key, URL.createObjectURL(rec.blob))
+  }
+  return {
+    width: tileMeta.width, height: tileMeta.height, tileSize: tileMeta.tileSize,
+    minLevel: tileMeta.minLevel, maxLevel: tileMeta.maxLevel,
+    getTileUrl(level, x, y) {
+      return urlMap.get(`${level}/${x}_${y}`) || null
+    },
+    // Not an OSD field — Canvas.jsx's teardownOsdViewer calls this so the
+    // blob: URLs created above don't outlive the page view (they're cheap
+    // individually, but a heavily-tiled sheet can create thousands of them).
+    revoke() {
+      for (const url of urlMap.values()) URL.revokeObjectURL(url)
+    },
+  }
+}
+
+export async function getCachedTilesForPage(pageId) {
+  return dbGetAllByIndex('cachedTiles', 'pageId', pageId)
+}
+
 // Renders a PDF's first page to a PNG Blob, live, via the given URL —
 // requires a real connection (pdf.js + its worker both need to load), which
 // is exactly why this only ever runs at download time, never from
@@ -155,20 +253,25 @@ async function renderPdfToPngBlob(url) {
 async function cachePage(pg, projectId, onProgress) {
   let sourceBlob = null
   let sourceIsPdf = false
+  let cachedTileMeta = null
 
   if (pg.tile_meta) {
-    // Preferred path: reuse the pyramid already rendered once at upload
-    // time instead of re-rendering the source file on this device — see
-    // the file header for why. Only reads small tile images, no pdf.js
-    // involved at all.
+    // Preferred path (see file header): the whole pyramid, giving offline
+    // viewing the same zoom-dependent sharpness as online.
     try {
-      sourceBlob = await stitchTilesToImage(pg.tile_meta)
+      await downloadTilePyramid(pg, onProgress)
+      cachedTileMeta = pg.tile_meta
     } catch (e) {
-      console.warn('[offlineCache] Failed to stitch tiles, falling back to source file:', e)
+      console.warn('[offlineCache] Failed to download tile pyramid, falling back to a flat stitched image:', e)
+      try {
+        sourceBlob = await stitchTilesToImage(pg.tile_meta)
+      } catch (e2) {
+        console.warn('[offlineCache] Failed to stitch tiles either, falling back to source file:', e2)
+      }
     }
   }
 
-  if (!sourceBlob) {
+  if (!cachedTileMeta && !sourceBlob) {
     let sourceUrl = pg.floor_plan_url
     if (sourceUrl && !sourceUrl.startsWith('http')) sourceUrl = resolveStorageUrl(sourceUrl)
     const rawBlob = sourceUrl ? await fetchAsBlob(sourceUrl) : null
@@ -221,7 +324,7 @@ async function cachePage(pg, projectId, onProgress) {
   await dbPut('cachedPages', {
     id: pg.id, projectId, name: pg.name, scale: pg.scale, ppi: pg.ppi,
     pixels_per_foot: pg.pixels_per_foot, calibrated: pg.calibrated,
-    sourceBlob, sourceIsPdf, sessions, cachedAt: Date.now(),
+    tileMeta: cachedTileMeta, sourceBlob, sourceIsPdf, sessions, cachedAt: Date.now(),
   })
 }
 

@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import OpenSeadragon from 'openseadragon'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOp } from '../lib/offlineSync'
-import { getCachedPage, getCachedProject } from '../lib/offlineCache'
+import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource } from '../lib/offlineCache'
 import './Canvas.css'
 
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
@@ -190,6 +190,7 @@ export default function Canvas() {
     let pages          = []
     let activePage     = null
     let osdViewer      = null
+    let currentOsdTileSource = null
     let osdOverlayScale = 1
     let tool           = 'rect'
     let brushSize      = 20
@@ -428,6 +429,11 @@ export default function Canvas() {
     // still get derived from OSD's viewport on every change (below), so
     // s2i(), calibration, and SF math need no changes at all.
     function teardownOsdViewer() {
+      // Offline tile sources hand out blob: URLs (see buildOfflineTileSource
+      // in offlineCache.js) that need explicit cleanup — the online tile
+      // source (buildTileSource) has no .revoke, so this is a no-op there.
+      currentOsdTileSource?.revoke?.()
+      currentOsdTileSource = null
       if (osdViewer) { osdViewer.destroy(); osdViewer = null }
       // osdOverlayScale is only ever read from the update-viewport handler,
       // which only fires while osdViewer is set — no need to reset it here,
@@ -437,14 +443,25 @@ export default function Canvas() {
       planEl.style.display = 'block'
     }
 
-    function setupOsdViewer(tileMeta) {
+    // Accepts an already-built OSD tile source object, not raw tile_meta —
+    // the caller decides where tiles actually come from (buildTileSource()
+    // for the network/online path, or an offline one backed by cached blob:
+    // URLs — see initFromCache). Everything below (viewport tracking,
+    // overlay scale math) is identical either way; OSD itself has no idea
+    // whether a tile URL is a network request or a blob: URL, and manages
+    // its own tile memory independently of the overlay canvases regardless
+    // — that's what makes reusing it safe for offline mode without
+    // reopening the memory-crash risk a flat, capped image was chosen to
+    // avoid in the first place.
+    function setupOsdViewer(tileSource) {
       teardownOsdViewer()
+      currentOsdTileSource = tileSource
       planEl.style.display = 'none'
       osdContainerEl.style.display = 'block'
 
       osdViewer = OpenSeadragon({
         element: osdContainerEl,
-        tileSources: buildTileSource(tileMeta),
+        tileSources: tileSource,
         showNavigationControl: false,
         animationTime: 0,
         visibilityRatio: 1,
@@ -4000,10 +4017,11 @@ export default function Canvas() {
 
     // Renders a sheet entirely from what was downloaded ahead of time for
     // offline use (see src/lib/offlineCache.js) — no network calls at all.
-    // Always renders flat (no OpenSeadragon/tiling), same as the sheet
-    // report snapshot's fallback for tiled pages: the cache holds the
-    // original source file, not a tile pyramid, so there's nothing to tile
-    // from here regardless of what this page normally does when online.
+    // Uses the same OpenSeadragon tiled viewer as the online path when a
+    // full tile pyramid was cached (matching online sharpness at any zoom
+    // level), falling back to a flat capped image when it wasn't — either
+    // because this page was never tiled, or the pyramid download failed and
+    // cachePage() stitched/rendered a flat fallback instead.
     async function initFromCache(cachedPage) {
       const uz = uploadZoneRef.current
       function uzShow(icon, title, sub) {
@@ -4024,68 +4042,101 @@ export default function Canvas() {
         projectDescription = cachedProject.description || ''
       }
 
-      if (!cachedPage.sourceBlob) {
-        uzShow('', 'No floor plan cached', 'Connect once to download this sheet for offline use')
-        return
-      }
-
-      let img
-      try {
-        const RENDER_SCALE = (isIPad || isSafari) ? Math.min(1.5, DPR) : Math.max(3.0, DPR * 1.5)
-        const blobUrl = URL.createObjectURL(cachedPage.sourceBlob)
-        try {
-          if (cachedPage.sourceIsPdf) {
-            const pdfjsLib = await import('pdfjs-dist')
-            const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-            pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-            const pdfDoc = await pdfjsLib.getDocument({ url: blobUrl, withCredentials: false }).promise
-            const page = await pdfDoc.getPage(1)
-            const viewport = page.getViewport({ scale: RENDER_SCALE })
-            const offscreen = document.createElement('canvas')
-            offscreen.width = viewport.width; offscreen.height = viewport.height
-            await page.render({ canvasContext: offscreen.getContext('2d'), viewport }).promise
-            img = offscreen
-          } else {
-            img = new Image()
-            // Reject with a real Error, not the raw load-failure event —
-            // an event object has no .message, which made this show a
-            // useless generic "Check console for details" with nothing
-            // console-visible on an iPad anyway.
-            await new Promise((resolve, reject) => {
-              img.onload = resolve
-              img.onerror = () => reject(new Error('Failed to decode the cached image file'))
-              img.src = blobUrl
-            })
-          }
-        } finally {
-          URL.revokeObjectURL(blobUrl)
-        }
-      } catch (e) {
-        console.error('[Canvas] Failed to render cached floor plan:', e)
-        const kind = cachedPage.sourceIsPdf ? 'PDF' : 'image'
-        uzShow('', 'Failed to load offline copy', `${kind} render error: ${e?.message || String(e) || 'unknown'}`)
-        return
-      }
-
-      // Same iPad memory cap as the online path — every downstream canvas
-      // (live draw layers, session composites) is sized 1:1 to this image.
-      if (isIPad || isSafari) {
-        const MAX_DIM = 4096
-        if (img.width > MAX_DIM || img.height > MAX_DIM) {
-          const scale = MAX_DIM / Math.max(img.width, img.height)
-          const scaled = document.createElement('canvas')
-          scaled.width = Math.round(img.width * scale); scaled.height = Math.round(img.height * scale)
-          scaled.getContext('2d').drawImage(img, 0, 0, scaled.width, scaled.height)
-          img = scaled
-        }
-      }
-
       if (cachedPage.scale && scaleSelectRef.current) {
         scaleSelectRef.current.value = cachedPage.scale
         if (cachedPage.scale === 'custom' && customWrapRef.current) customWrapRef.current.style.display = 'flex'
       }
 
-      addPage(img, cachedPage.name, cachedPage.ppi)
+      // A page with a fully-downloaded tile pyramid never gets a sourceBlob
+      // (cachePage() skips the flat-image fallback entirely once the pyramid
+      // succeeds) — so a cached tile pyramid has to be tried, and only falls
+      // through to the flat-image path below, before the old "sourceBlob or
+      // bust" check would otherwise wrongly report this page as not cached.
+      let usedTiledViewer = false
+      if (cachedPage.tileMeta) {
+        try {
+          const tileRecords = await getCachedTilesForPage(cachedPage.id)
+          if (!tileRecords.length) throw new Error('No cached tiles found for this page')
+          uzShow('', 'Loading floor plan…', 'Loading offline deep-zoom tiles…')
+
+          // Identical overlay-scale cap to the online tiled path (see
+          // init()) — every session's hl/pen canvas is sized 1:1 to this
+          // placeholder, not to the tile pyramid's full resolution, so
+          // offline viewing can't reopen the iPad memory-crash risk that
+          // cap exists to prevent.
+          const OVERLAY_MAX_DIM = 2048
+          osdOverlayScale = Math.min(1, OVERLAY_MAX_DIM / Math.max(cachedPage.tileMeta.width, cachedPage.tileMeta.height))
+          const placeholderImg = {
+            width: Math.round(cachedPage.tileMeta.width * osdOverlayScale),
+            height: Math.round(cachedPage.tileMeta.height * osdOverlayScale),
+          }
+          addPage(placeholderImg, cachedPage.name, 72 * TILE_BASE_SCALE * osdOverlayScale, cachedPage.tileMeta, null)
+          setupOsdViewer(buildOfflineTileSource(cachedPage.tileMeta, tileRecords))
+          usedTiledViewer = true
+        } catch (e) {
+          console.warn('[Canvas] Offline tile pyramid unavailable, falling back to a flat cached image:', e)
+        }
+      }
+
+      if (!usedTiledViewer) {
+        if (!cachedPage.sourceBlob) {
+          uzShow('', 'No floor plan cached', 'Connect once to download this sheet for offline use')
+          return
+        }
+
+        let img
+        try {
+          const RENDER_SCALE = (isIPad || isSafari) ? Math.min(1.5, DPR) : Math.max(3.0, DPR * 1.5)
+          const blobUrl = URL.createObjectURL(cachedPage.sourceBlob)
+          try {
+            if (cachedPage.sourceIsPdf) {
+              const pdfjsLib = await import('pdfjs-dist')
+              const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+              pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+              const pdfDoc = await pdfjsLib.getDocument({ url: blobUrl, withCredentials: false }).promise
+              const page = await pdfDoc.getPage(1)
+              const viewport = page.getViewport({ scale: RENDER_SCALE })
+              const offscreen = document.createElement('canvas')
+              offscreen.width = viewport.width; offscreen.height = viewport.height
+              await page.render({ canvasContext: offscreen.getContext('2d'), viewport }).promise
+              img = offscreen
+            } else {
+              img = new Image()
+              // Reject with a real Error, not the raw load-failure event —
+              // an event object has no .message, which made this show a
+              // useless generic "Check console for details" with nothing
+              // console-visible on an iPad anyway.
+              await new Promise((resolve, reject) => {
+                img.onload = resolve
+                img.onerror = () => reject(new Error('Failed to decode the cached image file'))
+                img.src = blobUrl
+              })
+            }
+          } finally {
+            URL.revokeObjectURL(blobUrl)
+          }
+        } catch (e) {
+          console.error('[Canvas] Failed to render cached floor plan:', e)
+          const kind = cachedPage.sourceIsPdf ? 'PDF' : 'image'
+          uzShow('', 'Failed to load offline copy', `${kind} render error: ${e?.message || String(e) || 'unknown'}`)
+          return
+        }
+
+        // Same iPad memory cap as the online path — every downstream canvas
+        // (live draw layers, session composites) is sized 1:1 to this image.
+        if (isIPad || isSafari) {
+          const MAX_DIM = 4096
+          if (img.width > MAX_DIM || img.height > MAX_DIM) {
+            const scale = MAX_DIM / Math.max(img.width, img.height)
+            const scaled = document.createElement('canvas')
+            scaled.width = Math.round(img.width * scale); scaled.height = Math.round(img.height * scale)
+            scaled.getContext('2d').drawImage(img, 0, 0, scaled.width, scaled.height)
+            img = scaled
+          }
+        }
+
+        addPage(img, cachedPage.name, cachedPage.ppi)
+      }
 
       if (cachedPage.pixels_per_foot && cachedPage.calibrated) {
         activePage.ppf = cachedPage.pixels_per_foot
@@ -4102,7 +4153,7 @@ export default function Canvas() {
         try {
           const parsed = cs.count_data
           if (parsed?.markers) {
-            const sx = parsed.w ? img.width / parsed.w : 1, sy = parsed.h ? img.height / parsed.h : 1
+            const sx = parsed.w ? activePage.image.width / parsed.w : 1, sy = parsed.h ? activePage.image.height / parsed.h : 1
             countMarkers = parsed.markers.map(m => ({ ...m, x: m.x * sx, y: m.y * sy }))
           }
         } catch {}
@@ -4110,7 +4161,7 @@ export default function Canvas() {
         try {
           const parsed = cs.lf_data
           if (parsed?.lines) {
-            const sx = parsed.w ? img.width / parsed.w : 1, sy = parsed.h ? img.height / parsed.h : 1
+            const sx = parsed.w ? activePage.image.width / parsed.w : 1, sy = parsed.h ? activePage.image.height / parsed.h : 1
             lfLines = parsed.lines.map(l => ({ ...l, points: l.points.map(pt => ({ ...pt, x: pt.x * sx, y: pt.y * sy })) }))
           }
         } catch {}
@@ -4265,7 +4316,7 @@ export default function Canvas() {
             height: Math.round(pg.tile_meta.height * osdOverlayScale),
           }
           addPage(placeholderImg, pg.name, 72 * TILE_BASE_SCALE * osdOverlayScale, pg.tile_meta, url)
-          setupOsdViewer(pg.tile_meta)
+          setupOsdViewer(buildTileSource(pg.tile_meta))
         } else {
         const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
         console.log('[Canvas] floor plan load path:', pg.cached_image_url ? 'CACHED PNG' : isPdf ? 'PDF RENDER' : 'IMAGE')
