@@ -4,7 +4,14 @@
 // that pulling one in isn't worth it.
 
 const DB_NAME = 'livetrak_offline'
-const DB_VERSION = 1
+// IndexedDB only runs onupgradeneeded (where object stores get created)
+// when this number goes UP from whatever's already on the device — a
+// device that already opened the DB at version 1 (e.g. during earlier
+// write-queue testing, before cachedProjects existed) never got that store
+// created just because the code added it here, and every put/get against
+// it then fails with "One of the specified object stores was not found."
+// Bump this whenever STORES changes.
+const DB_VERSION = 2
 
 // Every store offline mode uses, created up front on first open so nothing
 // downstream has to think about schema versioning.
