@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import OpenSeadragon from 'openseadragon'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOp } from '../lib/offlineSync'
+import { getCachedPage, getCachedProject } from '../lib/offlineCache'
 import './Canvas.css'
 
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
@@ -3933,6 +3934,181 @@ export default function Canvas() {
         .subscribe()
     }
 
+    // Decodes a cached Blob (a session's markup PNG, downloaded ahead of time
+    // for offline use — see src/lib/offlineCache.js) straight to a canvas at
+    // the given size, no network fetch involved. Same resize-on-decode
+    // approach as loadCanvasFromDataUrl, for the same reason: decoding at
+    // native size first on a source saved at a different device's
+    // resolution risks the oversized-canvas failure this file caps
+    // everywhere else.
+    async function blobToCanvas(blob, targetW, targetH) {
+      try {
+        if (targetW && targetH && typeof createImageBitmap === 'function') {
+          const bitmap = await createImageBitmap(blob, { resizeWidth: targetW, resizeHeight: targetH, resizeQuality: 'high' })
+          const c = document.createElement('canvas'); c.width = targetW; c.height = targetH
+          const cCtx = c.getContext('2d')
+          if (cCtx) cCtx.drawImage(bitmap, 0, 0)
+          bitmap.close()
+          return c
+        }
+        const blobUrl = URL.createObjectURL(blob)
+        try {
+          const img = new Image()
+          await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl })
+          const c = document.createElement('canvas'); c.width = img.width; c.height = img.height
+          const cCtx = c.getContext('2d')
+          if (cCtx && c.width > 0) cCtx.drawImage(img, 0, 0)
+          return c
+        } finally {
+          URL.revokeObjectURL(blobUrl)
+        }
+      } catch (e) {
+        console.warn('[Canvas] blobToCanvas failed:', e)
+        return null
+      }
+    }
+
+    // Renders a sheet entirely from what was downloaded ahead of time for
+    // offline use (see src/lib/offlineCache.js) — no network calls at all.
+    // Always renders flat (no OpenSeadragon/tiling), same as the sheet
+    // report snapshot's fallback for tiled pages: the cache holds the
+    // original source file, not a tile pyramid, so there's nothing to tile
+    // from here regardless of what this page normally does when online.
+    async function initFromCache(cachedPage) {
+      const uz = uploadZoneRef.current
+      function uzShow(icon, title, sub) {
+        uz.innerHTML = `<div class="ct-upload-box"><div class="ct-upload-icon">${icon}</div><div class="ct-upload-title">${title}</div><div class="ct-upload-sub">${sub}</div></div>`
+        uz.classList.remove('hidden')
+      }
+      uzShow('', 'Loading floor plan…', 'Loading offline copy…')
+
+      dbProjectId = cachedPage.projectId
+      if (pageTitleRef.current) pageTitleRef.current.textContent = cachedPage.name
+
+      const cachedProject = await getCachedProject(cachedPage.projectId)
+      if (cachedProject) {
+        if (cachedProject.daily_sf_target) todayTarget = cachedProject.daily_sf_target
+        if (cachedProject.total_sf_target) totalBuildingSF = cachedProject.total_sf_target
+        if (cachedProject.cost) projectCost = cachedProject.cost
+        projectName = cachedProject.name || ''
+        projectDescription = cachedProject.description || ''
+      }
+
+      if (!cachedPage.sourceBlob) {
+        uzShow('', 'No floor plan cached', 'Connect once to download this sheet for offline use')
+        return
+      }
+
+      let img
+      try {
+        const RENDER_SCALE = (isIPad || isSafari) ? Math.min(1.5, DPR) : Math.max(3.0, DPR * 1.5)
+        const blobUrl = URL.createObjectURL(cachedPage.sourceBlob)
+        try {
+          if (cachedPage.sourceIsPdf) {
+            const pdfjsLib = await import('pdfjs-dist')
+            const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+            pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+            const pdfDoc = await pdfjsLib.getDocument({ url: blobUrl, withCredentials: false }).promise
+            const page = await pdfDoc.getPage(1)
+            const viewport = page.getViewport({ scale: RENDER_SCALE })
+            const offscreen = document.createElement('canvas')
+            offscreen.width = viewport.width; offscreen.height = viewport.height
+            await page.render({ canvasContext: offscreen.getContext('2d'), viewport }).promise
+            img = offscreen
+          } else {
+            img = new Image()
+            await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl })
+          }
+        } finally {
+          URL.revokeObjectURL(blobUrl)
+        }
+      } catch (e) {
+        console.error('[Canvas] Failed to render cached floor plan:', e)
+        uzShow('', 'Failed to load offline copy', e.message || 'Check console for details')
+        return
+      }
+
+      // Same iPad memory cap as the online path — every downstream canvas
+      // (live draw layers, session composites) is sized 1:1 to this image.
+      if (isIPad || isSafari) {
+        const MAX_DIM = 4096
+        if (img.width > MAX_DIM || img.height > MAX_DIM) {
+          const scale = MAX_DIM / Math.max(img.width, img.height)
+          const scaled = document.createElement('canvas')
+          scaled.width = Math.round(img.width * scale); scaled.height = Math.round(img.height * scale)
+          scaled.getContext('2d').drawImage(img, 0, 0, scaled.width, scaled.height)
+          img = scaled
+        }
+      }
+
+      if (cachedPage.scale && scaleSelectRef.current) {
+        scaleSelectRef.current.value = cachedPage.scale
+        if (cachedPage.scale === 'custom' && customWrapRef.current) customWrapRef.current.style.display = 'flex'
+      }
+
+      addPage(img, cachedPage.name, cachedPage.ppi)
+
+      if (cachedPage.pixels_per_foot && cachedPage.calibrated) {
+        activePage.ppf = cachedPage.pixels_per_foot
+        activePage.calibrated = true
+        if (calibInfoRef.current) { calibInfoRef.current.style.display = 'inline'; calibInfoRef.current.textContent = 'Calibrated: ' + activePage.ppf.toFixed(1) + ' px/ft' }
+      }
+
+      for (const cs of (cachedPage.sessions || [])) {
+        const hlCanvas = cs.hlBlob ? await blobToCanvas(cs.hlBlob, activePage.image.width, activePage.image.height) : null
+        if (!hlCanvas || hlCanvas.width === 0) continue
+        const penCanvas = cs.penBlob ? await blobToCanvas(cs.penBlob, activePage.image.width, activePage.image.height) : null
+
+        let countMarkers = []
+        try {
+          const parsed = cs.count_data
+          if (parsed?.markers) {
+            const sx = parsed.w ? img.width / parsed.w : 1, sy = parsed.h ? img.height / parsed.h : 1
+            countMarkers = parsed.markers.map(m => ({ ...m, x: m.x * sx, y: m.y * sy }))
+          }
+        } catch {}
+        let lfLines = []
+        try {
+          const parsed = cs.lf_data
+          if (parsed?.lines) {
+            const sx = parsed.w ? img.width / parsed.w : 1, sy = parsed.h ? img.height / parsed.h : 1
+            lfLines = parsed.lines.map(l => ({ ...l, points: l.points.map(pt => ({ ...pt, x: pt.x * sx, y: pt.y * sy })) }))
+          }
+        } catch {}
+
+        activePage.sessions.push({
+          id: sessionCounter++,
+          name: cs.name || 'Session',
+          color: cs.color || '#facc15',
+          userName: cs.profiles?.full_name || 'User',
+          userColor: cs.profiles?.avatar_color || cs.color || '#facc15',
+          sf: parseFloat(cs.sf) || 0,
+          count: countMarkers.length || 0,
+          lf: parseFloat(cs.lf) || 0,
+          hlCanvas, penCanvas, countMarkers, lfLines,
+          pageId: activePage.id,
+          pageName: activePage.name,
+          date: cs.work_date || getCurrentDate(),
+          time: cs.created_at ? new Date(cs.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+          crewSize: cs.crew_size ?? null,
+          hoursWorked: cs.hours_worked ?? null,
+          photos: Array.isArray(cs.photos) ? cs.photos : [],
+          supabaseId: cs.id,
+        })
+      }
+
+      invalidateSessions()
+      redrawAll(); renderSessions(); updateSF(); updateProgressBar(); saveDayToHistory()
+      uzShow('', 'Offline', 'Viewing a downloaded copy — new markup will sync once you have a connection')
+      setTimeout(() => { if (uz && !uz.classList.contains('hidden')) uz.classList.add('hidden') }, 2500)
+
+      try {
+        draftInterval = setInterval(saveDraft, 30000)
+      } catch (e) {
+        console.error('[Canvas] Draft interval start error (offline):', e)
+      }
+    }
+
     // ── INIT ──────────────────────────────────────────────────────────────────
     async function init() {
       const uz = uploadZoneRef.current
@@ -3943,23 +4119,48 @@ export default function Canvas() {
 
       uzShow('', 'Loading…', 'Fetching page data…')
 
-      // Fetch user profile for session default name
-      const { data: prof } = await supabase.from('profiles').select('full_name, avatar_color, role').eq('id', user.id).single()
-      userProfile = prof
-      setCanvasProfile(prof)
+      // This used to have no error handling at all — a thrown network
+      // error here (init() is called fire-and-forget, nothing downstream
+      // catches it) was an unhandled promise rejection, leaving the
+      // "Loading…" placeholder stuck forever with no indication why. Now
+      // falls back to an offline-downloaded copy of this page (see
+      // src/lib/offlineCache.js) when one exists.
+      let pg, project
+      try {
+        // Fetch user profile for session default name
+        const { data: prof, error: profErr } = await supabase.from('profiles').select('full_name, avatar_color, role').eq('id', user.id).single()
+        if (profErr) throw profErr
+        userProfile = prof
+        setCanvasProfile(prof)
 
-      const { data: pg, error: pgErr } = await supabase.from('pages').select('*').eq('id', pageId).single()
-      if (pgErr || !pg) { uzShow('', 'Page not found', 'Please go back and try again'); return }
+        const { data: pgData, error: pgErr } = await supabase.from('pages').select('*').eq('id', pageId).single()
+        if (pgErr || !pgData) throw pgErr || new Error('Page not found')
+        pg = pgData
 
-      dbProjectId = pg.project_id
-      if (pageTitleRef.current) pageTitleRef.current.textContent = pg.name
+        dbProjectId = pg.project_id
+        if (pageTitleRef.current) pageTitleRef.current.textContent = pg.name
 
-      // Load project target and apply it before the progress bar renders
-      const { data: project } = await supabase
-        .from('projects')
-        .select('name, description, daily_sf_target, total_sf_target, cost')
-        .eq('id', pg.project_id)
-        .single()
+        // Load project target and apply it before the progress bar renders
+        const { data: projectData, error: projErr } = await supabase
+          .from('projects')
+          .select('name, description, daily_sf_target, total_sf_target, cost')
+          .eq('id', pg.project_id)
+          .single()
+        if (projErr) throw projErr
+        project = projectData
+      } catch (err) {
+        if (isNetworkError(err)) {
+          console.warn('[Canvas] Could not reach the network loading this sheet — trying offline cache:', err)
+          const cached = await getCachedPage(pageId)
+          if (cached) { await initFromCache(cached); return }
+          uzShow('', 'No connection', "This sheet hasn't been downloaded for offline use yet — connect once to enable it.")
+          return
+        }
+        console.error('[Canvas] Failed to load page data:', err)
+        uzShow('', 'Page not found', 'Please go back and try again')
+        return
+      }
+
       if (project?.daily_sf_target) {
         todayTarget = project.daily_sf_target
       }
@@ -4128,6 +4329,16 @@ export default function Canvas() {
         }
 
       } catch (err) {
+        if (isNetworkError(err)) {
+          // Signal dropped between the earlier page/project fetch and
+          // actually downloading the floor plan file/tiles — same offline
+          // fallback as above.
+          console.warn('[Canvas] Could not reach the network rendering this sheet — trying offline cache:', err)
+          const cached = await getCachedPage(pageId)
+          if (cached) { await initFromCache(cached); return }
+          uzShow('', 'No connection', "This sheet hasn't been downloaded for offline use yet — connect once to enable it.")
+          return
+        }
         console.error('[Canvas] Init error:', err, err?.stack)
         uzShow('', 'Failed to load floor plan', err.message || 'Check console for details')
         return

@@ -8,7 +8,7 @@ const DB_VERSION = 1
 
 // Every store offline mode uses, created up front on first open so nothing
 // downstream has to think about schema versioning.
-const STORES = ['pendingOps', 'cachedPages', 'cachedFiles']
+const STORES = ['pendingOps', 'cachedPages', 'cachedProjects']
 
 let dbPromise = null
 
