@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import OpenSeadragon from 'openseadragon'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
-import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOp } from '../lib/offlineSync'
+import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOpsForSession } from '../lib/offlineSync'
 import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource } from '../lib/offlineCache'
 import './Canvas.css'
 
@@ -2591,13 +2591,34 @@ export default function Canvas() {
       if (soloSession?.id === sId) soloSession = null
       invalidateSessions(); redrawAll(); renderSessions(); updateSF()
       // A session created entirely offline has no supabaseId yet — its
-      // initial save is still a queued 'insert' op. Without canceling that
-      // op too, a later successful sync would still create the row,
+      // initial save (and any other queued op for it, like a still-pending
+      // photo upload) is still sitting in the sync queue. Cancel all of it
+      // first — otherwise a later sync would still insert/update the row,
       // resurrecting a session the user just deleted.
-      if (sess?._offlineOpId) await cancelOp(sess._offlineOpId)
+      await cancelOpsForSession({ supabaseId: sess?.supabaseId, localSessionId: sess?.id })
       if (sess?.supabaseId) {
         deletedSessionIds.add(sess.supabaseId)
-        await supabase.from('sessions').delete().eq('id', sess.supabaseId)
+        try {
+          const { error } = await supabase.from('sessions').delete().eq('id', sess.supabaseId)
+          if (error) throw error
+        } catch (err) {
+          if (!isNetworkError(err)) {
+            console.error('[Canvas] Failed to delete session:', err)
+            showToast('Delete failed: ' + (err.message || 'check console'), true)
+            return
+          }
+          // No connection right now — this used to just silently fail here,
+          // so the "deleted" session would reappear as soon as the page next
+          // loaded from the network instead of the offline cache. Queue the
+          // delete so it actually happens once a connection comes back.
+          console.warn('[Canvas] Delete could not reach the network — queuing for offline sync:', err)
+          await enqueueSessionOp({
+            kind: 'delete', pageId, projectId: dbProjectId, userId: user.id,
+            supabaseId: sess.supabaseId, storageKey: `${sess.supabaseId}_delete_${Date.now()}`,
+          })
+          updatePendingSyncBadge()
+          showToast('No connection — this delete will sync automatically')
+        }
       }
     }
 

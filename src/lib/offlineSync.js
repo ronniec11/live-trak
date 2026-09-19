@@ -42,6 +42,18 @@ export async function cancelOp(id) {
   await dbDelete('pendingOps', id)
 }
 
+// Cancels every still-queued op for one session (its original insert, any
+// queued photo updates, etc.) — called right before deleting that session,
+// since a sync running any of them afterward would either resurrect the row
+// or fail forever trying to update one that's already gone.
+export async function cancelOpsForSession({ supabaseId, localSessionId }) {
+  const ops = await getPendingOps()
+  const matches = ops.filter(op =>
+    (supabaseId && op.supabaseId === supabaseId) ||
+    (localSessionId != null && op.localSessionId === localSessionId))
+  await Promise.all(matches.map(op => dbDelete('pendingOps', op.id)))
+}
+
 async function uploadBlob(projectId, pageId, storageKey, blob, type, ext) {
   const path = `${projectId}/sessions/${pageId}/${storageKey}_${type}.${ext}`
   const { error } = await supabase.storage.from('floor-plans')
@@ -77,6 +89,11 @@ async function withMissingColumnFallback(basePayload, run) {
 }
 
 async function syncOneOp(op) {
+  if (op.kind === 'delete') {
+    const { error } = await supabase.from('sessions').delete().eq('id', op.supabaseId)
+    if (error) throw error
+    return { supabaseId: op.supabaseId, deleted: true }
+  }
   const [highlight_data, pen_data] = await Promise.all([
     op.hlBlob ? uploadBlob(op.projectId, op.pageId, op.storageKey, op.hlBlob, 'hl', 'png') : Promise.resolve(undefined),
     op.penBlob ? uploadBlob(op.projectId, op.pageId, op.storageKey, op.penBlob, 'pen', 'png') : Promise.resolve(undefined),
