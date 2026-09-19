@@ -687,10 +687,37 @@ export default function Projects() {
     setLoadError('')
     setOfflineMode(false)
 
+    // Shared by both failure paths below (a thrown/rejected fetch, and the
+    // hard timeout if the fetch instead just hangs rather than failing
+    // outright — which connectivity loss doesn't always do cleanly) so
+    // either one reliably ends up showing whatever was downloaded for
+    // offline use (see src/lib/offlineCache.js and the download button on
+    // each project card) instead of a dead-end error with nothing to do
+    // about it. `settled` stops whichever path loses the race from
+    // clobbering the other's result.
+    let settled = false
+    async function fallbackToCache(message) {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      try {
+        const cached = await listCachedProjects()
+        if (cached.length > 0) {
+          setProjects(cached.map(p => ({ ...p, sort_order: null })))
+          setOfflineMode(true)
+        } else {
+          setLoadError(message)
+        }
+      } catch {
+        setLoadError(message)
+      } finally {
+        setLoading(false)
+      }
+    }
+
     // 5-second hard timeout so the skeleton never spins forever
     const timeoutId = setTimeout(() => {
-      setLoading(false)
-      setLoadError('Loading timed out. Check your connection and try refreshing.')
+      fallbackToCache('Loading timed out. Check your connection and try refreshing.')
     }, 5000)
 
     try {
@@ -702,6 +729,9 @@ export default function Projects() {
 
       console.log('[Projects] fetch result:', { count: data?.length, error })
       if (error) throw error
+      if (settled) return // the 5s timeout already took over and showed the offline fallback
+      settled = true
+      clearTimeout(timeoutId)
       setProjects(data || [])
 
       const projectIds = (data || []).map(p => p.id)
@@ -740,22 +770,10 @@ export default function Projects() {
       setSfTodayByProject(todayMap)
     } catch (err) {
       console.error('loadProjects error:', err)
-      // Fall back to whatever projects were downloaded for offline use (see
-      // src/lib/offlineCache.js and the Download for Offline button on the
-      // project page) rather than just showing an error with nothing to do
-      // about it.
-      try {
-        const cached = await listCachedProjects()
-        if (cached.length > 0) {
-          setProjects(cached.map(p => ({ ...p, sort_order: null })))
-          setOfflineMode(true)
-        } else {
-          setLoadError(err.message || 'Failed to load projects. Please try refreshing.')
-        }
-      } catch {
-        setLoadError(err.message || 'Failed to load projects. Please try refreshing.')
-      }
+      await fallbackToCache(err.message || 'Failed to load projects. Please try refreshing.')
     } finally {
+      // Unconditional and idempotent — harmless to call again if one of the
+      // paths above (or the 5s timeout) already settled things first.
       clearTimeout(timeoutId)
       setLoading(false)
     }

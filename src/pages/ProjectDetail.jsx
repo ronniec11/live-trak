@@ -295,6 +295,7 @@ export default function ProjectDetail() {
   const [activePage, setActivePage] = useState(null)
   const [loading, setLoading] = useState(true)
   const [offlineMode, setOfflineMode] = useState(false)
+  const [notCachedOffline, setNotCachedOffline] = useState(false)
   const [showAddPage, setShowAddPage] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [editingTarget, setEditingTarget] = useState(false)
@@ -476,6 +477,7 @@ export default function ProjectDetail() {
       setCostInput(proj?.cost ?? '')
       if (pgs && pgs.length > 0) setActivePage(pgs[0])
       setOfflineMode(false)
+      setNotCachedOffline(false)
 
       await loadTodaySessions(pgs || [])
     } catch (err) {
@@ -496,9 +498,17 @@ export default function ProjectDetail() {
           setCostInput(cached.cost ?? '')
           if (cached.pages?.length > 0) setActivePage(cached.pages[0])
           setOfflineMode(true)
+        } else {
+          // Reached this project some way other than tapping its card on
+          // the Projects page (that page only lists downloaded projects
+          // once it's shown the same offline fallback) — a stale link, the
+          // browser's back button, etc. Nothing to show without either a
+          // connection or a prior download.
+          setNotCachedOffline(true)
         }
       } catch (cacheErr) {
         console.error('[ProjectDetail] offline cache fallback failed:', cacheErr)
+        setNotCachedOffline(true)
       }
     } finally {
       setLoading(false)
@@ -569,7 +579,11 @@ export default function ProjectDetail() {
   if (!project) {
     return (
       <Layout>
-        <div className="text-center py-16 text-muted">Project not found or access denied.</div>
+        <div className="text-center py-16 text-muted">
+          {notCachedOffline
+            ? "No connection, and this project hasn't been downloaded for offline use. Connect once, or download it in advance from the Projects page."
+            : 'Project not found or access denied.'}
+        </div>
       </Layout>
     )
   }
