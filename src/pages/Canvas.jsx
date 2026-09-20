@@ -3310,13 +3310,13 @@ export default function Canvas() {
     function formatDate(ds) {
       return new Date(ds+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
     }
-    // dd/mm/yyyy, used only by the Sheet Report (rows + range label) — the
+    // mm/dd/yyyy, used only by the Sheet Report (rows + range label) — the
     // calendar/history UI elsewhere keeps formatDate's "Sep 14, 2026" style.
     function formatReportDate(ds) {
       const d = new Date(ds+'T00:00:00')
       const dd = String(d.getDate()).padStart(2, '0')
       const mm = String(d.getMonth() + 1).padStart(2, '0')
-      return `${dd}/${mm}/${d.getFullYear()}`
+      return `${mm}/${dd}/${d.getFullYear()}`
     }
 
     // ── SHEET REPORT ─────────────────────────────────────────────────────────
@@ -3584,6 +3584,11 @@ export default function Canvas() {
         <div class="ct-rep-sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
+          <colgroup>
+            <col style="width:13%"><col style="width:33%">
+            <col style="width:11%"><col style="width:8%"><col style="width:8%">
+            <col style="width:10%"><col style="width:17%">
+          </colgroup>
           <thead>
             <tr>
               <th>Date</th>
@@ -3640,7 +3645,7 @@ export default function Canvas() {
 <meta charset="utf-8">
 <title>Sheet Report - ${data.sheetName}</title>
 <style>
-  @page { margin: 0.5in; }
+  @page { margin: 0.75in; }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
@@ -3679,6 +3684,15 @@ export default function Canvas() {
   <div class="sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
   ${data.snapshot ? `<img class="snap" src="${data.snapshot}" />` : ''}
   <table>
+    <!-- Widths here are hints, not hard limits (table-layout stays auto —
+         see the comment above), so Session gets the most room without
+         risking the Total Hours overflow the earlier fixed-layout attempt
+         caused: a column still grows past its hint if its content needs it. -->
+    <colgroup>
+      <col style="width:13%"><col style="width:33%">
+      <col style="width:11%"><col style="width:8%"><col style="width:8%">
+      <col style="width:10%"><col style="width:17%">
+    </colgroup>
     <thead>
       <tr>
         <th>Date</th>
