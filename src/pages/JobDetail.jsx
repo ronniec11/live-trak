@@ -87,8 +87,8 @@ function StatusBadge({ status, onSave, className = '' }) {
 // the "card" class's existing all-sides border, not fight its specificity.
 function scopeAccentColor(status) {
   if (status === 'active') return '#4ade80'
-  if (status === 'completed') return '#9ca3af'
-  return '#facc15'
+  if (status === 'completed') return '#3b82f6'
+  return '#f97316' // on hold
 }
 
 // Open-Meteo's WMO weather codes collapsed to a short human label — see
