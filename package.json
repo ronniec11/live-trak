@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "openseadragon": "^6.1.0",
     "pdfjs-dist": "^5.6.205",
     "react": "^18.2.0",

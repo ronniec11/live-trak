@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import OpenSeadragon from 'openseadragon'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOpsForSession } from '../lib/offlineSync'
 import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource } from '../lib/offlineCache'
@@ -136,7 +138,7 @@ export default function Canvas() {
   const calLegendRef     = useRef(null)
   const reportModalRef   = useRef(null)
   const reportBodyRef    = useRef(null)
-  const printFrameRef    = useRef(null)
+  const printBtnRef      = useRef(null)
   // sheet report setup modal (day/range/all-time + per-session picker)
   const reportSetupModalRef    = useRef(null)
   const reportScopeDayBtnRef   = useRef(null)
@@ -3627,124 +3629,181 @@ export default function Canvas() {
       if (reportModalRef.current) reportModalRef.current.classList.remove('open')
     }
 
-    // Prints via a hidden iframe with a fully self-contained document,
-    // instead of window.print() on the live app page or a new
-    // window/tab. iOS Safari's print pipeline for the app's own page
-    // rendered a screenshot of the current on-screen UI rather than
-    // applying @media print rules (confirmed on device) — an iframe is a
-    // genuinely separate document, so there's nothing of the app's own
-    // chrome for it to capture, and no new window that could strand the
-    // user the way window.open() did.
-    function printDailyReportPDF() {
+    // Fetches a (same-origin-CORS-enabled) image URL and returns it as a
+    // data: URL — jsPDF's addImage needs actual pixel data, not a src it
+    // can fetch itself the way a plain <img> tag could. Session photos
+    // live in Supabase Storage same as everything else this app already
+    // fetches cross-origin (see offlineCache.js's fetchAsBlob), so this
+    // reuses that same proven fetch-then-blob approach rather than the
+    // canvas+toDataURL route, which would additionally require the image
+    // to load with crossOrigin set and risk a tainted-canvas security
+    // error if the bucket's CORS headers are ever narrower than expected.
+    async function urlToDataURL(url) {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`Fetch failed (${res.status}): ${url}`)
+      const blob = await res.blob()
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
+    }
+    // jsPDF's addImage takes an explicit format rather than sniffing the
+    // data: URL itself.
+    function imageFormatFromDataUrl(dataUrl) {
+      const m = /^data:image\/(\w+);/.exec(dataUrl)
+      const t = m?.[1]?.toUpperCase()
+      return t === 'JPG' ? 'JPEG' : (t || 'JPEG')
+    }
+
+    // Builds the PDF ourselves (jsPDF + autoTable) instead of going
+    // through the OS print dialog (window.print() on a hidden iframe, as
+    // this used to). Safari/WebKit's print engine — on both iPadOS and
+    // macOS — does not honor the CSS `@page { margin }` property at all;
+    // it always applies its own fixed built-in print margin no matter
+    // what value is set, which is why every attempt to shrink that
+    // margin via CSS had zero visible effect. Generating the PDF
+    // directly gives real control over margins/layout since there's no
+    // OS print pipeline in the way — every coordinate below is ours.
+    async function printDailyReportPDF() {
       const data = lastReportData
       if (!data) { alert('Generate a report first.'); return }
-      const rows = reportRowsHtml(data, 'num')
-      const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Sheet Report - ${data.sheetName}</title>
-<style>
-  @page { margin: 0.25in; }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 24px; }
-  h1 { font-size: 20px; margin: 0 0 2px; }
-  h1 .scope { color: #16a34a; }
-  .desc { font-size: 13px; font-weight: 600; color: #6b7280; margin: 2px 0; }
-  .sub { font-size: 12px; color: #6b7280; margin-bottom: 14px; }
-  /* Capped by height (not just width) and orientation-independent — sized
-     to fit comfortably above the table on a single page in EITHER
-     orientation. Unconstrained height let a wide/landscape sheet image
-     scale to the full page width, which in landscape (more width, less
-     page height available) made it render tall enough to push the table
-     onto extra pages even for a small report. */
-  img.snap { display: block; max-width: 100%; max-height: 3.8in; width: auto; height: auto; margin: 0 auto 14px; border: 1px solid #e5e7eb; border-radius: 8px; page-break-inside: avoid; break-inside: avoid; }
-  /* table-layout: fixed (with a colgroup guessing each column's share)
-     briefly replaced this — but a fixed width can't grow for content
-     that's wider than its guess, and the bold Total row's numbers ran
-     off the right edge of the page as a result. Auto layout sizes each
-     column to its own widest content instead, so nothing can overflow;
-     nowrap below still stops Date/headers from wrapping awkwardly. */
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; text-align: left; }
-  th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; font-weight: 700; white-space: nowrap; }
-  td.num, th.num { text-align: right; }
-  td:first-child { white-space: nowrap; }
-  tfoot td { font-weight: 800; border-top: 2px solid #1c1c1a; border-bottom: none; }
-  tr { page-break-inside: avoid; break-inside: avoid; }
-  .rates { font-size: 12px; color: #374151; margin-top: 10px; }
-  .rates strong { color: #1c1c1a; }
-  .photos-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; page-break-inside: avoid; break-inside: avoid; }
-  .photo { width: 110px; height: 110px; object-fit: cover; border-radius: 6px; border: 1.5px solid; }
-</style>
-</head>
-<body>
-  <h1>${data.label} — <span class="scope">${data.scopeLabel}</span></h1>
-  <div class="desc">${data.sheetName}</div>
-  <div class="sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
-  ${data.snapshot ? `<img class="snap" src="${data.snapshot}" />` : ''}
-  <table>
-    <!-- Widths here are hints, not hard limits (table-layout stays auto —
-         see the comment above), so Session gets the most room without
-         risking the Total Hours overflow the earlier fixed-layout attempt
-         caused: a column still grows past its hint if its content needs it. -->
-    <colgroup>
-      <col style="width:13%"><col style="width:33%">
-      <col style="width:11%"><col style="width:8%"><col style="width:8%">
-      <col style="width:10%"><col style="width:17%">
-    </colgroup>
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>Session</th>
-        <th class="num">SF</th>
-        <th class="num">LF</th>
-        <th class="num">Crew</th>
-        <th class="num">Hours</th>
-        <th class="num">Total Hours</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-    <tfoot>
-      <tr>
-        <td>Total</td>
-        <td></td>
-        <td></td>
-        <td class="num">${Math.round(data.totalSF).toLocaleString()}</td>
-        <td class="num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
-        <td class="num"></td>
-        <td class="num"></td>
-        <td class="num">${data.totalManHours ? data.totalManHours.toFixed(1) : '–'}</td>
-      </tr>
-    </tfoot>
-  </table>
-  ${reportRatesHtml(data, 'rates')}
-  ${reportPhotosHtml(data, 'photos-grid', 'photo')}
-</body>
-</html>`
 
-      const frame = printFrameRef.current
-      if (!frame) return
-      const doc = frame.contentWindow.document
-      doc.open(); doc.write(html); doc.close()
-      // A fixed short delay was enough for the iframe to finish laying out
-      // before this used to just call print(), but photos are real network
-      // fetches (unlike the snapshot, a data: URL that's already fully
-      // in-memory) — whichever ones hadn't finished downloading yet by the
-      // time Safari's print pipeline snapshotted the page came out blank.
-      // Wait for every image to actually finish (load or error) instead,
-      // with a hard cap so one slow/broken photo can never hang printing.
-      const imgs = Array.from(doc.images)
-      const whenLoaded = Promise.all(imgs.map(img => img.complete
-        ? Promise.resolve()
-        : new Promise(resolve => {
-            img.addEventListener('load', resolve, { once: true })
-            img.addEventListener('error', resolve, { once: true })
-          })))
-      Promise.race([whenLoaded, new Promise(resolve => setTimeout(resolve, 6000))]).then(() => {
-        frame.contentWindow.focus()
-        frame.contentWindow.print()
-      })
+      const btn = printBtnRef.current
+      if (btn) { btn.textContent = 'Generating…'; btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6' }
+
+      try {
+        const doc = new jsPDF({ unit: 'in', format: 'letter' })
+        const margin = 0.4
+        const pageWidth = doc.internal.pageSize.getWidth()
+        const pageHeight = doc.internal.pageSize.getHeight()
+        const contentWidth = pageWidth - margin * 2
+        const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
+        let y = margin
+
+        function ensureRoom(h) {
+          if (y + h > pageHeight - margin) { doc.addPage(); y = margin }
+        }
+
+        // Title — project name in black, scope name in green, same as the
+        // on-screen report's own highlighted scope name.
+        doc.setFont(undefined, 'bold')
+        doc.setFontSize(16)
+        doc.setTextColor('#1c1c1a')
+        const labelText = `${data.label} — `
+        doc.text(labelText, margin, y)
+        doc.setTextColor('#16a34a')
+        doc.text(data.scopeLabel, margin + doc.getTextWidth(labelText), y)
+        y += 0.24
+
+        // Sheet name
+        doc.setFontSize(11)
+        doc.setTextColor('#6b7280')
+        doc.text(data.sheetName, margin, y)
+        y += 0.2
+
+        // Range / generated
+        doc.setFont(undefined, 'normal')
+        doc.setFontSize(9)
+        doc.text(`${data.range}    •    Generated ${data.generated}`, margin, y)
+        y += 0.18
+
+        // Snapshot — capped by height, not just width, same as before:
+        // an unconstrained height let a wide/landscape sheet image scale
+        // to the full page width and run tall enough to push the table
+        // onto extra pages even for a small report.
+        if (data.snapshot) {
+          try {
+            const props = doc.getImageProperties(data.snapshot)
+            let w = contentWidth
+            let h = w * props.height / props.width
+            const maxH = 3.2
+            if (h > maxH) { h = maxH; w = h * props.width / props.height }
+            ensureRoom(h)
+            doc.addImage(data.snapshot, 'PNG', margin + (contentWidth - w) / 2, y, w, h)
+            y += h + 0.18
+          } catch (e) {
+            console.warn('[Canvas] Sheet Report: snapshot embed failed:', e)
+          }
+        }
+
+        // Table — Session gets the most width, same allocation as the
+        // on-screen report's own colgroup, and for the same reason: it's
+        // the field most likely to need room, everything else is short.
+        autoTable(doc, {
+          startY: y,
+          margin: { top: margin, right: margin, bottom: margin, left: margin },
+          head: [['Date', 'Session', 'SF', 'LF', 'Crew', 'Hours', 'Total Hours']],
+          body: data.rows.map(r => [
+            r.date, r.name,
+            r.sf ? Math.round(r.sf).toLocaleString() : '–',
+            r.lf ? Math.round(r.lf).toLocaleString() : '–',
+            r.crew || '–',
+            r.hours ? r.hours.toFixed(1) : '–',
+            r.manHours ? r.manHours.toFixed(1) : '–',
+          ]),
+          foot: [[
+            'Total', '',
+            Math.round(data.totalSF).toLocaleString(),
+            data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–',
+            '', '',
+            data.totalManHours ? data.totalManHours.toFixed(1) : '–',
+          ]],
+          styles: { fontSize: 9, cellPadding: 0.06, textColor: '#1c1c1a', lineColor: '#e5e7eb', lineWidth: 0.005 },
+          headStyles: { fontSize: 7, textColor: '#6b7280', fontStyle: 'bold', fillColor: false },
+          footStyles: { fontStyle: 'bold', textColor: '#1c1c1a', fillColor: false, lineWidth: { top: 0.02 } },
+          columnStyles: {
+            0: { cellWidth: contentWidth * 0.13 },
+            1: { cellWidth: contentWidth * 0.33 },
+            2: { cellWidth: contentWidth * 0.11, halign: 'right' },
+            3: { cellWidth: contentWidth * 0.08, halign: 'right' },
+            4: { cellWidth: contentWidth * 0.08, halign: 'right' },
+            5: { cellWidth: contentWidth * 0.10, halign: 'right' },
+            6: { cellWidth: contentWidth * 0.17, halign: 'right' },
+          },
+        })
+        y = doc.lastAutoTable.finalY + 0.2
+
+        // Rates
+        ensureRoom(0.2)
+        doc.setFontSize(9)
+        doc.setTextColor('#374151')
+        let ratesText = `SF / Man-Hour: ${rate(data.sfPerManHour)}    SF / Day: ${rate(data.sfPerDay)}`
+        if (data.lunchBreakMinutes > 0) ratesText += `    ${data.lunchBreakMinutes}-minute lunch/person deducted from man-hours`
+        doc.text(ratesText, margin, y)
+        y += 0.3
+
+        // Photos — same per-session color border as the on-screen report.
+        // Fetched one at a time (not Promise.all) so a slow/broken photo
+        // only delays its own placement, not every photo after it.
+        if (data.photos?.length) {
+          const size = 1.15
+          const gap = 0.12
+          let x = margin
+          ensureRoom(size)
+          for (const p of data.photos) {
+            if (x + size > pageWidth - margin) { x = margin; y += size + gap; ensureRoom(size) }
+            try {
+              const dataUrl = await urlToDataURL(p.url)
+              doc.addImage(dataUrl, imageFormatFromDataUrl(dataUrl), x, y, size, size)
+              doc.setDrawColor(p.color || '#4ade80')
+              doc.setLineWidth(0.02)
+              doc.rect(x, y, size, size)
+            } catch (e) {
+              console.warn('[Canvas] Sheet Report: photo embed failed, skipping:', p.url, e)
+            }
+            x += size + gap
+          }
+        }
+
+        doc.save(`Sheet Report - ${data.sheetName}.pdf`)
+      } catch (e) {
+        console.error('[Canvas] Sheet Report PDF generation failed:', e)
+        alert('Failed to generate the PDF: ' + (e.message || 'check console'))
+      } finally {
+        if (btn) { btn.textContent = 'Print / Save as PDF'; btn.style.pointerEvents = ''; btn.style.opacity = '' }
+      }
     }
 
     // ── RESIZE ────────────────────────────────────────────────────────────────
@@ -5039,14 +5098,13 @@ export default function Canvas() {
           <div className="ct-report-header">
             <div className="ct-report-hdr-title">Sheet Report</div>
             <div className="ct-report-hdr-btns">
-              <button className="ct-cal-btn" onClick={() => api.current.printDailyReportPDF?.()}>Print / Save as PDF</button>
+              <button ref={printBtnRef} className="ct-cal-btn" onClick={() => api.current.printDailyReportPDF?.()}>Print / Save as PDF</button>
               <button className="ct-cal-btn" onClick={() => api.current.closeDailyReport?.()}>Close</button>
             </div>
           </div>
           <div ref={reportBodyRef} className="ct-report-body" />
         </div>
       </div>
-      <iframe ref={printFrameRef} title="Print report" style={{position:'fixed',width:0,height:0,border:'none',visibility:'hidden'}} />
 
     </div>
   )
