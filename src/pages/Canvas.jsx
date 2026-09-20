@@ -3478,12 +3478,11 @@ export default function Canvas() {
         : 'All Time'
       const snapshot = await buildSheetSnapshot(included)
 
-      // Man-hours is per-session crew×hours, summed — not totalCrew×totalHours,
-      // which would be wrong whenever crew size or hours vary session to
-      // session. This is what actually drives SF/Man-Hour below; the plain
-      // "Hours" column/total (sum of each session's duration) doesn't mean
-      // anything on its own once crew size varies, so the report also shows
-      // this per row and totaled, not just folded into that one ratio.
+      // Man-hours is per-session crew×hours, summed — not a plain sum of
+      // each session's crew or hours (dropped from the Total row entirely;
+      // neither means anything added straight across sessions once crew
+      // size or duration vary). This is what drives SF/Man-Hour below, and
+      // also shows per row and totaled as its own Total Hours column.
       const totalManHours = included.reduce((a, s) => a + (s.crewSize || 0) * (s.hoursWorked || 0), 0)
 
       lastReportData = {
@@ -3503,8 +3502,6 @@ export default function Canvas() {
         photos: included.flatMap(s => (s.photos || []).map(url => ({ url, color: s.color || '#4ade80', name: s.name }))),
         totalSF:    included.reduce((a, s) => a + s.sf, 0),
         totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
-        totalCrew:  included.reduce((a, s) => a + (s.crewSize || 0), 0),
-        totalHours: included.reduce((a, s) => a + (s.hoursWorked || 0), 0),
         totalManHours,
         // sfPerDay divides by DISTINCT calendar days actually worked in the
         // included sessions (not the date range's span), so a report scoped
@@ -3582,8 +3579,8 @@ export default function Canvas() {
               <td></td>
               <td class="ct-rep-num">${Math.round(data.totalSF).toLocaleString()}</td>
               <td class="ct-rep-num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
-              <td class="ct-rep-num">${data.totalCrew || '–'}</td>
-              <td class="ct-rep-num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
+              <td class="ct-rep-num"></td>
+              <td class="ct-rep-num"></td>
               <td class="ct-rep-num">${data.totalManHours ? data.totalManHours.toFixed(1) : '–'}</td>
             </tr>
           </tfoot>
@@ -3670,8 +3667,8 @@ export default function Canvas() {
         <td></td>
         <td class="num">${Math.round(data.totalSF).toLocaleString()}</td>
         <td class="num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
-        <td class="num">${data.totalCrew || '–'}</td>
-        <td class="num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
+        <td class="num"></td>
+        <td class="num"></td>
         <td class="num">${data.totalManHours ? data.totalManHours.toFixed(1) : '–'}</td>
       </tr>
     </tfoot>
