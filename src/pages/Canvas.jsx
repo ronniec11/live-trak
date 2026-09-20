@@ -3506,7 +3506,7 @@ export default function Canvas() {
         generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
         snapshot,
         rows: included.map(s => ({
-          date: formatDate(s.date), time: s.time || '', name: s.name, color: s.color,
+          date: formatDate(s.date), name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
           manHours: sessionManHours(s),
         })),
@@ -3541,7 +3541,6 @@ export default function Canvas() {
       return data.rows.map(r => `
         <tr>
           <td>${r.date}</td>
-          <td>${r.time || '–'}</td>
           <td><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${r.color || '#4ade80'};margin-right:6px;vertical-align:middle;"></span>${r.name}</td>
           <td class="${numClass}">${r.sf ? Math.round(r.sf).toLocaleString() : '–'}</td>
           <td class="${numClass}">${r.lf ? Math.round(r.lf).toLocaleString() : '–'}</td>
@@ -3580,7 +3579,6 @@ export default function Canvas() {
           <thead>
             <tr>
               <th>Date</th>
-              <th>Time</th>
               <th>Session</th>
               <th class="ct-rep-num">SF</th>
               <th class="ct-rep-num">LF</th>
@@ -3669,7 +3667,6 @@ export default function Canvas() {
     <thead>
       <tr>
         <th>Date</th>
-        <th>Time</th>
         <th>Session</th>
         <th class="num">SF</th>
         <th class="num">LF</th>
