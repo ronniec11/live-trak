@@ -3560,7 +3560,7 @@ export default function Canvas() {
       if (!data) return
       const rows = reportRowsHtml(data, 'ct-rep-num')
       const html = `
-        <div class="ct-rep-title">${data.label} — ${data.scopeLabel}</div>
+        <div class="ct-rep-title">${data.label} — <span class="ct-rep-title-scope">${data.scopeLabel}</span></div>
         <div class="ct-rep-desc">${data.sheetName}</div>
         <div class="ct-rep-sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
@@ -3626,7 +3626,8 @@ export default function Canvas() {
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
-  .desc { font-size: 13px; font-weight: 600; color: #16a34a; margin: 2px 0; }
+  h1 .scope { color: #16a34a; }
+  .desc { font-size: 13px; font-weight: 600; color: #6b7280; margin: 2px 0; }
   .sub { font-size: 12px; color: #6b7280; margin-bottom: 14px; }
   /* Capped by height (not just width) and orientation-independent — sized
      to fit comfortably above the table on a single page in EITHER
@@ -3648,7 +3649,7 @@ export default function Canvas() {
 </style>
 </head>
 <body>
-  <h1>${data.label} — ${data.scopeLabel}</h1>
+  <h1>${data.label} — <span class="scope">${data.scopeLabel}</span></h1>
   <div class="desc">${data.sheetName}</div>
   <div class="sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
   ${data.snapshot ? `<img class="snap" src="${data.snapshot}" />` : ''}

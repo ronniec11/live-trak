@@ -387,7 +387,8 @@
 .ct-report-hdr-btns { display: flex; gap: 8px; flex-shrink: 0; }
 .ct-report-body { padding: 18px; overflow-y: auto; }
 .ct-rep-title { font-size: 18px; font-weight: 800; color: var(--ct-text); }
-.ct-rep-desc { font-size: 13px; font-weight: 600; color: var(--ct-accent); margin-top: 2px; }
+.ct-rep-title-scope { color: var(--ct-accent); }
+.ct-rep-desc { font-size: 13px; font-weight: 600; color: var(--ct-muted); margin-top: 2px; }
 .ct-rep-sub { font-size: 11px; color: var(--ct-muted); margin: 4px 0 16px; }
 .ct-rep-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--ct-text); }
 .ct-rep-table th, .ct-rep-table td { padding: 8px 10px; border-bottom: 1px solid var(--ct-border); text-align: left; }
