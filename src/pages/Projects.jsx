@@ -228,7 +228,7 @@ export default function Projects() {
 
   return (
     <Layout>
-      <div className="max-w-5xl mx-auto px-4 py-6">
+      <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 py-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
