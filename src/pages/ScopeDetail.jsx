@@ -690,9 +690,11 @@ export default function ScopeDetail() {
               No connection — showing the copy downloaded for offline use. Open a sheet to keep working; it'll sync once you're back online.
             </div>
           )}
-          {/* Project header */}
-          <div className="px-4 py-4 border-b border-border bg-surface/50">
-            <div className="flex items-start gap-3">
+          {/* Project header — same plain, borderless strip as the job
+              dashboard's own header (ProjectDetail.jsx), rather than a
+              bordered/tinted box. */}
+          <div className="px-4 sm:px-6 pt-6">
+            <div className="flex items-start gap-3 mb-6">
               {/* Scopes are always opened from within their parent project's
                   dashboard now, not from a standalone list — back goes there
                   when we know it (job_id), falling back to the orphaned
@@ -767,10 +769,14 @@ export default function ScopeDetail() {
             </div>
           </div>
 
-          {/* Pages tabs */}
-          {pages.length > 0 ? (
-            <>
-              <div className="flex gap-2 px-4 py-3 border-b border-border overflow-x-auto">
+          <div className="max-w-[1600px] px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
+          {/* Floor plans — a card, same as every other section here and on
+              the job dashboard, instead of a bottom-border strip. */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Floor Plans</h2>
+            {pages.length > 0 ? (
+              <div className="card">
+              <div className="flex gap-2 overflow-x-auto">
                 {pages.map(page => {
                   const isActive = activePage?.id === page.id
                   const isEditingThis = editingPageId === page.id
@@ -838,48 +844,49 @@ export default function ScopeDetail() {
                   )
                 })}
               </div>
-
-              <p className="px-4 pt-1 pb-2 text-xs text-muted">Double-click to open</p>
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-              <div className="w-12 h-12 bg-surface-2 rounded-xl flex items-center justify-center mb-3">
-                <svg className="w-6 h-6 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
-                </svg>
+              <p className="pt-2 text-xs text-muted">Double-click to open</p>
               </div>
-              <p className="text-gray-500 dark:text-gray-400 font-medium">No floor plans yet</p>
-              {canManage && (
-                <button onClick={() => setShowAddPage(true)} className="btn-primary mt-4 flex items-center gap-1.5">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            ) : (
+              <div className="text-center py-16">
+                <div className="w-12 h-12 bg-surface-2 rounded-xl flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-6 h-6 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
                   </svg>
-                  Add First Floor Plan
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Progress */}
-          <div className="px-4 pb-4">
-            <div className="border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-border bg-surface/50 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Progress</h2>
-                <button
-                  onClick={refreshSessions}
-                  disabled={sessionsRefreshing}
-                  className="btn-ghost py-1 px-2 text-xs flex items-center gap-1"
-                >
-                  {sessionsRefreshing
-                    ? <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
-                    : <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                  }
-                  Refresh
-                </button>
+                </div>
+                <p className="text-gray-500 dark:text-gray-400 font-medium">No floor plans yet</p>
+                {canManage && (
+                  <button onClick={() => setShowAddPage(true)} className="btn-primary mt-4 flex items-center gap-1.5 mx-auto">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Add First Floor Plan
+                  </button>
+                )}
               </div>
+            )}
+          </div>
 
+          {/* Progress — one card holding both bars (no border lines between
+              them, just spacing), same as every other section here and on
+              the job dashboard. */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Progress</h2>
+              <button
+                onClick={refreshSessions}
+                disabled={sessionsRefreshing}
+                className="btn-ghost py-1 px-2 text-xs flex items-center gap-1"
+              >
+                {sessionsRefreshing
+                  ? <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
+                  : <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                }
+                Refresh
+              </button>
+            </div>
+            <div className="card space-y-4">
               {/* Total progress bar (blue) */}
-              <div className="px-4 py-3 border-b border-border bg-surface/30">
+              <div>
                 <div className="flex justify-between items-baseline mb-2">
                   <span className="text-xs text-muted font-medium">Total Progress</span>
                   <div className="flex items-center gap-1">
@@ -928,7 +935,7 @@ export default function ScopeDetail() {
               </div>
 
               {/* Daily progress bar (green) */}
-              <div className="px-4 py-3 border-b border-border bg-surface/30">
+              <div>
                 <div className="flex justify-between items-baseline mb-2">
                   <span className="text-xs text-muted font-medium">Daily Progress</span>
                   <span className="text-sm font-semibold text-gray-900 dark:text-white">
@@ -950,8 +957,15 @@ export default function ScopeDetail() {
                   </>
                 )}
               </div>
+            </div>
+          </div>
 
-              {/* Sessions grouped by date */}
+          {/* Recent Sessions — grouped by date; this is history across the
+              whole scope, not just today, despite living in the state
+              variable named todaySessions. */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Recent Sessions</h2>
+            <div className="border border-border rounded-xl overflow-hidden">
               {todaySessions.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet</div>
               ) : (() => {
@@ -1002,11 +1016,12 @@ export default function ScopeDetail() {
               })()}
             </div>
           </div>
+          </div>
         </div>
 
         {/* Sidebar */}
-        <div className="lg:w-72 shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-surface/30 overflow-auto">
-          <div className="p-4 space-y-4">
+        <div className="lg:w-72 shrink-0 overflow-auto">
+          <div className="p-4 sm:p-6 space-y-4">
             {/* Progress */}
             <div>
               <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Progress</h3>

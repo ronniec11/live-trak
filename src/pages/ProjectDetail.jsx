@@ -1113,36 +1113,37 @@ export default function ProjectDetail() {
           {scopeReorderError} <strong>(tap to dismiss)</strong>
         </div>
       )}
-      {/* Header sits in its own, tighter-padded strip — closer to the true
-          screen edge than the roomier main content below, matching the
-          back-button-near-the-edge feel of a native app rather than
-          matching the wide gutters the cards/sidebar use. */}
-      <div className="px-4 sm:px-6 pt-6">
-        <div className="flex items-start gap-3 mb-6">
-          <button onClick={() => navigate('/projects')} className="btn-ghost p-1.5 mt-2 shrink-0">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-            </svg>
-          </button>
-          <div className="flex-1 min-w-0">
-            {/* GC name / address stay in Project Settings only for now
-                (not shown here) — flagged as not wanted under the job
-                name in the header. */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
-              <StatusBadge status={job.status || 'active'} onSave={updateJobStatus} />
+      {/* Main column and sidebar scroll independently of each other (same
+          technique as the scope dashboard, ScopeDetail.jsx) — each is its
+          own overflow-auto panel inside a fixed-height row, instead of the
+          whole page scrolling as one, which used to carry the sidebar
+          (weather/map/team) away with the main content. */}
+      <div className="flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
+        <div className="flex-1 overflow-auto">
+          {/* Header sits in its own, tighter-padded strip — closer to the
+              true screen edge than the roomier main content below,
+              matching the back-button-near-the-edge feel of a native app
+              rather than matching the wide gutters the cards use. */}
+          <div className="px-4 sm:px-6 pt-6">
+            <div className="flex items-start gap-3 mb-6">
+              <button onClick={() => navigate('/projects')} className="btn-ghost p-1.5 mt-2 shrink-0">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                </svg>
+              </button>
+              <div className="flex-1 min-w-0">
+                {/* GC name / address stay in Project Settings only for now
+                    (not shown here) — flagged as not wanted under the job
+                    name in the header. */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
+                  <StatusBadge status={job.status || 'active'} onSave={updateJobStatus} />
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 pb-8">
-        {/* Main column starts here, alongside the sidebar (weather/map/team)
-            to its right — the overall progress bar lives inside the main
-            column now instead of spanning full width above it, so the
-            sidebar's top edge lines up with it instead of starting lower. */}
-        <div className="flex flex-col lg:flex-row gap-6">
-          <div className="flex-1 min-w-0 space-y-6">
+          <div className="max-w-[1600px] px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
           {/* Overall job progress — every scope's total SF vs every scope's total target */}
           <div className="card">
             <div className="flex justify-between items-baseline mb-2">
@@ -1266,11 +1267,15 @@ export default function ProjectDetail() {
             </div>
           </div>
           </div>
+        </div>
 
-          {/* Sidebar — weather on top, then a map of the job location, then
-              the team members, mirroring the layout of a scope's own
-              dashboard (ProjectDetail.jsx). */}
-          <div className="lg:w-72 shrink-0 space-y-4">
+        {/* Sidebar — weather on top, then a map of the job location, then
+            the team members, mirroring the layout of a scope's own
+            dashboard (ScopeDetail.jsx). Its own overflow-auto panel (see
+            the outer row above) rather than scrolling away with the main
+            content. */}
+        <div className="lg:w-72 shrink-0 overflow-auto">
+          <div className="p-4 sm:p-6 space-y-4">
             <WeatherWidget location={location} />
             <LocationMap location={location} />
             <div>
