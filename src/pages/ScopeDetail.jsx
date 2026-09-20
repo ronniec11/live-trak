@@ -283,6 +283,108 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
   )
 }
 
+// Consolidates the fields that used to be edited piecemeal via pencil
+// icons scattered across the header and both Progress cards — Contract
+// Cost especially, which was showing (and separately editable) in two
+// places at once. Name/status/targets still keep their own quick-edit
+// affordances elsewhere on the page too; this is just the one place
+// Contract Cost lives now. canEditCost mirrors the page's own
+// canEditFinancials — Superintendent can open this (canManage) and see
+// cost, same as everywhere else on this page, but not change it.
+function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
+  const [name, setName] = useState(project.name || '')
+  const [status, setStatus] = useState(project.status || 'active')
+  const [dailyTarget, setDailyTarget] = useState(project.daily_sf_target ?? '')
+  const [totalTarget, setTotalTarget] = useState(project.total_sf_target ?? '')
+  const [cost, setCost] = useState(project.cost ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+    setSaving(true)
+    setError('')
+    try {
+      const patch = {
+        name: trimmedName,
+        status,
+        daily_sf_target: parseFloat(dailyTarget) || 0,
+        total_sf_target: parseFloat(totalTarget) || 0,
+      }
+      if (canEditCost) patch.cost = cost === '' ? null : (parseFloat(cost) || null)
+      const { data, error: sErr } = await supabase.from('projects').update(patch).eq('id', project.id).select().single()
+      if (sErr) throw sErr
+      if (!data) throw new Error('Nothing was saved — you may not have permission to edit this scope.')
+      onSaved(patch)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="label">Scope Name *</label>
+            <input className="input" value={name} onChange={e => setName(e.target.value)} required />
+          </div>
+          <div>
+            <label className="label">Status</label>
+            <select className="input capitalize" value={status} onChange={e => setStatus(e.target.value)}>
+              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Daily SF Target</label>
+              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="5000" />
+            </div>
+            <div>
+              <label className="label">Total SF Target</label>
+              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
+            </div>
+          </div>
+          <div>
+            <label className="label">Contract Cost ($)</label>
+            <input
+              className="input" type="number" min="0" value={cost}
+              onChange={e => setCost(e.target.value)}
+              disabled={!canEditCost}
+              placeholder="e.g. 500000"
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving || !name.trim()} className="btn-primary flex-1">
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export default function ScopeDetail() {
   const { projectId } = useParams()
   const { profile } = useAuth()
@@ -304,9 +406,7 @@ export default function ScopeDetail() {
   const [editingTotalTarget, setEditingTotalTarget] = useState(false)
   const [totalTargetInput, setTotalTargetInput] = useState('')
   const [savingTotalTarget, setSavingTotalTarget] = useState(false)
-  const [editingCost, setEditingCost] = useState(false)
-  const [costInput, setCostInput] = useState('')
-  const [savingCost, setSavingCost] = useState(false)
+  const [showScopeSettings, setShowScopeSettings] = useState(false)
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false)
   const [editingPageId, setEditingPageId] = useState(null)
   const [editingPageName, setEditingPageName] = useState('')
@@ -325,15 +425,14 @@ export default function ScopeDetail() {
   const tilingRef = useRef(false)
 
   // General project management (floor plans, team assignment, project
-  // info, calibrate) — Superintendent gets this too, just not the two
-  // finance-specific abilities below.
+  // info, calibrate, opening Scope Settings) — Superintendent gets this
+  // too, just not editing financials below. Foreman gets neither, so
+  // Contract Cost (only reachable through Scope Settings now) is
+  // effectively hidden from them without a separate view-only check.
   const canManage = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
-  // Editing SF targets/cost stays admin+PM only — Superintendent can see
-  // these (see canViewCost) but not change them.
+  // Editing SF targets/cost stays admin+PM only — Superintendent can open
+  // Scope Settings (see canManage) and see cost there, just not change it.
   const canEditFinancials = profile?.role === 'admin' || profile?.role === 'pm'
-  // Cost is hidden entirely from Foreman ("they don't need to know cost");
-  // SF stays visible to everyone, just read-only per canEditFinancials.
-  const canViewCost = profile?.role !== 'foreman'
 
   async function generateTiles(page) {
     if (tilingRef.current) return
@@ -474,7 +573,6 @@ export default function ScopeDetail() {
       setMembers((mems || []).map(m => m.profiles))
       setTargetInput(proj?.daily_sf_target || 0)
       setTotalTargetInput(proj?.total_sf_target || 0)
-      setCostInput(proj?.cost ?? '')
       if (pgs && pgs.length > 0) setActivePage(pgs[0])
       setOfflineMode(false)
       setNotCachedOffline(false)
@@ -495,7 +593,6 @@ export default function ScopeDetail() {
           setMembers([])
           setTargetInput(cached.daily_sf_target || 0)
           setTotalTargetInput(cached.total_sf_target || 0)
-          setCostInput(cached.cost ?? '')
           if (cached.pages?.length > 0) setActivePage(cached.pages[0])
           setOfflineMode(true)
         } else {
@@ -551,21 +648,6 @@ export default function ScopeDetail() {
     finally { setSavingTotalTarget(false) }
   }
 
-  async function saveCost() {
-    setSavingCost(true)
-    try {
-      const val = costInput === '' ? null : (parseFloat(costInput) || null)
-      await supabase.from('projects').update({ cost: val }).eq('id', projectId)
-      setProject(p => ({ ...p, cost: val }))
-      setEditingCost(false)
-    } catch (err) { console.error(err) }
-    finally { setSavingCost(false) }
-  }
-
-  const ratePerSF = (project?.cost && project?.total_sf_target)
-    ? `$${(project.cost / project.total_sf_target).toFixed(2)}/SF`
-    : '—'
-
   if (loading) {
     return (
       <Layout>
@@ -601,7 +683,11 @@ export default function ScopeDetail() {
           {/* Project header */}
           <div className="px-4 py-4 border-b border-border bg-surface/50">
             <div className="flex items-start gap-3">
-              <button onClick={() => navigate('/scopes')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
+              {/* Scopes are always opened from within their parent project's
+                  dashboard now, not from a standalone list — back goes there
+                  when we know it (job_id), falling back to the orphaned
+                  /scopes list only if this project somehow has none. */}
+              <button onClick={() => navigate(project?.job_id ? `/projects/${project.job_id}` : '/scopes')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
                 </svg>
@@ -831,44 +917,6 @@ export default function ScopeDetail() {
                 )}
               </div>
 
-              {/* Contract cost / $ per SF — hidden entirely from Foreman */}
-              {canViewCost && (
-              <div className="px-4 py-3 border-b border-border bg-surface/30">
-                <div className="flex justify-between items-baseline mb-2">
-                  <span className="text-xs text-muted font-medium">Contract Cost</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                      {project?.cost ? `$${project.cost.toLocaleString()}` : '—'}
-                      <span className="text-muted font-normal"> · {ratePerSF}</span>
-                    </span>
-                    {canEditFinancials && !editingCost && (
-                      <button onClick={() => setEditingCost(true)} className="btn-ghost p-1 ml-1">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {editingCost && (
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      value={costInput}
-                      onChange={e => setCostInput(e.target.value)}
-                      className="input w-28 text-xs py-1"
-                      min="0"
-                      placeholder="Contract cost ($)"
-                    />
-                    <button onClick={saveCost} disabled={savingCost} className="btn-primary text-xs py-1 px-2">
-                      {savingCost ? '...' : 'Save'}
-                    </button>
-                    <button onClick={() => setEditingCost(false)} className="btn-ghost text-xs py-1 px-2">Cancel</button>
-                  </div>
-                )}
-              </div>
-              )}
-
               {/* Daily progress bar (green) */}
               <div className="px-4 py-3 border-b border-border bg-surface/30">
                 <div className="flex justify-between items-baseline mb-2">
@@ -1006,44 +1054,6 @@ export default function ScopeDetail() {
                   )}
                 </div>
 
-                {/* Contract cost / $ per SF — hidden entirely from Foreman */}
-                {canViewCost && (
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <p className="text-xs text-muted font-medium">Contract Cost</p>
-                    <div className="flex items-center gap-1">
-                      <p className="text-xs text-gray-700 dark:text-gray-300">
-                        {project?.cost ? `$${project.cost.toLocaleString()}` : '—'}
-                        <span className="text-muted"> · {ratePerSF}</span>
-                      </p>
-                      {canEditFinancials && !editingCost && (
-                        <button onClick={() => setEditingCost(true)} className="btn-ghost p-0.5">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {editingCost && (
-                    <div className="flex items-center gap-1 mb-1.5">
-                      <input
-                        type="number"
-                        value={costInput}
-                        onChange={e => setCostInput(e.target.value)}
-                        className="input w-24 text-xs py-1"
-                        min="0"
-                        placeholder="Cost ($)"
-                      />
-                      <button onClick={saveCost} disabled={savingCost} className="btn-primary text-xs py-1 px-2">
-                        {savingCost ? '...' : 'Save'}
-                      </button>
-                      <button onClick={() => setEditingCost(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
-                    </div>
-                  )}
-                </div>
-                )}
-
                 {/* Daily progress (green) */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
@@ -1163,6 +1173,19 @@ export default function ScopeDetail() {
                 )}
               </div>
             </div>
+
+            {canManage && (
+              <button
+                onClick={() => setShowScopeSettings(true)}
+                className="flex items-center gap-2 text-xs text-muted hover:text-gray-700 dark:hover:text-gray-300 transition-colors pt-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Scope Settings
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1184,6 +1207,14 @@ export default function ScopeDetail() {
           existingMemberIds={members.filter(Boolean).map(m => m.id)}
           onClose={() => setShowAddMember(false)}
           onAdded={loadData}
+        />
+      )}
+      {showScopeSettings && (
+        <ScopeSettingsModal
+          project={project}
+          canEditCost={canEditFinancials}
+          onClose={() => setShowScopeSettings(false)}
+          onSaved={patch => setProject(p => ({ ...p, ...patch }))}
         />
       )}
     </Layout>
