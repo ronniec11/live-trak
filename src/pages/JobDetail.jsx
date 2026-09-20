@@ -177,6 +177,97 @@ function LocationMap({ location }) {
   )
 }
 
+// Adding someone to a job means adding them to every scope under it —
+// jobs.jsx/JobDetail's "Team Members" is an aggregate view (see
+// loadJobDetail's memberMap dedup), not a table of its own, so there's no
+// single job-level membership row to insert. scopeIds is always the full
+// set for this job; the directory already excludes anyone who's a member
+// of at least one scope (existingMemberIds), so this only ever runs for
+// someone with zero scopes on the job — never a partial-membership case
+// that could conflict with project_members' one-row-per-(project,user)
+// constraint.
+function AddMemberModal({ scopeIds, existingMemberIds, onClose, onAdded }) {
+  const [directory, setDirectory] = useState(null) // null = still loading
+  const [search, setSearch] = useState('')
+  const [addingId, setAddingId] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    supabase.from('profiles').select('*').order('full_name').then(({ data, error: dErr }) => {
+      if (dErr) { setError(dErr.message); setDirectory([]); return }
+      setDirectory((data || []).filter(p => !existingMemberIds.includes(p.id)))
+    })
+  }, [])
+
+  async function addPerson(person) {
+    setAddingId(person.id)
+    setError('')
+    try {
+      const { error: mErr } = await supabase
+        .from('project_members')
+        .insert(scopeIds.map(project_id => ({ project_id, user_id: person.id })))
+      if (mErr) throw mErr
+      setDirectory(d => d.filter(p => p.id !== person.id))
+      onAdded()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setAddingId(null)
+    }
+  }
+
+  const filtered = (directory || []).filter(p => {
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    return p.full_name?.toLowerCase().includes(q) || p.email?.toLowerCase().includes(q)
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <input
+          className="input mb-3" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search the directory..."
+        />
+        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-3">{error}</div>}
+        <div className="flex-1 overflow-auto space-y-1 -mx-2 px-2">
+          {directory === null && <p className="text-sm text-muted">Loading...</p>}
+          {directory !== null && filtered.length === 0 && (
+            <p className="text-sm text-muted">{directory.length === 0 ? 'Everyone in the directory is already on this job.' : 'No matches.'}</p>
+          )}
+          {filtered.map(p => (
+            <button
+              key={p.id} onClick={() => addPerson(p)} disabled={addingId === p.id}
+              className="w-full flex items-center gap-2.5 py-2 px-2 rounded-lg hover:bg-surface-2 transition-colors text-left disabled:opacity-50"
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
+                style={{ backgroundColor: p.avatar_color || '#4ade80' }}
+              >
+                {(p.full_name || p.email || 'U')[0].toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{p.full_name || '(no name)'}</p>
+                <p className="text-xs text-muted capitalize truncate">{p.role} · {p.email}</p>
+              </div>
+              <span className="text-xs text-accent shrink-0">{addingId === p.id ? 'Adding...' : '+ Add'}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={onClose} className="btn-secondary w-full mt-4">Done</button>
+      </div>
+    </div>
+  )
+}
+
 function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
   const dailyPct = scope.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
@@ -278,8 +369,12 @@ export default function JobDetail() {
   const [editAddress, setEditAddress] = useState('')
   const [editStatus, setEditStatus] = useState('active')
   const [savingJob, setSavingJob] = useState(false)
+  const [showAddMember, setShowAddMember] = useState(false)
 
   const canManage = profile?.role === 'admin'
+  // Broader than canManage above (job editing stays admin-only) — matches
+  // ProjectDetail.jsx's own gate for adding/removing a scope's members.
+  const canManageMembers = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
 
   async function loadJobDetail() {
     setLoading(true)
@@ -487,29 +582,33 @@ export default function JobDetail() {
           </div>
         </div>
 
-        {/* Overall job progress — every scope's total SF vs every scope's total target */}
-        <div className="card mb-6">
-          <div className="flex justify-between items-baseline mb-2">
-            <span className="text-sm font-semibold text-gray-900 dark:text-white">Overall Job Progress</span>
-            <span className="text-sm font-semibold text-gray-900 dark:text-white">
-              {overallTotalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              {overallTargetSF > 0 && <span className="text-muted font-normal"> / {overallTargetSF.toLocaleString()} SF</span>}
-              {overallTargetSF === 0 && <span className="text-muted font-normal"> SF</span>}
-            </span>
-          </div>
-          <div className="h-2.5 bg-surface-3 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${overallPct}%` }} />
-          </div>
-          {overallTargetSF > 0 && (
-            <div className="flex justify-between text-xs mt-1">
-              <span className="text-muted">{overallPct}% complete across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'}</span>
-              {overallPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Job complete!</span>}
-            </div>
-          )}
-        </div>
-
+        {/* Main column starts here, alongside the sidebar (weather/map/team)
+            to its right — the overall progress bar lives inside the main
+            column now instead of spanning full width above it, so the
+            sidebar's top edge lines up with it instead of starting lower. */}
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1 min-w-0 space-y-6">
+          {/* Overall job progress — every scope's total SF vs every scope's total target */}
+          <div className="card">
+            <div className="flex justify-between items-baseline mb-2">
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">Overall Job Progress</span>
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                {overallTotalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                {overallTargetSF > 0 && <span className="text-muted font-normal"> / {overallTargetSF.toLocaleString()} SF</span>}
+                {overallTargetSF === 0 && <span className="text-muted font-normal"> SF</span>}
+              </span>
+            </div>
+            <div className="h-2.5 bg-surface-3 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${overallPct}%` }} />
+            </div>
+            {overallTargetSF > 0 && (
+              <div className="flex justify-between text-xs mt-1">
+                <span className="text-muted">{overallPct}% complete across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'}</span>
+                {overallPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Job complete!</span>}
+              </div>
+            )}
+          </div>
+
           <div>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Scopes</h2>
             {scopes.length === 0 ? (
@@ -603,7 +702,14 @@ export default function JobDetail() {
             <WeatherWidget location={location} />
             <LocationMap location={location} />
             <div>
-              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Team Members</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">Team Members</h3>
+                {canManageMembers && (
+                  <button onClick={() => setShowAddMember(true)} className="btn-ghost py-0.5 px-2 text-xs">
+                    + Add
+                  </button>
+                )}
+              </div>
               <div className="space-y-2">
                 {members.map(member => (
                   <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5">
@@ -626,6 +732,15 @@ export default function JobDetail() {
             </div>
           </div>
         </div>
+
+      {showAddMember && (
+        <AddMemberModal
+          scopeIds={scopes.map(s => s.id)}
+          existingMemberIds={members.map(m => m.id)}
+          onClose={() => setShowAddMember(false)}
+          onAdded={loadJobDetail}
+        />
+      )}
     </Layout>
   )
 }
