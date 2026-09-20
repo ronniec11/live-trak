@@ -104,11 +104,11 @@ function WeatherWidget({ address }) {
   }, [address])
 
   if (state.status === 'loading') {
-    return <div className="card w-full sm:w-60 shrink-0 animate-pulse h-[88px]" />
+    return <div className="card w-full sm:w-72 shrink-0 animate-pulse h-[88px]" />
   }
   if (state.status === 'error') {
     return (
-      <div className="card w-full sm:w-60 shrink-0 flex items-center justify-center text-xs text-muted h-[88px]">
+      <div className="card w-full sm:w-72 shrink-0 flex items-center justify-center text-xs text-muted h-[88px]">
         Weather unavailable
       </div>
     )
@@ -116,7 +116,7 @@ function WeatherWidget({ address }) {
 
   const { current, label, usedDefault } = state
   return (
-    <div className="card w-full sm:w-60 shrink-0">
+    <div className="card w-full sm:w-72 shrink-0">
       <div className="flex items-center gap-3">
         <WeatherIcon code={current.weather_code} />
         <div className="min-w-0">
@@ -124,8 +124,10 @@ function WeatherWidget({ address }) {
           <p className="text-xs text-muted truncate">{weatherDescription(current.weather_code)} · {Math.round(current.wind_speed_10m)} mph</p>
         </div>
       </div>
-      <p className="text-xs text-muted mt-2 truncate">
-        {usedDefault ? `No job address set — showing ${label}` : label}
+      <p className="text-xs text-muted mt-2">
+        {usedDefault
+          ? <>No job address set — showing <span className="font-medium text-gray-700 dark:text-gray-300">{label}</span></>
+          : label}
       </p>
     </div>
   )
@@ -147,9 +149,16 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
     >
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{scope.name}</h3>
+          {/* The type of work (e.g. "Under Floor Cleaning") is what a
+              foreman actually scans for on this card — the scope's own
+              name is secondary context, shown smaller underneath. Falls
+              back to the name as the title when no description is set,
+              rather than rendering an empty heading. */}
+          <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">
+            {scope.description || scope.name}
+          </h3>
           {scope.description && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">{scope.description}</p>
+            <p className="text-xs text-muted mt-0.5 truncate">{scope.name}</p>
           )}
         </div>
         <span className={`${badgeClass(scope.status)} ml-2 shrink-0 capitalize`}>{scope.status || 'active'}</span>
@@ -192,11 +201,17 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
         </div>
       </div>
 
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
-        <span className="text-xs text-muted">Click to open scope</span>
-        <svg className="w-4 h-4 text-muted group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
+      <div className="mt-3 pt-3 border-t border-border">
+        {/* No onClick here — a click bubbles up to the card's own onClick
+            (the whole card is already the navigation target), so this
+            stays a single source of truth for "open this scope" instead
+            of two handlers that could drift apart. */}
+        <button className="btn-primary w-full flex items-center justify-center gap-1.5">
+          Open Scope
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
     </div>
   )
@@ -454,115 +469,113 @@ export default function JobDetail() {
           )}
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Main: scope cards + activity */}
-          <div className="flex-1 min-w-0 space-y-6">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Scopes</h2>
-              {scopes.length === 0 ? (
-                <div className="text-center py-16">
-                  <p className="text-gray-500 dark:text-gray-400 font-medium">No scopes on this job yet</p>
-                </div>
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Scopes</h2>
+            {scopes.length === 0 ? (
+              <div className="text-center py-16">
+                <p className="text-gray-500 dark:text-gray-400 font-medium">No scopes on this job yet</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {scopes.map(scope => (
+                  <ScopeCard
+                    key={scope.id}
+                    scope={scope}
+                    todaySF={sfTodayByScope[scope.id] || 0}
+                    allTimeSF={sfTotalByScope[scope.id] || 0}
+                    onClick={() => navigate(`/projects/${scope.id}`)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Team Members — full width below the scope cards, not a sidebar */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Team Members</h2>
+            {members.length === 0 ? (
+              <p className="text-xs text-muted">No members yet</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                {members.map(member => (
+                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5">
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
+                      style={{ backgroundColor: member.avatar_color || '#4ade80' }}
+                    >
+                      {(member.full_name || 'U')[0].toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
+                      <p className="text-xs text-muted capitalize truncate">{member.role}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Today's Activity — every session saved today, across every scope on this job */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Today's Activity</h2>
+              {todaySessions.length > 0 && (
+                <span className="text-xs text-muted">{todayTotalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF today</span>
+              )}
+            </div>
+            <div className="border border-border rounded-xl overflow-hidden">
+              {todaySessions.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet today</div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {scopes.map(scope => (
-                    <ScopeCard
-                      key={scope.id}
-                      scope={scope}
-                      todaySF={sfTodayByScope[scope.id] || 0}
-                      allTimeSF={sfTotalByScope[scope.id] || 0}
-                      onClick={() => navigate(`/projects/${scope.id}`)}
-                    />
+                <div className="divide-y divide-border">
+                  {todaySessions.map(session => (
+                    <div key={session.id} className="px-4 py-3 flex items-center gap-2.5">
+                      <div
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-bg shrink-0"
+                        style={{ backgroundColor: session.profiles?.avatar_color || session.color || '#4ade80' }}
+                      >
+                        {(session.profiles?.full_name || 'U')[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{session.profiles?.full_name || 'Unknown'}</p>
+                        <p className="text-xs text-muted truncate">{session.scopeName} · {session.pageName}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-xs font-semibold text-gray-800 dark:text-gray-200">{(parseFloat(session.sf) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} SF</p>
+                        <p className="text-xs text-muted">{session.created_at ? new Date(session.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</p>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
-
-            {/* Today's Activity — every session saved today, across every scope on this job */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Today's Activity</h2>
-                {todaySessions.length > 0 && (
-                  <span className="text-xs text-muted">{todayTotalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF today</span>
-                )}
-              </div>
-              <div className="border border-border rounded-xl overflow-hidden">
-                {todaySessions.length === 0 ? (
-                  <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet today</div>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {todaySessions.map(session => (
-                      <div key={session.id} className="px-4 py-3 flex items-center gap-2.5">
-                        <div
-                          className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-bg shrink-0"
-                          style={{ backgroundColor: session.profiles?.avatar_color || session.color || '#4ade80' }}
-                        >
-                          {(session.profiles?.full_name || 'U')[0].toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{session.profiles?.full_name || 'Unknown'}</p>
-                          <p className="text-xs text-muted truncate">{session.scopeName} · {session.pageName}</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-semibold text-gray-800 dark:text-gray-200">{(parseFloat(session.sf) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} SF</p>
-                          <p className="text-xs text-muted">{session.created_at ? new Date(session.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Recent sessions across all scopes (not limited to today) */}
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Recent Sessions</h2>
-              <div className="border border-border rounded-xl overflow-hidden">
-                {recentSessions.length === 0 ? (
-                  <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet</div>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {recentSessions.map(session => (
-                      <div key={session.id} className="px-4 py-3 flex items-center gap-2.5">
-                        <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: session.color || '#facc15' }} />
-                        <p className="text-xs text-gray-700 dark:text-gray-300 flex-1 truncate">{session.name || 'Session'}</p>
-                        <p className="text-xs text-muted shrink-0">
-                          {[
-                            session.profiles?.full_name || 'Unknown',
-                            session.scopeName,
-                            session.pageName,
-                            `${(parseFloat(session.sf) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} SF`,
-                            session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : null,
-                          ].filter(Boolean).join(' · ')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
 
-          {/* Sidebar: team members */}
-          <div className="lg:w-64 shrink-0">
-            <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Team Members</h3>
-            <div className="space-y-2">
-              {members.map(member => (
-                <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5">
-                  <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
-                    style={{ backgroundColor: member.avatar_color || '#4ade80' }}
-                  >
-                    {(member.full_name || 'U')[0].toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
-                    <p className="text-xs text-muted capitalize">{member.role}</p>
-                  </div>
+          {/* Recent sessions across all scopes (not limited to today) */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Recent Sessions</h2>
+            <div className="border border-border rounded-xl overflow-hidden">
+              {recentSessions.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet</div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {recentSessions.map(session => (
+                    <div key={session.id} className="px-4 py-3 flex items-center gap-3">
+                      <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: session.color || '#facc15' }} />
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200 flex-1 truncate">{session.name || 'Session'}</p>
+                      <p className="text-xs text-muted shrink-0 text-right">
+                        {[
+                          session.profiles?.full_name || 'Unknown',
+                          session.scopeName,
+                          session.pageName,
+                          `${(parseFloat(session.sf) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} SF`,
+                          session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : null,
+                        ].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-              {members.length === 0 && (
-                <p className="text-xs text-muted">No members yet</p>
               )}
             </div>
           </div>
@@ -571,3 +584,4 @@ export default function JobDetail() {
     </Layout>
   )
 }
+
