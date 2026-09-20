@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
@@ -14,6 +14,56 @@ function badgeClass(status) {
   if (status === 'active') return 'badge-active'
   if (status === 'completed') return 'badge-completed'
   return 'badge-on-hold'
+}
+
+// Tap-to-change status badge, matching the one already on Projects.jsx —
+// same dropdown, same dot colors, so status editing feels identical
+// whether you're looking at a job, a scope, or (on that other page) a
+// project. e.stopPropagation() throughout because both places this is
+// used (the job header, and a scope card) sit inside or next to a
+// whole-element onClick (the scope card navigates on click), which would
+// otherwise fire every time the badge itself is tapped.
+function StatusBadge({ status, onSave, className = '' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e) { if (!ref.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  async function select(e, s) {
+    e.stopPropagation()
+    setOpen(false)
+    if (s !== status) await onSave(s)
+  }
+
+  return (
+    <div ref={ref} className={`relative inline-flex ${className}`} onClick={e => e.stopPropagation()}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        className={`${badgeClass(status)} cursor-pointer hover:opacity-80 transition-opacity capitalize`}
+      >
+        {status}
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-surface border border-border rounded-lg shadow-xl z-50 min-w-[110px] py-1 overflow-hidden">
+          {STATUS_OPTIONS.map(s => (
+            <button
+              key={s}
+              onClick={e => select(e, s)}
+              className={`w-full text-left px-3 py-1.5 text-xs capitalize hover:bg-surface-2 transition-colors flex items-center gap-2 ${s === status ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s === 'active' ? 'bg-accent' : s === 'completed' ? 'bg-blue-400' : 'bg-yellow-400'}`} />
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // Distinct from badgeClass above — this is a left-edge accent stripe on the
@@ -356,7 +406,7 @@ function JobSettingsModal({ job, onClose, onSaved }) {
   )
 }
 
-function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
+function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus }) {
   const dailyPct = scope.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
     : 0
@@ -380,7 +430,11 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
             {scope.description || scope.name}
           </h3>
         </div>
-        <span className={`${badgeClass(scope.status)} ml-2 shrink-0 capitalize`}>{scope.status || 'active'}</span>
+        <StatusBadge
+          status={scope.status || 'active'}
+          className="ml-2 shrink-0"
+          onSave={s => onUpdateStatus(scope.id, s)}
+        />
       </div>
 
       <div className="bg-surface-2 rounded-lg p-3 mb-3">
@@ -548,6 +602,28 @@ export default function JobDetail() {
 
   const location = useJobLocation(job?.address)
 
+  // Scope status lives on the projects table, which every other status
+  // edit in the app (Projects.jsx, ProjectDetail.jsx) already writes to
+  // successfully with a plain .update() and no .select() — unlike jobs
+  // (see JobSettingsModal/updateJobStatus below), there's no reason to
+  // suspect its RLS is missing an UPDATE policy.
+  async function updateScopeStatus(scopeId, status) {
+    const { error } = await supabase.from('projects').update({ status }).eq('id', scopeId)
+    if (error) { alert('Failed to update status: ' + error.message); return }
+    setScopes(ss => ss.map(s => s.id === scopeId ? { ...s, status } : s))
+  }
+
+  // jobs is a newer table than projects and was confirmed to have at
+  // least one missing/broken RLS policy already (see JobSettingsModal) —
+  // .select().single() here for the same reason: surface a blocked update
+  // as a real error instead of silently reverting on the next reload.
+  async function updateJobStatus(status) {
+    const { data, error } = await supabase.from('jobs').update({ status }).eq('id', jobId).select().single()
+    if (error) { alert('Failed to update status: ' + error.message); return }
+    if (!data) { alert('Nothing was saved — you may not have permission to edit this job.'); return }
+    setJob(j => ({ ...j, status }))
+  }
+
   const overallTotalSF = Object.values(sfTotalByScope).reduce((sum, sf) => sum + sf, 0)
   const overallTargetSF = scopes.reduce((sum, s) => sum + (parseFloat(s.total_sf_target) || 0), 0)
   const overallPct = overallTargetSF > 0 ? Math.min(100, Math.round((overallTotalSF / overallTargetSF) * 100)) : 0
@@ -594,7 +670,7 @@ export default function JobDetail() {
                 name in the header. */}
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
-              <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
+              <StatusBadge status={job.status || 'active'} onSave={updateJobStatus} />
             </div>
           </div>
         </div>
@@ -643,6 +719,7 @@ export default function JobDetail() {
                     todaySF={sfTodayByScope[scope.id] || 0}
                     allTimeSF={sfTotalByScope[scope.id] || 0}
                     onClick={() => navigate(`/projects/${scope.id}`)}
+                    onUpdateStatus={updateScopeStatus}
                   />
                 ))}
               </div>
