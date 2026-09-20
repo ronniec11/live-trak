@@ -3310,6 +3310,14 @@ export default function Canvas() {
     function formatDate(ds) {
       return new Date(ds+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
     }
+    // dd/mm/yyyy, used only by the Sheet Report (rows + range label) — the
+    // calendar/history UI elsewhere keeps formatDate's "Sep 14, 2026" style.
+    function formatReportDate(ds) {
+      const d = new Date(ds+'T00:00:00')
+      const dd = String(d.getDate()).padStart(2, '0')
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      return `${dd}/${mm}/${d.getFullYear()}`
+    }
 
     // ── SHEET REPORT ─────────────────────────────────────────────────────────
     // Scoped to the sheet currently open (activePage), not every page in the
@@ -3475,8 +3483,8 @@ export default function Canvas() {
       if (genBtn) { genBtn.textContent = 'Generating…'; genBtn.style.pointerEvents = 'none'; genBtn.style.opacity = '0.6' }
 
       const [start, end] = getReportDateBounds()
-      const range = reportScope === 'day' ? formatDate(start)
-        : reportScope === 'range' ? `${formatDate(start)} – ${formatDate(end)}`
+      const range = reportScope === 'day' ? formatReportDate(start)
+        : reportScope === 'range' ? `${formatReportDate(start)} – ${formatReportDate(end)}`
         : 'All Time'
       const snapshot = await buildSheetSnapshot(included)
 
@@ -3506,7 +3514,7 @@ export default function Canvas() {
         generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
         snapshot,
         rows: included.map(s => ({
-          date: formatDate(s.date), name: s.name, color: s.color,
+          date: formatReportDate(s.date), name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
           manHours: sessionManHours(s),
         })),
@@ -3576,11 +3584,6 @@ export default function Canvas() {
         <div class="ct-rep-sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
-          <colgroup>
-            <col style="width:15%"><col style="width:29%">
-            <col style="width:12%"><col style="width:10%"><col style="width:10%">
-            <col style="width:10%"><col style="width:14%">
-          </colgroup>
           <thead>
             <tr>
               <th>Date</th>
@@ -3651,13 +3654,16 @@ export default function Canvas() {
      page height available) made it render tall enough to push the table
      onto extra pages even for a small report. */
   img.snap { display: block; max-width: 100%; max-height: 3.8in; width: auto; height: auto; margin: 0 auto 14px; border: 1px solid #e5e7eb; border-radius: 8px; page-break-inside: avoid; break-inside: avoid; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+  /* table-layout: fixed (with a colgroup guessing each column's share)
+     briefly replaced this — but a fixed width can't grow for content
+     that's wider than its guess, and the bold Total row's numbers ran
+     off the right edge of the page as a result. Auto layout sizes each
+     column to its own widest content instead, so nothing can overflow;
+     nowrap below still stops Date/headers from wrapping awkwardly. */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; text-align: left; }
   th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; font-weight: 700; white-space: nowrap; }
   td.num, th.num { text-align: right; }
-  /* Date is always short and fixed-format ("Sep 14, 2026") — fixed table
-     layout was wrapping it mid-date once the numeric columns' padding grew,
-     which read as cramped/broken rather than just wrapped. */
   td:first-child { white-space: nowrap; }
   tfoot td { font-weight: 800; border-top: 2px solid #1c1c1a; border-bottom: none; }
   tr { page-break-inside: avoid; break-inside: avoid; }
@@ -3673,11 +3679,6 @@ export default function Canvas() {
   <div class="sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
   ${data.snapshot ? `<img class="snap" src="${data.snapshot}" />` : ''}
   <table>
-    <colgroup>
-      <col style="width:15%"><col style="width:29%">
-      <col style="width:12%"><col style="width:10%"><col style="width:10%">
-      <col style="width:10%"><col style="width:14%">
-    </colgroup>
     <thead>
       <tr>
         <th>Date</th>

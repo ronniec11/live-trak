@@ -390,12 +390,15 @@
 .ct-rep-title-scope { color: var(--ct-accent); }
 .ct-rep-desc { font-size: 13px; font-weight: 600; color: var(--ct-muted); margin-top: 2px; }
 .ct-rep-sub { font-size: 11px; color: var(--ct-muted); margin: 4px 0 16px; }
-.ct-rep-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--ct-text); table-layout: fixed; }
+/* table-layout: fixed (with a colgroup guessing each column's share)
+   briefly replaced this — but a fixed width can't grow for content wider
+   than its guess, and the bold Total row's numbers ran off the page as a
+   result. Auto layout sizes each column to its own widest content
+   instead, so nothing can overflow; nowrap below still stops
+   Date/headers from wrapping awkwardly. */
+.ct-rep-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--ct-text); }
 .ct-rep-table th, .ct-rep-table td { padding: 10px 14px; border-bottom: 1px solid var(--ct-border); text-align: left; }
 .ct-rep-table th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ct-muted); font-weight: 700; white-space: nowrap; }
-/* Date is always short and fixed-format ("Sep 14, 2026") — fixed table
-   layout was wrapping it mid-date once the other columns got more padding,
-   which read as cramped/broken rather than just wrapped. */
 .ct-rep-table td:first-child { white-space: nowrap; }
 .ct-rep-num { text-align: right; }
 .ct-rep-table tfoot td { font-weight: 800; border-top: 2px solid var(--ct-border); border-bottom: none; }
