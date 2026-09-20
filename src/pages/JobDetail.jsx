@@ -435,6 +435,106 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
   )
 }
 
+function ScopeSettingsModal({ scope, onClose, onSaved }) {
+  const [name, setName] = useState(scope.name || '')
+  const [description, setDescription] = useState(scope.description || '')
+  const [status, setStatus] = useState(scope.status || 'active')
+  const [dailyTarget, setDailyTarget] = useState(scope.daily_sf_target ?? '')
+  const [totalTarget, setTotalTarget] = useState(scope.total_sf_target ?? '')
+  const [cost, setCost] = useState(scope.cost ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+    setSaving(true)
+    setError('')
+    try {
+      const patch = {
+        name: trimmedName,
+        description: description.trim() || null,
+        status,
+        daily_sf_target: parseFloat(dailyTarget) || 0,
+        total_sf_target: parseFloat(totalTarget) || 0,
+        cost: cost === '' ? null : (parseFloat(cost) || null),
+      }
+      // .select().single() the same way JobSettingsModal does — a blocked
+      // update should surface as a real error, not silently revert the
+      // next time this job's scopes are reloaded.
+      const { data, error: sErr } = await supabase.from('projects').update(patch).eq('id', scope.id).select().single()
+      if (sErr) throw sErr
+      if (!data) throw new Error('Nothing was saved — you may not have permission to edit this scope.')
+      onSaved(patch)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="label">Scope Name *</label>
+            <input className="input" value={name} onChange={e => setName(e.target.value)} required />
+          </div>
+          <div>
+            <label className="label">Description</label>
+            <input className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="e.g. Overhead steel cleaning, Level 1 final clean" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Status</label>
+              <select className="input capitalize" value={status} onChange={e => setStatus(e.target.value)}>
+                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Daily SF Target</label>
+              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="5000" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Total SF Target</label>
+              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
+            </div>
+            <div>
+              <label className="label">Contract Cost ($)</label>
+              <input className="input" type="number" min="0" value={cost} onChange={e => setCost(e.target.value)} placeholder="e.g. 500000" />
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving || !name.trim()} className="btn-primary flex-1">
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function JobSettingsModal({ job, onClose, onSaved }) {
   const [name, setName] = useState(job.name || '')
   const [gcName, setGcName] = useState(job.gc_name || '')
@@ -523,7 +623,7 @@ function JobSettingsModal({ job, onClose, onSaved }) {
   )
 }
 
-function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus }) {
+function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenSettings, canManageScope }) {
   const dailyPct = scope.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
     : 0
@@ -547,11 +647,24 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus }) {
             {scope.description || scope.name}
           </h3>
         </div>
-        <StatusBadge
-          status={scope.status || 'active'}
-          className="ml-2 shrink-0"
-          onSave={s => onUpdateStatus(scope.id, s)}
-        />
+        <div className="flex items-center gap-1 ml-2 shrink-0">
+          <StatusBadge
+            status={scope.status || 'active'}
+            onSave={s => onUpdateStatus(scope.id, s)}
+          />
+          {canManageScope && (
+            <button
+              onClick={e => { e.stopPropagation(); onOpenSettings(scope) }}
+              className="btn-ghost p-1 opacity-60 hover:opacity-100"
+              title="Scope settings"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-surface-2 rounded-lg p-3 mb-3">
@@ -626,6 +739,7 @@ export default function JobDetail() {
   const [showJobSettings, setShowJobSettings] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [showAddScope, setShowAddScope] = useState(false)
+  const [scopeSettingsTarget, setScopeSettingsTarget] = useState(null)
 
   const canManage = profile?.role === 'admin'
   // Broader than canManage above (job editing stays admin-only) — matches
@@ -851,6 +965,8 @@ export default function JobDetail() {
                     allTimeSF={sfTotalByScope[scope.id] || 0}
                     onClick={() => navigate(`/projects/${scope.id}`)}
                     onUpdateStatus={updateScopeStatus}
+                    onOpenSettings={setScopeSettingsTarget}
+                    canManageScope={canCreateScope}
                   />
                 ))}
               </div>
@@ -997,6 +1113,13 @@ export default function JobDetail() {
           existingMemberIds={members.map(m => m.id)}
           onClose={() => setShowAddScope(false)}
           onCreated={loadJobDetail}
+        />
+      )}
+      {scopeSettingsTarget && (
+        <ScopeSettingsModal
+          scope={scopeSettingsTarget}
+          onClose={() => setScopeSettingsTarget(null)}
+          onSaved={patch => setScopes(ss => ss.map(s => s.id === scopeSettingsTarget.id ? { ...s, ...patch } : s))}
         />
       )}
     </Layout>
