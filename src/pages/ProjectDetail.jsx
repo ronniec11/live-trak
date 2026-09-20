@@ -659,7 +659,65 @@ function JobSettingsModal({ job, onClose, onSaved }) {
   )
 }
 
-function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenSettings, canManageScope }) {
+const GripIcon = () => (
+  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+    <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+    <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+    <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+  </svg>
+)
+
+function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
+  const [pressing, setPressing] = useState(false)
+
+  // Long-press-anywhere-on-the-card reorder trigger, same pattern as the
+  // Scopes list's own project cards — the grip handle alone is too small a
+  // target to hit reliably with a fingertip. Holding still for ~450ms
+  // starts the drag; a normal tap or a swipe past a small threshold
+  // cancels it and behaves as a plain click.
+  const longPressTimerRef = useRef(null)
+  const pointerStartRef = useRef(null)
+  const longPressFiredRef = useRef(false)
+
+  function clearLongPress() {
+    clearTimeout(longPressTimerRef.current)
+    pointerStartRef.current = null
+    setPressing(false)
+  }
+
+  function handleCardPointerDown(e) {
+    if (!canReorder) return
+    if (e.target.closest('button, input, textarea, a')) return
+    pointerStartRef.current = { x: e.clientX, y: e.clientY }
+    longPressFiredRef.current = false
+    setPressing(true)
+    clearTimeout(longPressTimerRef.current)
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true
+      setPressing(false)
+      onDragStart(e, scope.id)
+    }, 450)
+  }
+
+  function handleCardPointerMove(e) {
+    if (!pointerStartRef.current) return
+    const dx = e.clientX - pointerStartRef.current.x
+    const dy = e.clientY - pointerStartRef.current.y
+    if (Math.hypot(dx, dy) > 10) clearLongPress()
+  }
+
+  function handleCardClick(e) {
+    // Swallow the click that follows a long-press-triggered drag so it
+    // doesn't also navigate into the scope right as the user meant to
+    // pick it up.
+    if (longPressFiredRef.current) {
+      e.preventDefault(); e.stopPropagation()
+      longPressFiredRef.current = false
+      return
+    }
+    onClick?.(e)
+  }
+
   const uom = scope.uom || 'SF'
   const dailyPct = scope.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
@@ -670,11 +728,29 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenS
 
   return (
     <div
-      onClick={onClick}
-      className="card hover:bg-surface/80 cursor-pointer transition-all duration-150 group"
-      style={{ borderLeftWidth: 4, borderLeftColor: scopeAccentColor(scope.status) }}
+      data-scope-id={scope.id}
+      onPointerDown={handleCardPointerDown}
+      onPointerMove={handleCardPointerMove}
+      onPointerUp={clearLongPress}
+      onPointerCancel={clearLongPress}
+      onClick={handleCardClick}
+      className={`card hover:bg-surface/80 cursor-pointer transition-all duration-150 group select-none ${
+        isDragging ? 'opacity-40' : ''
+      } ${isDropTarget ? 'ring-2 ring-accent' : ''} ${pressing ? 'scale-[0.98]' : ''}`}
+      style={{ borderLeftWidth: 4, borderLeftColor: scopeAccentColor(scope.status), WebkitTouchCallout: 'none' }}
     >
       <div className="flex items-start justify-between mb-3">
+        {canReorder && (
+          <button
+            onPointerDown={e => { e.stopPropagation(); onDragStart(e, scope.id) }}
+            onClick={e => e.stopPropagation()}
+            className="btn-ghost p-1 mr-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing text-muted"
+            style={{ touchAction: 'none' }}
+            title="Drag to reorder"
+          >
+            <GripIcon />
+          </button>
+        )}
         <div className="flex-1 min-w-0">
           {/* The type of work (e.g. "Under Floor Cleaning") is what a
               foreman actually scans for on this card — falls back to the
@@ -785,6 +861,82 @@ export default function ProjectDetail() {
   // Matches Projects.jsx's own gate for creating a project — a scope is a
   // projects row under the hood, same permission level applies.
   const canCreateScope = profile?.role === 'admin' || profile?.role === 'pm'
+  // Same role gate as the Scopes list's own drag-to-reorder.
+  const canReorderScope = canManageMembers
+
+  const [dragScopeId, setDragScopeId] = useState(null)
+  const [dragScopePos, setDragScopePos] = useState({ x: 0, y: 0 })
+  const [hoverScopeId, setHoverScopeId] = useState(null)
+  const [scopeReorderError, setScopeReorderError] = useState('')
+
+  function handleScopeDragStart(e, scopeId) {
+    setDragScopeId(scopeId)
+    setDragScopePos({ x: e.clientX, y: e.clientY })
+  }
+
+  useEffect(() => {
+    if (!dragScopeId) return
+
+    function onMove(e) {
+      setDragScopePos({ x: e.clientX, y: e.clientY })
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const target = el?.closest('[data-scope-id]')
+      const targetId = target?.getAttribute('data-scope-id')
+      setHoverScopeId(targetId && targetId !== dragScopeId ? targetId : null)
+    }
+
+    async function onUp() {
+      const droppedOnId = hoverScopeId
+      const draggedId = dragScopeId
+      setDragScopeId(null)
+      setHoverScopeId(null)
+      if (!droppedOnId) return
+
+      const fromIdx = scopes.findIndex(s => s.id === draggedId)
+      const toIdx = scopes.findIndex(s => s.id === droppedOnId)
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return
+      const reordered = [...scopes]
+      const [moved] = reordered.splice(fromIdx, 1)
+      reordered.splice(toIdx, 0, moved)
+      setScopes(reordered)
+
+      // Reuses the projects table's own set_project_sort_order RPC — a
+      // scope is a projects row under the hood (see canCreateScope above),
+      // so there's no separate reorder function to maintain for it.
+      try {
+        const results = await Promise.all(
+          reordered.map((s, idx) => supabase.rpc('set_project_sort_order', { target_project_id: s.id, new_order: idx }))
+        )
+        const failedRpc = results.find(r => r?.error)
+        const noOpRpc = results.find(r => !r?.error && r?.data === false)
+        if (failedRpc) {
+          console.error('[JobDetail] set_project_sort_order failed:', failedRpc.error)
+          setScopeReorderError('Reordering was not saved: ' + (failedRpc.error.message || 'unknown error'))
+          return
+        }
+        if (noOpRpc) {
+          console.error('[JobDetail] set_project_sort_order ran but updated no row (role check failed).')
+          setScopeReorderError('Reordering was not saved — your account role is not allowed to reorder scopes.')
+          return
+        }
+        setScopes(ss => ss.map((s, idx) => ({ ...s, sort_order: idx })))
+      } catch (err) {
+        console.error('[JobDetail] Scope reorder save threw:', err)
+        setScopeReorderError('Reordering failed to save: ' + (err.message || String(err)))
+      }
+    }
+
+    function preventScroll(e) { e.preventDefault() }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('touchmove', preventScroll, { passive: false })
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('touchmove', preventScroll)
+    }
+  }, [dragScopeId, hoverScopeId, scopes])
 
   async function loadJobDetail() {
     setLoading(true)
@@ -796,7 +948,7 @@ export default function ProjectDetail() {
       // there's no reason to make "+ Add" wait on a fresh fetch every time.
       const [{ data: jobData, error: jobErr }, { data: scopesData, error: scopesErr }, { data: directoryData }] = await Promise.all([
         supabase.from('jobs').select('*, organizations(name)').eq('id', jobId).single(),
-        supabase.from('projects').select('*').eq('job_id', jobId).order('created_at', { ascending: false }),
+        supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').order('full_name'),
       ])
       if (jobErr) throw jobErr
@@ -933,6 +1085,18 @@ export default function ProjectDetail() {
 
   return (
     <Layout>
+      {scopeReorderError && (
+        <div
+          onClick={() => setScopeReorderError('')}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+            background: '#facc15', color: '#000', fontSize: '12px',
+            padding: '10px 12px', wordBreak: 'break-word', cursor: 'pointer',
+          }}
+        >
+          {scopeReorderError} <strong>(tap to dismiss)</strong>
+        </div>
+      )}
       {/* Header sits in its own, tighter-padded strip — closer to the true
           screen edge than the roomier main content below, matching the
           back-button-near-the-edge feel of a native app rather than
@@ -1012,6 +1176,10 @@ export default function ProjectDetail() {
                     onUpdateStatus={updateScopeStatus}
                     onOpenSettings={setScopeSettingsTarget}
                     canManageScope={canCreateScope}
+                    canReorder={canReorderScope}
+                    isDragging={dragScopeId === scope.id}
+                    isDropTarget={hoverScopeId === scope.id}
+                    onDragStart={handleScopeDragStart}
                   />
                 ))}
               </div>
@@ -1134,6 +1302,16 @@ export default function ProjectDetail() {
           </div>
         </div>
       </div>
+
+      {dragScopeId && (
+        <div
+          className="fixed z-[100] pointer-events-none px-3 py-2 rounded-lg bg-surface border border-accent shadow-xl text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2"
+          style={{ left: dragScopePos.x + 14, top: dragScopePos.y + 14 }}
+        >
+          <GripIcon />
+          {(() => { const s = scopes.find(s => s.id === dragScopeId); return s?.description || s?.name })()}
+        </div>
+      )}
 
       {showAddMember && (
         <AddMemberModal

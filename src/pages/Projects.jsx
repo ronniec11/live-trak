@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
@@ -13,6 +13,14 @@ function badgeClass(status) {
   if (status === 'completed') return 'badge-completed'
   return 'badge-on-hold'
 }
+
+const GripIcon = () => (
+  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+    <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+    <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+    <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+  </svg>
+)
 
 function CreateProjectModal({ onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', gc_name: '', address: '', status: 'active' })
@@ -97,13 +105,83 @@ function CreateProjectModal({ onClose, onCreated }) {
   )
 }
 
-function ProjectCard({ job, totalSF, activeScopeCount, onClick }) {
+function ProjectCard({ job, totalSF, activeScopeCount, onClick, canReorder, isDragging, isDropTarget, onDragStart }) {
+  const [pressing, setPressing] = useState(false)
+
+  // Long-press-anywhere-on-the-card reorder trigger, same as the Scopes
+  // list's own project cards — the grip handle alone is too small a
+  // target to hit reliably with a fingertip. Holding still for ~450ms
+  // starts the drag; a normal tap or a swipe past a small threshold
+  // cancels it and behaves as a plain click. Presses starting on an
+  // actual control are left alone so their own behavior still works.
+  const longPressTimerRef = useRef(null)
+  const pointerStartRef = useRef(null)
+  const longPressFiredRef = useRef(false)
+
+  function clearLongPress() {
+    clearTimeout(longPressTimerRef.current)
+    pointerStartRef.current = null
+    setPressing(false)
+  }
+
+  function handleCardPointerDown(e) {
+    if (!canReorder) return
+    if (e.target.closest('button, input, textarea, a')) return
+    pointerStartRef.current = { x: e.clientX, y: e.clientY }
+    longPressFiredRef.current = false
+    setPressing(true)
+    clearTimeout(longPressTimerRef.current)
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true
+      setPressing(false)
+      onDragStart(e, job.id)
+    }, 450)
+  }
+
+  function handleCardPointerMove(e) {
+    if (!pointerStartRef.current) return
+    const dx = e.clientX - pointerStartRef.current.x
+    const dy = e.clientY - pointerStartRef.current.y
+    if (Math.hypot(dx, dy) > 10) clearLongPress()
+  }
+
+  function handleCardClick(e) {
+    // Swallow the click that follows a long-press-triggered drag so it
+    // doesn't also navigate into the project right as the user meant to
+    // pick it up.
+    if (longPressFiredRef.current) {
+      e.preventDefault(); e.stopPropagation()
+      longPressFiredRef.current = false
+      return
+    }
+    onClick?.(e)
+  }
+
   return (
     <div
-      onClick={onClick}
-      className="card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group"
+      data-job-id={job.id}
+      onPointerDown={handleCardPointerDown}
+      onPointerMove={handleCardPointerMove}
+      onPointerUp={clearLongPress}
+      onPointerCancel={clearLongPress}
+      onClick={handleCardClick}
+      className={`card hover:border-accent/40 hover:bg-surface/80 cursor-pointer transition-all duration-150 group select-none ${
+        isDragging ? 'opacity-40' : ''
+      } ${isDropTarget ? 'ring-2 ring-accent' : ''} ${pressing ? 'scale-[0.98]' : ''}`}
+      style={{ WebkitTouchCallout: 'none' }}
     >
       <div className="flex items-start justify-between mb-3">
+        {canReorder && (
+          <button
+            onPointerDown={e => { e.stopPropagation(); onDragStart(e, job.id) }}
+            onClick={e => e.stopPropagation()}
+            className="btn-ghost p-1 mr-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing text-muted"
+            style={{ touchAction: 'none' }}
+            title="Drag to reorder"
+          >
+            <GripIcon />
+          </button>
+        )}
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
           {job.gc_name && (
@@ -150,6 +228,85 @@ export default function Projects() {
   const [showCreate, setShowCreate] = useState(false)
 
   const canCreate = profile?.role === 'admin'
+  const canReorderRole = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
+
+  const [dragId, setDragId] = useState(null)
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 })
+  const [hoverId, setHoverId] = useState(null)
+  const [reorderError, setReorderError] = useState('')
+
+  // Reordering is only meaningful against the full, unfiltered list — with a
+  // search/status filter active there's no sensible place to drop a card
+  // relative to items that are hidden. Matches the same rule on the Scopes
+  // list's own reorder.
+  const canReorder = canReorderRole && filterStatus === 'all' && !searchTerm
+
+  function handleDragStart(e, jobId) {
+    setDragId(jobId)
+    setDragPos({ x: e.clientX, y: e.clientY })
+  }
+
+  useEffect(() => {
+    if (!dragId) return
+
+    function onMove(e) {
+      setDragPos({ x: e.clientX, y: e.clientY })
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const target = el?.closest('[data-job-id]')
+      const targetId = target?.getAttribute('data-job-id')
+      setHoverId(targetId && targetId !== dragId ? targetId : null)
+    }
+
+    async function onUp() {
+      const droppedOnId = hoverId
+      const draggedId = dragId
+      setDragId(null)
+      setHoverId(null)
+      if (!droppedOnId) return
+
+      const fromIdx = jobs.findIndex(j => j.id === draggedId)
+      const toIdx = jobs.findIndex(j => j.id === droppedOnId)
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return
+      const reordered = [...jobs]
+      const [moved] = reordered.splice(fromIdx, 1)
+      reordered.splice(toIdx, 0, moved)
+      setJobs(reordered)
+
+      try {
+        const results = await Promise.all(
+          reordered.map((j, idx) => supabase.rpc('set_job_sort_order', { target_job_id: j.id, new_order: idx }))
+        )
+        const failedRpc = results.find(r => r?.error)
+        const noOpRpc = results.find(r => !r?.error && r?.data === false)
+        if (failedRpc) {
+          console.error('[Projects] set_job_sort_order failed:', failedRpc.error)
+          setReorderError('Reordering was not saved: ' + (failedRpc.error.message || 'unknown error'))
+          return
+        }
+        if (noOpRpc) {
+          console.error('[Projects] set_job_sort_order ran but updated no row (role check failed).')
+          setReorderError('Reordering was not saved — your account role is not allowed to reorder projects.')
+          return
+        }
+        setJobs(js => js.map((j, idx) => ({ ...j, sort_order: idx })))
+      } catch (err) {
+        console.error('[Projects] Reorder save threw:', err)
+        setReorderError('Reordering failed to save: ' + (err.message || String(err)))
+      }
+    }
+
+    // Once a drag is active, stop touchmove from also scrolling the page.
+    function preventScroll(e) { e.preventDefault() }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('touchmove', preventScroll, { passive: false })
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('touchmove', preventScroll)
+    }
+  }, [dragId, hoverId, jobs])
 
   async function loadProjects() {
     setLoading(true)
@@ -159,6 +316,7 @@ export default function Projects() {
         .from('jobs')
         .select('*, organizations(name)')
         .eq('organization_id', ORGANIZATION_ID)
+        .order('sort_order', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false })
       if (jobsErr) throw jobsErr
 
@@ -228,6 +386,18 @@ export default function Projects() {
 
   return (
     <Layout>
+      {reorderError && (
+        <div
+          onClick={() => setReorderError('')}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+            background: '#facc15', color: '#000', fontSize: '12px',
+            padding: '10px 12px', wordBreak: 'break-word', cursor: 'pointer',
+          }}
+        >
+          {reorderError} <strong>(tap to dismiss)</strong>
+        </div>
+      )}
       <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 py-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -300,7 +470,7 @@ export default function Projects() {
             </div>
             <p className="text-gray-700 dark:text-gray-300 font-medium mb-1">Failed to load projects</p>
             <p className="text-sm text-muted mb-4">{loadError}</p>
-            <button onClick={loadJobs} className="btn-secondary">
+            <button onClick={loadProjects} className="btn-secondary">
               Try again
             </button>
           </div>
@@ -325,11 +495,25 @@ export default function Projects() {
                 totalSF={sfByJob[job.id] || 0}
                 activeScopeCount={activeScopesByJob[job.id] || 0}
                 onClick={() => navigate(`/projects/${job.id}`)}
+                canReorder={canReorder}
+                isDragging={dragId === job.id}
+                isDropTarget={hoverId === job.id}
+                onDragStart={handleDragStart}
               />
             ))}
           </div>
         )}
       </div>
+
+      {dragId && (
+        <div
+          className="fixed z-[100] pointer-events-none px-3 py-2 rounded-lg bg-surface border border-accent shadow-xl text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2"
+          style={{ left: dragPos.x + 14, top: dragPos.y + 14 }}
+        >
+          <GripIcon />
+          {jobs.find(j => j.id === dragId)?.name}
+        </div>
+      )}
 
       {showCreate && (
         <CreateProjectModal
