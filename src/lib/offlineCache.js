@@ -349,7 +349,11 @@ export async function downloadProjectForOffline(projectId, onProgress) {
 
   await dbPut('cachedProjects', {
     id: projectId,
-    name: project.name, description: project.description, status: project.status,
+    // jobId ties this scope back to its parent job (see downloadJobForOffline)
+    // so the job dashboard and the Projects list can rebuild themselves from
+    // cached scopes alone with no network at all.
+    jobId: project.job_id, sort_order: project.sort_order,
+    name: project.name, description: project.description, status: project.status, uom: project.uom,
     daily_sf_target: project.daily_sf_target, total_sf_target: project.total_sf_target, cost: project.cost,
     pages: (pages || []).map(p => ({ id: p.id, name: p.name })),
     cachedAt: Date.now(),
@@ -370,4 +374,138 @@ export async function listCachedProjects() {
 
 export async function isProjectCached(projectId) {
   return !!(await getCachedProject(projectId))
+}
+
+// Job-level download: caches the job's own row plus every one of its
+// scopes (each via downloadProjectForOffline above, which is what tags the
+// resulting cachedProjects record with this jobId). ProjectDetail.jsx (the
+// job dashboard) and Projects.jsx (the job list) previously had no offline
+// fallback at all — only a scope's own dashboard (ScopeDetail.jsx) did —
+// so downloading a job from the Projects page would let you view a scope
+// offline but not the job dashboard you'd tap into it from, or the
+// Projects list itself.
+export async function downloadJobForOffline(jobId, onProgress) {
+  await requestPersistentStorage()
+
+  const { data: job, error: jobErr } = await supabase
+    .from('jobs').select('*').eq('id', jobId).single()
+  if (jobErr) throw jobErr
+
+  const { data: scopes, error: scopesErr } = await supabase
+    .from('projects').select('*').eq('job_id', jobId)
+  if (scopesErr) throw scopesErr
+
+  for (const scope of (scopes || [])) {
+    await downloadProjectForOffline(scope.id, text => onProgress?.(`${scope.name}: ${text}`))
+  }
+
+  await dbPut('cachedJobs', {
+    id: jobId,
+    name: job.name, status: job.status, gc_name: job.gc_name,
+    owner_name: job.owner_name, address: job.address,
+    scopeIds: (scopes || []).map(s => s.id),
+    cachedAt: Date.now(),
+  })
+}
+
+export async function getCachedJob(jobId) {
+  return dbGet('cachedJobs', jobId)
+}
+
+export async function listCachedJobs() {
+  return dbGetAll('cachedJobs')
+}
+
+export async function isJobCached(jobId) {
+  return !!(await getCachedJob(jobId))
+}
+
+// Same shape-handling as Reports.jsx/ProjectDetail.jsx's countItemsFor —
+// count_data is a bare array of markers on older sessions, or
+// {markers, w, h} on newer ones.
+function countItemsFor(countData) {
+  if (Array.isArray(countData)) return countData.length
+  return countData?.markers?.length ?? 0
+}
+
+// Rebuilds what ProjectDetail.jsx's loadJobDetail() computes from Supabase
+// (per-scope SF totals, today's activity, recent sessions), but from the
+// local cache — used when that fetch fails with no connection. Every
+// cached scope's own pages (see cachePage) already carry their sessions,
+// so nothing extra needs to be cached just for this.
+export async function getCachedJobDetail(jobId) {
+  const job = await getCachedJob(jobId)
+  if (!job) return null
+
+  const scopes = (await listCachedProjects())
+    .filter(s => s.jobId === jobId)
+    .sort((a, b) => (a.sort_order ?? Infinity) - (b.sort_order ?? Infinity))
+  const today = new Date().toLocaleDateString('en-CA')
+
+  const sfTodayByScope = {}
+  const sfTotalByScope = {}
+  const todaySessions = []
+  const recentSessions = []
+
+  for (const scope of scopes) {
+    const uom = scope.uom || 'SF'
+    for (const pg of (scope.pages || [])) {
+      const cachedPage = await getCachedPage(pg.id)
+      for (const s of (cachedPage?.sessions || [])) {
+        const value = uom === 'LF' ? (parseFloat(s.lf) || 0)
+          : uom === 'Count' ? countItemsFor(s.count_data)
+          : (parseFloat(s.sf) || 0)
+        sfTotalByScope[scope.id] = (sfTotalByScope[scope.id] || 0) + value
+        const withNames = { ...s, scopeName: scope.name, pageName: pg.name }
+        recentSessions.push(withNames)
+        if (s.work_date === today) {
+          sfTodayByScope[scope.id] = (sfTodayByScope[scope.id] || 0) + value
+          todaySessions.push(withNames)
+        }
+      }
+    }
+  }
+  recentSessions.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+
+  return {
+    job,
+    scopes: scopes.map(s => ({
+      id: s.id, name: s.name, description: s.description, status: s.status, uom: s.uom,
+      daily_sf_target: s.daily_sf_target, total_sf_target: s.total_sf_target,
+    })),
+    sfTodayByScope, sfTotalByScope,
+    todaySessions, recentSessions: recentSessions.slice(0, 15),
+  }
+}
+
+// Same idea for the Projects list page — rebuilds each job card's active-
+// scope count and overall progress from cached scopes instead of Supabase.
+// Matches loadProjects()'s own (uom-blind) overallPctByJob math: it sums
+// raw sf across every session regardless of a scope's uom.
+export async function getCachedJobsList() {
+  const jobs = await listCachedJobs()
+  const allScopes = await listCachedProjects()
+
+  const activeScopesByJob = {}
+  const overallPctByJob = {}
+  const scopeIdsByJob = {}
+
+  for (const job of jobs) {
+    const scopes = allScopes.filter(s => s.jobId === job.id)
+    scopeIdsByJob[job.id] = scopes.map(s => s.id)
+    activeScopesByJob[job.id] = scopes.filter(s => s.status === 'active').length
+
+    let totalSF = 0
+    let targetSF = 0
+    for (const scope of scopes) {
+      targetSF += parseFloat(scope.total_sf_target) || 0
+      for (const pg of (scope.pages || [])) {
+        const cachedPage = await getCachedPage(pg.id)
+        for (const s of (cachedPage?.sessions || [])) totalSF += parseFloat(s.sf) || 0
+      }
+    }
+    overallPctByJob[job.id] = targetSF > 0 ? Math.min(100, Math.round((totalSF / targetSF) * 100)) : null
+  }
+
+  return { jobs, activeScopesByJob, overallPctByJob, scopeIdsByJob }
 }

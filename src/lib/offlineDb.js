@@ -11,11 +11,11 @@ const DB_NAME = 'livetrak_offline'
 // created just because the code added it here, and every put/get against
 // it then fails with "One of the specified object stores was not found."
 // Bump this whenever STORES (or a store's indexes) changes.
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 // Every store offline mode uses, created up front on first open so nothing
 // downstream has to think about schema versioning.
-const STORES = ['pendingOps', 'cachedPages', 'cachedProjects', 'cachedTiles']
+const STORES = ['pendingOps', 'cachedPages', 'cachedProjects', 'cachedTiles', 'cachedJobs']
 
 let dbPromise = null
 

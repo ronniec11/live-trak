@@ -4,7 +4,7 @@ import Layout from '../components/Layout'
 import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { downloadProjectForOffline, isProjectCached } from '../lib/offlineCache'
+import { downloadJobForOffline, isJobCached, getCachedJobsList } from '../lib/offlineCache'
 
 // Single-tenant for now — there's only one organization, so this is hard-
 // coded rather than built out into an org switcher nobody needs yet.
@@ -113,33 +113,26 @@ function CreateProjectModal({ onClose, onCreated }) {
 }
 
 // Compact icon-only download for full offline mode (see
-// src/lib/offlineCache.js) — a job has no offline cache entry of its own,
-// so this downloads each of its scopes in turn (the same per-scope cache
-// the Scopes list's own download button writes to), which is what
-// ScopeDetail's offline fallback actually reads from.
-function DownloadOfflineButton({ jobName, scopeIds, onStatus }) {
+// src/lib/offlineCache.js) — downloads the job's own row plus every one of
+// its scopes, so both the job dashboard (ProjectDetail.jsx) and each
+// scope's own dashboard (ScopeDetail.jsx) can fall back to it with no
+// connection, not just the scopes.
+function DownloadOfflineButton({ jobId, jobName, hasScopes, onStatus }) {
   const [state, setState] = useState('idle') // 'idle' | 'downloading' | 'done' | 'error'
 
   useEffect(() => {
     let cancelled = false
-    async function checkCached() {
-      if (!scopeIds || scopeIds.length === 0) return
-      const cached = await Promise.all(scopeIds.map(isProjectCached))
-      if (!cancelled && cached.every(Boolean)) setState('done')
-    }
-    checkCached()
+    isJobCached(jobId).then(cached => { if (!cancelled && cached) setState('done') })
     return () => { cancelled = true }
-  }, [scopeIds])
+  }, [jobId])
 
   async function handleDownload(e) {
     e.stopPropagation()
-    if (state === 'downloading' || !scopeIds || scopeIds.length === 0) return
+    if (state === 'downloading' || !hasScopes) return
     setState('downloading')
     onStatus?.({ text: `Downloading ${jobName} for offline use…`, isError: false })
     try {
-      for (const scopeId of scopeIds) {
-        await downloadProjectForOffline(scopeId, text => onStatus?.({ text: `${jobName}: ${text}`, isError: false }))
-      }
+      await downloadJobForOffline(jobId, text => onStatus?.({ text: `${jobName}: ${text}`, isError: false }))
       setState('done')
       onStatus?.({ text: `${jobName} downloaded for offline use.`, isError: false })
     } catch (err) {
@@ -150,9 +143,8 @@ function DownloadOfflineButton({ jobName, scopeIds, onStatus }) {
     }
   }
 
-  const noScopes = !scopeIds || scopeIds.length === 0
   const titles = {
-    idle: noScopes ? 'No scopes to download yet' : 'Download for offline use',
+    idle: hasScopes ? 'Download for offline use' : 'No scopes to download yet',
     downloading: 'Downloading…',
     done: 'Downloaded for offline use — tap to refresh',
     error: 'Download failed — tap to retry',
@@ -161,8 +153,8 @@ function DownloadOfflineButton({ jobName, scopeIds, onStatus }) {
   return (
     <button
       onClick={handleDownload}
-      disabled={state === 'downloading' || noScopes}
-      className={`btn-ghost p-1.5 shrink-0 ${state === 'done' ? 'text-accent' : state === 'error' ? 'text-red-500' : 'text-muted'} ${noScopes ? 'opacity-40' : ''}`}
+      disabled={state === 'downloading' || !hasScopes}
+      className={`btn-ghost p-1.5 shrink-0 ${state === 'done' ? 'text-accent' : state === 'error' ? 'text-red-500' : 'text-muted'} ${!hasScopes ? 'opacity-40' : ''}`}
       title={titles[state]}
     >
       <svg className={`w-4 h-4 ${state === 'downloading' ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -255,7 +247,7 @@ function ProjectCard({ job, activeScopeCount, overallPct, scopeIds, onClick, can
         )}
         <h3 className="flex-1 min-w-0 font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
         <div className="flex items-center gap-1 ml-2 shrink-0">
-          <DownloadOfflineButton jobName={job.name} scopeIds={scopeIds} onStatus={onDownloadStatus} />
+          <DownloadOfflineButton jobId={job.id} jobName={job.name} hasScopes={scopeIds && scopeIds.length > 0} onStatus={onDownloadStatus} />
           <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
         </div>
       </div>
@@ -284,6 +276,7 @@ export default function Projects() {
   const [scopeIdsByJob, setScopeIdsByJob] = useState({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [offlineMode, setOfflineMode] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [showCreate, setShowCreate] = useState(false)
@@ -377,6 +370,7 @@ export default function Projects() {
   async function loadProjects() {
     setLoading(true)
     setLoadError('')
+    setOfflineMode(false)
     try {
       const { data: jobsData, error: jobsErr } = await supabase
         .from('jobs')
@@ -453,7 +447,25 @@ export default function Projects() {
       setOverallPctByJob(pctMap)
     } catch (err) {
       console.error('[Jobs] loadJobs error:', err)
-      setLoadError(err.message || 'Failed to load jobs. Please try refreshing.')
+      // No connection — fall back to whatever jobs were downloaded for
+      // offline use (see each card's download button). Only jobs (and their
+      // scopes) someone explicitly downloaded show up here; a job never
+      // opened for offline use just isn't in the cache to fall back to.
+      try {
+        const { jobs: cachedJobs, activeScopesByJob: cachedActive, overallPctByJob: cachedPct, scopeIdsByJob: cachedScopeIds } = await getCachedJobsList()
+        if (cachedJobs.length > 0) {
+          setJobs(cachedJobs)
+          setActiveScopesByJob(cachedActive)
+          setOverallPctByJob(cachedPct)
+          setScopeIdsByJob(cachedScopeIds)
+          setOfflineMode(true)
+        } else {
+          setLoadError(err.message || 'Failed to load jobs. Please try refreshing.')
+        }
+      } catch (cacheErr) {
+        console.error('[Jobs] offline cache fallback failed:', cacheErr)
+        setLoadError(err.message || 'Failed to load jobs. Please try refreshing.')
+      }
     } finally {
       setLoading(false)
     }
@@ -496,6 +508,11 @@ export default function Projects() {
         </div>
       )}
       <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 py-6">
+        {offlineMode && (
+          <div className="mb-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
+            No connection — showing only the projects downloaded for offline use.
+          </div>
+        )}
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
@@ -590,7 +607,9 @@ export default function Projects() {
             </div>
             <p className="text-gray-500 dark:text-gray-400 font-medium">No projects found</p>
             <p className="text-sm text-muted mt-1">
-              {jobs.length === 0 ? 'No projects have been created yet.' : 'Try adjusting your filters.'}
+              {jobs.length > 0 ? 'Try adjusting your filters.'
+                : offlineMode ? 'No connection, and no projects have been downloaded for offline use.'
+                : 'No projects have been created yet.'}
             </p>
           </div>
         ) : (

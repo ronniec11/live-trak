@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { getCachedJobDetail } from '../lib/offlineCache'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 // A scope's default unit of measure — not every scope is measured in SF
@@ -864,6 +865,8 @@ export default function ProjectDetail() {
   const [directory, setDirectory] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [offlineMode, setOfflineMode] = useState(false)
+  const [notCachedOffline, setNotCachedOffline] = useState(false)
 
   const [showJobSettings, setShowJobSettings] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
@@ -957,6 +960,8 @@ export default function ProjectDetail() {
   async function loadJobDetail() {
     setLoading(true)
     setLoadError('')
+    setOfflineMode(false)
+    setNotCachedOffline(false)
     try {
       // The profile directory (for Add Team Member) is fetched here, up
       // front with everything else this page needs, rather than only once
@@ -1040,7 +1045,34 @@ export default function ProjectDetail() {
       setRecentSessions(withNames.slice(0, 15))
     } catch (err) {
       console.error('[JobDetail] loadJobDetail error:', err)
-      setLoadError(err.message || 'Failed to load this job. Please try refreshing.')
+      // No connection — fall back to whatever was downloaded for offline
+      // use (see the Download for Offline button on the Projects page).
+      // Team members aren't part of that cache, so they're left empty here
+      // rather than attempting another network call that would just fail
+      // too (matches ScopeDetail.jsx's own offline fallback).
+      try {
+        const cached = await getCachedJobDetail(jobId)
+        if (cached) {
+          setJob(cached.job)
+          setScopes(cached.scopes)
+          setMembers([])
+          setSfTodayByScope(cached.sfTodayByScope)
+          setSfTotalByScope(cached.sfTotalByScope)
+          setTodaySessions(cached.todaySessions)
+          setRecentSessions(cached.recentSessions)
+          setOfflineMode(true)
+        } else {
+          // Reached this job some way other than tapping its card on the
+          // Projects page (that page only lists downloaded jobs once it's
+          // shown the same offline fallback) — a stale link, the browser's
+          // back button, etc. Nothing to show without either a connection
+          // or a prior download.
+          setNotCachedOffline(true)
+        }
+      } catch (cacheErr) {
+        console.error('[JobDetail] offline cache fallback failed:', cacheErr)
+        setNotCachedOffline(true)
+      }
     } finally {
       setLoading(false)
     }
@@ -1087,11 +1119,16 @@ export default function ProjectDetail() {
     )
   }
 
-  if (loadError || !job) {
+  if (loadError || notCachedOffline || !job) {
     return (
       <Layout>
         <div className="text-center py-16">
-          <p className="text-gray-700 dark:text-gray-300 font-medium mb-1">{loadError ? 'Failed to load project' : 'Project not found'}</p>
+          <p className="text-gray-700 dark:text-gray-300 font-medium mb-1">
+            {notCachedOffline ? "Can't open this project offline" : loadError ? 'Failed to load project' : 'Project not found'}
+          </p>
+          {notCachedOffline && (
+            <p className="text-sm text-muted mb-4">No connection, and this project hasn't been downloaded for offline use. Connect once, or download it in advance from the Projects page.</p>
+          )}
           {loadError && <p className="text-sm text-muted mb-4">{loadError}</p>}
           <button onClick={() => navigate('/projects')} className="btn-secondary">Back to Projects</button>
         </div>
@@ -1120,6 +1157,11 @@ export default function ProjectDetail() {
           (weather/map/team) away with the main content. */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
         <div className="flex-1 overflow-auto">
+          {offlineMode && (
+            <div className="mx-4 mt-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
+              No connection — showing the copy downloaded for offline use. Open a scope to keep working; it'll sync once you're back online.
+            </div>
+          )}
           {/* Header sits in its own, tighter-padded strip — closer to the
               true screen edge than the roomier main content below,
               matching the back-button-near-the-edge feel of a native app
