@@ -77,7 +77,11 @@ export default function Reports() {
 
   useEffect(() => {
     if (!canView) return
-    supabase.from('projects').select('id, name').order('name')
+    // Lists jobs (what the Projects page itself calls "Projects") rather
+    // than scopes — this dropdown used to list rows straight from the
+    // `projects` table, which are actually scopes (e.g. "Under Floor
+    // Cleaning"), so it never matched what's shown on the Projects page.
+    supabase.from('jobs').select('id, name').order('name')
       .then(({ data, error: err }) => { if (!err) setProjectOptions(data || []) })
   }, [canView])
 
@@ -91,7 +95,16 @@ export default function Reports() {
     setLoading(true); setError(''); setHasRun(false)
     try {
       let pageQuery = supabase.from('pages').select('id')
-      if (selectedProjectId !== 'all') pageQuery = pageQuery.eq('project_id', selectedProjectId)
+      if (selectedProjectId !== 'all') {
+        // selectedProjectId is a job id (see the dropdown above) — a page
+        // belongs to a scope, not directly to a job, so resolve to every
+        // scope under this job first.
+        const { data: scopes, error: scopesErr } = await supabase.from('projects').select('id').eq('job_id', selectedProjectId)
+        if (scopesErr) throw scopesErr
+        const scopeIds = (scopes || []).map(s => s.id)
+        if (scopeIds.length === 0) { setRows([]); setHasRun(true); return }
+        pageQuery = pageQuery.in('project_id', scopeIds)
+      }
       const { data: pgs, error: pgErr } = await pageQuery
       if (pgErr) throw pgErr
       const pageIds = (pgs || []).map(p => p.id)
