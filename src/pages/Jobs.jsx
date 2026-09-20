@@ -115,7 +115,7 @@ function JobCard({ job, totalSF, activeScopeCount, onClick }) {
 
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div className="bg-surface-2 rounded-lg p-2.5">
-          <p className="text-xs text-muted mb-0.5">Total SF Cleaned</p>
+          <p className="text-xs text-muted mb-0.5">Total SF</p>
           <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
             {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-xs font-normal text-muted">SF</span>
           </p>

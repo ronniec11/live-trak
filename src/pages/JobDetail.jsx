@@ -268,6 +268,86 @@ function AddMemberModal({ scopeIds, existingMemberIds, onClose, onAdded }) {
   )
 }
 
+function JobSettingsModal({ job, onClose, onSaved }) {
+  const [name, setName] = useState(job.name || '')
+  const [gcName, setGcName] = useState(job.gc_name || '')
+  const [address, setAddress] = useState(job.address || '')
+  const [status, setStatus] = useState(job.status || 'active')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+    setSaving(true)
+    setError('')
+    try {
+      const patch = {
+        name: trimmedName,
+        gc_name: gcName.trim() || null,
+        address: address.trim() || null,
+        status,
+      }
+      const { error: sErr } = await supabase.from('jobs').update(patch).eq('id', job.id)
+      if (sErr) throw sErr
+      onSaved(patch)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Project Settings</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="label">Job Name *</label>
+            <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Job name" required />
+          </div>
+          <div>
+            <label className="label">GC Name</label>
+            <input className="input" value={gcName} onChange={e => setGcName(e.target.value)} placeholder="e.g. DPR Construction" />
+          </div>
+          <div>
+            <label className="label">Address</label>
+            <input className="input" value={address} onChange={e => setAddress(e.target.value)} placeholder="e.g. 123 Main St, Dallas, TX" />
+          </div>
+          <div>
+            <label className="label">Status</label>
+            <select className="input capitalize" value={status} onChange={e => setStatus(e.target.value)}>
+              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving || !name.trim()} className="btn-primary flex-1">
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
   const dailyPct = scope.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
@@ -296,7 +376,7 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
       </div>
 
       <div className="bg-surface-2 rounded-lg p-3 mb-3">
-        <p className="text-xs text-muted mb-0.5">Total SF Cleaned</p>
+        <p className="text-xs text-muted mb-0.5">Total SF</p>
         <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">
           {allTimeSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           {scope.total_sf_target > 0 && (
@@ -363,12 +443,7 @@ export default function JobDetail() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
-  const [editingJob, setEditingJob] = useState(false)
-  const [editName, setEditName] = useState('')
-  const [editGc, setEditGc] = useState('')
-  const [editAddress, setEditAddress] = useState('')
-  const [editStatus, setEditStatus] = useState('active')
-  const [savingJob, setSavingJob] = useState(false)
+  const [showJobSettings, setShowJobSettings] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
 
   const canManage = profile?.role === 'admin'
@@ -458,37 +533,6 @@ export default function JobDetail() {
 
   const location = useJobLocation(job?.address)
 
-  function openEditJob() {
-    setEditName(job.name || '')
-    setEditGc(job.gc_name || '')
-    setEditAddress(job.address || '')
-    setEditStatus(job.status || 'active')
-    setEditingJob(true)
-  }
-
-  async function saveJobInfo() {
-    const name = editName.trim()
-    if (!name) return
-    setSavingJob(true)
-    try {
-      const patch = {
-        name,
-        gc_name: editGc.trim() || null,
-        address: editAddress.trim() || null,
-        status: editStatus,
-      }
-      const { error } = await supabase.from('jobs').update(patch).eq('id', jobId)
-      if (error) throw error
-      setJob(j => ({ ...j, ...patch }))
-      setEditingJob(false)
-    } catch (err) {
-      console.error('[JobDetail] Failed to save job info:', err)
-      alert('Failed to save: ' + (err.message || 'check console'))
-    } finally {
-      setSavingJob(false)
-    }
-  }
-
   const overallTotalSF = Object.values(sfTotalByScope).reduce((sum, sf) => sum + sf, 0)
   const overallTargetSF = scopes.reduce((sum, s) => sum + (parseFloat(s.total_sf_target) || 0), 0)
   const overallPct = overallTargetSF > 0 ? Math.min(100, Math.round((overallTotalSF / overallTargetSF) * 100)) : 0
@@ -518,8 +562,11 @@ export default function JobDetail() {
 
   return (
     <Layout>
-      <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 py-8">
-        {/* Header */}
+      {/* Header sits in its own, tighter-padded strip — closer to the true
+          screen edge than the roomier main content below, matching the
+          back-button-near-the-edge feel of a native app rather than
+          matching the wide gutters the cards/sidebar use. */}
+      <div className="px-4 sm:px-6 pt-6">
         <div className="flex items-start gap-3 mb-6">
           <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-2 shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -527,60 +574,17 @@ export default function JobDetail() {
             </svg>
           </button>
           <div className="flex-1 min-w-0">
-            {editingJob ? (
-                <div className="space-y-1.5 mt-1 max-w-sm">
-                  <input
-                    autoFocus
-                    className="input py-1 text-sm w-full"
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    placeholder="Job name"
-                    onKeyDown={e => { if (e.key === 'Escape') setEditingJob(false) }}
-                  />
-                  <input
-                    className="input py-1 text-xs w-full"
-                    value={editGc}
-                    onChange={e => setEditGc(e.target.value)}
-                    placeholder="GC name"
-                    onKeyDown={e => { if (e.key === 'Escape') setEditingJob(false) }}
-                  />
-                  <input
-                    className="input py-1 text-xs w-full"
-                    value={editAddress}
-                    onChange={e => setEditAddress(e.target.value)}
-                    placeholder="Address"
-                    onKeyDown={e => { if (e.key === 'Escape') setEditingJob(false) }}
-                  />
-                  <select className="input py-1 text-xs w-full capitalize" value={editStatus} onChange={e => setEditStatus(e.target.value)}>
-                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <div className="flex gap-1.5">
-                    <button onClick={saveJobInfo} disabled={savingJob || !editName.trim()} className="btn-primary py-0.5 px-2 text-xs flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                      {savingJob ? 'Saving...' : 'Save'}
-                    </button>
-                    <button onClick={() => setEditingJob(false)} className="btn-ghost py-0.5 px-2 text-xs">Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
-                    <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
-                    {canManage && (
-                      <button onClick={openEditJob} className="btn-ghost p-0.5 opacity-60 hover:opacity-100" title="Edit job">
-                        <svg className="w-3.5 h-3.5 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" /></svg>
-                      </button>
-                    )}
-                  </div>
-                  {job.gc_name && <p className="text-sm text-muted mt-0.5">GC: {job.gc_name}</p>}
-                  {job.address && <p className="text-sm text-muted">{job.address}</p>}
-                </>
-              )}
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
+              <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
             </div>
+            {job.gc_name && <p className="text-sm text-muted mt-0.5">GC: {job.gc_name}</p>}
+            {job.address && <p className="text-sm text-muted">{job.address}</p>}
           </div>
         </div>
+      </div>
 
+      <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 pb-8">
         {/* Main column starts here, alongside the sidebar (weather/map/team)
             to its right — the overall progress bar lives inside the main
             column now instead of spanning full width above it, so the
@@ -729,8 +733,22 @@ export default function JobDetail() {
                 )}
               </div>
             </div>
+
+            {canManage && (
+              <button
+                onClick={() => setShowJobSettings(true)}
+                className="flex items-center gap-2 text-xs text-muted hover:text-gray-700 dark:hover:text-gray-300 transition-colors pt-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Project Settings
+              </button>
+            )}
           </div>
         </div>
+      </div>
 
       {showAddMember && (
         <AddMemberModal
@@ -738,6 +756,13 @@ export default function JobDetail() {
           existingMemberIds={members.map(m => m.id)}
           onClose={() => setShowAddMember(false)}
           onAdded={loadJobDetail}
+        />
+      )}
+      {showJobSettings && (
+        <JobSettingsModal
+          job={job}
+          onClose={() => setShowJobSettings(false)}
+          onSaved={patch => setJob(j => ({ ...j, ...patch }))}
         />
       )}
     </Layout>
