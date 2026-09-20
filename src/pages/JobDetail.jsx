@@ -65,7 +65,12 @@ function WeatherIcon({ code }) {
   )
 }
 
-function WeatherWidget({ address }) {
+// Resolves a job's address to coordinates once (Open-Meteo's free
+// geocoding API, no key), falling back to Austin, TX when there's no
+// address or geocoding fails. Shared by WeatherWidget and LocationMap
+// below so the sidebar only geocodes the address a single time instead of
+// each widget doing its own redundant lookup.
+function useJobLocation(address) {
   const [state, setState] = useState({ status: 'loading' })
 
   useEffect(() => {
@@ -85,38 +90,55 @@ function WeatherWidget({ address }) {
             usedDefault = false
           }
         } catch (e) {
-          console.warn('[JobDetail] Weather geocoding failed, using default location:', e)
+          console.warn('[JobDetail] Geocoding failed, using default location:', e)
         }
       }
-      try {
-        const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`)
-        const data = await weatherRes.json()
-        if (cancelled) return
-        if (!data?.current) { setState({ status: 'error' }); return }
-        setState({ status: 'ready', current: data.current, label, usedDefault })
-      } catch (e) {
-        console.warn('[JobDetail] Weather fetch failed:', e)
-        if (!cancelled) setState({ status: 'error' })
-      }
+      if (!cancelled) setState({ status: 'ready', lat, lon, label, usedDefault })
     }
     load()
     return () => { cancelled = true }
   }, [address])
 
-  if (state.status === 'loading') {
-    return <div className="card w-full sm:w-72 shrink-0 animate-pulse h-[88px]" />
+  return state
+}
+
+function WeatherWidget({ location }) {
+  const [weather, setWeather] = useState({ status: 'loading' })
+
+  useEffect(() => {
+    if (location.status !== 'ready') return
+    let cancelled = false
+    async function load() {
+      setWeather({ status: 'loading' })
+      try {
+        const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`)
+        const data = await weatherRes.json()
+        if (cancelled) return
+        if (!data?.current) { setWeather({ status: 'error' }); return }
+        setWeather({ status: 'ready', current: data.current })
+      } catch (e) {
+        console.warn('[JobDetail] Weather fetch failed:', e)
+        if (!cancelled) setWeather({ status: 'error' })
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [location.status, location.lat, location.lon])
+
+  if (location.status !== 'ready' || weather.status === 'loading') {
+    return <div className="card animate-pulse h-[88px]" />
   }
-  if (state.status === 'error') {
+  if (weather.status === 'error') {
     return (
-      <div className="card w-full sm:w-72 shrink-0 flex items-center justify-center text-xs text-muted h-[88px]">
+      <div className="card flex items-center justify-center text-xs text-muted h-[88px]">
         Weather unavailable
       </div>
     )
   }
 
-  const { current, label, usedDefault } = state
+  const { current } = weather
   return (
-    <div className="card w-full sm:w-72 shrink-0">
+    <div className="card">
       <div className="flex items-center gap-3">
         <WeatherIcon code={current.weather_code} />
         <div className="min-w-0">
@@ -125,10 +147,32 @@ function WeatherWidget({ address }) {
         </div>
       </div>
       <p className="text-xs text-muted mt-2">
-        {usedDefault
-          ? <>No job address set — showing <span className="font-medium text-gray-700 dark:text-gray-300">{label}</span></>
-          : label}
+        {location.usedDefault
+          ? <>No job address set — showing <span className="font-medium text-gray-700 dark:text-gray-300">{location.label}</span></>
+          : location.label}
       </p>
+    </div>
+  )
+}
+
+// Free embed, no API key — OpenStreetMap's own export/embed endpoint takes
+// a bounding box + marker and returns an iframe-able map page directly.
+function LocationMap({ location }) {
+  if (location.status !== 'ready') {
+    return <div className="rounded-xl border border-border overflow-hidden h-40 bg-surface-2 animate-pulse" />
+  }
+  const { lat, lon } = location
+  const delta = 0.01
+  const bbox = [lon - delta, lat - delta, lon + delta, lat + delta].join(',')
+  return (
+    <div className="rounded-xl border border-border overflow-hidden">
+      <iframe
+        title="Job location"
+        width="100%"
+        height="160"
+        style={{ border: 0, display: 'block' }}
+        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lon}`}
+      />
     </div>
   )
 }
@@ -150,16 +194,12 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick }) {
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
           {/* The type of work (e.g. "Under Floor Cleaning") is what a
-              foreman actually scans for on this card — the scope's own
-              name is secondary context, shown smaller underneath. Falls
-              back to the name as the title when no description is set,
+              foreman actually scans for on this card — falls back to the
+              scope's own name as the title when no description is set,
               rather than rendering an empty heading. */}
           <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">
             {scope.description || scope.name}
           </h3>
-          {scope.description && (
-            <p className="text-xs text-muted mt-0.5 truncate">{scope.name}</p>
-          )}
         </div>
         <span className={`${badgeClass(scope.status)} ml-2 shrink-0 capitalize`}>{scope.status || 'active'}</span>
       </div>
@@ -321,6 +361,8 @@ export default function JobDetail() {
 
   useEffect(() => { loadJobDetail() }, [jobId])
 
+  const location = useJobLocation(job?.address)
+
   function openEditJob() {
     setEditName(job.name || '')
     setEditGc(job.gc_name || '')
@@ -383,16 +425,15 @@ export default function JobDetail() {
     <Layout>
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row items-start gap-4 mb-6">
-          <div className="flex items-start gap-3 flex-1 min-w-0">
-            <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-              </svg>
-            </button>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-muted uppercase tracking-wider">{job.organizations?.name}</p>
-              {editingJob ? (
+        <div className="flex items-start gap-3 mb-6">
+          <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+            </svg>
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-muted uppercase tracking-wider">{job.organizations?.name}</p>
+            {editingJob ? (
                 <div className="space-y-1.5 mt-1 max-w-sm">
                   <input
                     autoFocus
@@ -444,8 +485,6 @@ export default function JobDetail() {
               )}
             </div>
           </div>
-
-          <WeatherWidget address={job.address} />
         </div>
 
         {/* Overall job progress — every scope's total SF vs every scope's total target */}
@@ -469,7 +508,8 @@ export default function JobDetail() {
           )}
         </div>
 
-        <div className="space-y-6">
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 min-w-0 space-y-6">
           <div>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Scopes</h2>
             {scopes.length === 0 ? (
@@ -486,31 +526,6 @@ export default function JobDetail() {
                     allTimeSF={sfTotalByScope[scope.id] || 0}
                     onClick={() => navigate(`/projects/${scope.id}`)}
                   />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Team Members — full width below the scope cards, not a sidebar */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Team Members</h2>
-            {members.length === 0 ? (
-              <p className="text-xs text-muted">No members yet</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {members.map(member => (
-                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5">
-                    <div
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
-                      style={{ backgroundColor: member.avatar_color || '#4ade80' }}
-                    >
-                      {(member.full_name || 'U')[0].toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
-                      <p className="text-xs text-muted capitalize truncate">{member.role}</p>
-                    </div>
-                  </div>
                 ))}
               </div>
             )}
@@ -579,8 +594,38 @@ export default function JobDetail() {
               )}
             </div>
           </div>
+          </div>
+
+          {/* Sidebar — weather on top, then a map of the job location, then
+              the team members, mirroring the layout of a scope's own
+              dashboard (ProjectDetail.jsx). */}
+          <div className="lg:w-72 shrink-0 space-y-4">
+            <WeatherWidget location={location} />
+            <LocationMap location={location} />
+            <div>
+              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Team Members</h3>
+              <div className="space-y-2">
+                {members.map(member => (
+                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5">
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
+                      style={{ backgroundColor: member.avatar_color || '#4ade80' }}
+                    >
+                      {(member.full_name || 'U')[0].toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
+                      <p className="text-xs text-muted capitalize">{member.role}</p>
+                    </div>
+                  </div>
+                ))}
+                {members.length === 0 && (
+                  <p className="text-xs text-muted">No members yet</p>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
     </Layout>
   )
 }
