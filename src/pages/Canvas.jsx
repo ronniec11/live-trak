@@ -348,7 +348,8 @@ export default function Canvas() {
     let totalBuildingSF   = 0   // project's total_sf_target, for the header % bar
     let projectCost       = 0   // project's cost — fetched but not shown on this page for now (see ProjectDetail.jsx/Projects.jsx)
     let projectName        = ''
-    let projectDescription = ''  // e.g. "Final Clean" — shown on the printable Daily Report
+    let projectDescription = ''  // e.g. "Final Clean" — the scope's own name/description
+    let jobName             = ''  // the scope's parent project (job) — the Sheet Report's real "Project name"
     let calYear         = 0
     let calMonth        = 0
     let calSelectedDate = null
@@ -3487,7 +3488,12 @@ export default function Canvas() {
 
       lastReportData = {
         sheetName: activePage.name,
-        label: projectName || activePage.name || 'Floor Plan',
+        // label is the project (job) this scope lives under — falls back to
+        // the scope's own name if the job fetch didn't come back with one
+        // (e.g. the offline cache, which doesn't store the parent job's
+        // name), so the title's first half is never blank.
+        label: jobName || projectName || 'Project',
+        scopeLabel: projectDescription || projectName || 'Scope',
         range,
         generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
         snapshot,
@@ -3554,8 +3560,8 @@ export default function Canvas() {
       if (!data) return
       const rows = reportRowsHtml(data, 'ct-rep-num')
       const html = `
-        <div class="ct-rep-title">${data.label} — ${data.sheetName}</div>
-        ${projectDescription ? `<div class="ct-rep-desc">${projectDescription}</div>` : ''}
+        <div class="ct-rep-title">${data.label} — ${data.scopeLabel}</div>
+        <div class="ct-rep-desc">${data.sheetName}</div>
         <div class="ct-rep-sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
@@ -3642,8 +3648,8 @@ export default function Canvas() {
 </style>
 </head>
 <body>
-  <h1>${data.label} — ${data.sheetName}</h1>
-  ${projectDescription ? `<div class="desc">${projectDescription}</div>` : ''}
+  <h1>${data.label} — ${data.scopeLabel}</h1>
+  <div class="desc">${data.sheetName}</div>
   <div class="sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
   ${data.snapshot ? `<img class="snap" src="${data.snapshot}" />` : ''}
   <table>
@@ -4263,7 +4269,7 @@ export default function Canvas() {
         // Load project target and apply it before the progress bar renders
         const { data: projectData, error: projErr } = await supabase
           .from('projects')
-          .select('name, description, daily_sf_target, total_sf_target, cost')
+          .select('name, description, daily_sf_target, total_sf_target, cost, job_id')
           .eq('id', pg.project_id)
           .single()
         if (projErr) throw projErr
@@ -4292,6 +4298,18 @@ export default function Canvas() {
       }
       projectName = project?.name || ''
       projectDescription = project?.description || ''
+      // Best-effort, separate from the project fetch above so a hiccup here
+      // (or a job_id that doesn't resolve) can never take down the whole
+      // sheet load — the Sheet Report title just falls back to the scope's
+      // own name (see lastReportData's `label` below) if this comes back empty.
+      if (project?.job_id) {
+        try {
+          const { data: jobData } = await supabase.from('jobs').select('name').eq('id', project.job_id).single()
+          jobName = jobData?.name || ''
+        } catch (err) {
+          console.warn('[Canvas] Could not load parent job name for Sheet Report:', err)
+        }
+      }
 
       const savedPPF = pg.pixels_per_foot || null
       const savedCalibrated = pg.calibrated || false
