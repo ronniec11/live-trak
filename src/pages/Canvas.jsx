@@ -3645,7 +3645,7 @@ export default function Canvas() {
 <meta charset="utf-8">
 <title>Sheet Report - ${data.sheetName}</title>
 <style>
-  @page { margin: 0.75in; }
+  @page { margin: 0.25in; }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1c1c1a; background: #fff; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
