@@ -328,7 +328,7 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
 }
 
 function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', description: '', status: 'active', daily_sf_target: '', total_sf_target: '', cost: '' })
+  const [form, setForm] = useState({ name: '', status: 'active', daily_sf_target: '', total_sf_target: '', cost: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -339,12 +339,19 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
     setError('')
     setLoading(true)
     try {
+      // name and description end up holding the same text — the scope
+      // card's title reads description first, falling back to name, and
+      // splitting one "what is this scope" answer across two fields that
+      // said the same thing (e.g. "Final Clean" / "Final Clean") read as
+      // a bug, not a feature. Keeping both columns in sync means it never
+      // matters which one anything else in the app happens to read.
+      const trimmedName = form.name.trim()
       const { data: scope, error: sErr } = await supabase
         .from('projects')
         .insert({
           job_id: jobId,
-          name: form.name.trim(),
-          description: form.description.trim() || null,
+          name: trimmedName,
+          description: trimmedName,
           status: form.status,
           daily_sf_target: parseFloat(form.daily_sf_target) || 0,
           total_sf_target: parseFloat(form.total_sf_target) || 0,
@@ -390,11 +397,7 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="label">Scope Name *</label>
-            <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Final Clean" required />
-          </div>
-          <div>
-            <label className="label">Description</label>
-            <input className="input" value={form.description} onChange={e => set('description', e.target.value)} placeholder="e.g. Overhead steel cleaning, Level 1 final clean" />
+            <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Final Clean, Under Floor Cleaning" required />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -436,8 +439,12 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
 }
 
 function ScopeSettingsModal({ scope, onClose, onSaved }) {
-  const [name, setName] = useState(scope.name || '')
-  const [description, setDescription] = useState(scope.description || '')
+  // Pre-filled with whichever of name/description the card is actually
+  // showing as its title (see ScopeCard) — what you see is what you edit,
+  // and saving writes the same text back to both columns (see handleSubmit)
+  // so the two can't drift apart into two different answers to the same
+  // "what is this scope" question again.
+  const [name, setName] = useState(scope.description || scope.name || '')
   const [status, setStatus] = useState(scope.status || 'active')
   const [dailyTarget, setDailyTarget] = useState(scope.daily_sf_target ?? '')
   const [totalTarget, setTotalTarget] = useState(scope.total_sf_target ?? '')
@@ -454,7 +461,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
     try {
       const patch = {
         name: trimmedName,
-        description: description.trim() || null,
+        description: trimmedName,
         status,
         daily_sf_target: parseFloat(dailyTarget) || 0,
         total_sf_target: parseFloat(totalTarget) || 0,
@@ -490,11 +497,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="label">Scope Name *</label>
-            <input className="input" value={name} onChange={e => setName(e.target.value)} required />
-          </div>
-          <div>
-            <label className="label">Description</label>
-            <input className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="e.g. Overhead steel cleaning, Level 1 final clean" />
+            <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Final Clean, Under Floor Cleaning" required />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
