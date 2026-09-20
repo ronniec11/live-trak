@@ -471,6 +471,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
   const [dailyTarget, setDailyTarget] = useState(scope.daily_sf_target ?? '')
   const [totalTarget, setTotalTarget] = useState(scope.total_sf_target ?? '')
   const [cost, setCost] = useState(scope.cost ?? '')
+  const [lunchBreak, setLunchBreak] = useState(scope.lunch_break_minutes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -489,6 +490,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
         daily_sf_target: parseFloat(dailyTarget) || 0,
         total_sf_target: parseFloat(totalTarget) || 0,
         cost: cost === '' ? null : (parseFloat(cost) || null),
+        lunch_break_minutes: lunchBreak === '' ? null : (parseFloat(lunchBreak) || null),
       }
       // .select().single() the same way JobSettingsModal does — a blocked
       // update should surface as a real error, not silently revert the
@@ -553,6 +555,14 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
           <div>
             <label className="label">Contract Cost ($)</label>
             <input className="input" type="number" min="0" value={cost} onChange={e => setCost(e.target.value)} placeholder="e.g. 500000" />
+          </div>
+          <div>
+            {/* Deducted per crew member from a session's logged hours when
+                the Sheet Report computes man-hours (Total Hours column and
+                SF/Man-Hour) — the session itself still keeps the raw crew
+                size and hours exactly as entered. */}
+            <label className="label">Lunch Break (minutes)</label>
+            <input className="input" type="number" min="0" value={lunchBreak} onChange={e => setLunchBreak(e.target.value)} placeholder="e.g. 30" />
           </div>
 
           {error && (

@@ -297,6 +297,7 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
   const [dailyTarget, setDailyTarget] = useState(project.daily_sf_target ?? '')
   const [totalTarget, setTotalTarget] = useState(project.total_sf_target ?? '')
   const [cost, setCost] = useState(project.cost ?? '')
+  const [lunchBreak, setLunchBreak] = useState(project.lunch_break_minutes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -312,6 +313,7 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
         status,
         daily_sf_target: parseFloat(dailyTarget) || 0,
         total_sf_target: parseFloat(totalTarget) || 0,
+        lunch_break_minutes: lunchBreak === '' ? null : (parseFloat(lunchBreak) || null),
       }
       if (canEditCost) patch.cost = cost === '' ? null : (parseFloat(cost) || null)
       const { data, error: sErr } = await supabase.from('projects').update(patch).eq('id', project.id).select().single()
@@ -367,6 +369,14 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
               disabled={!canEditCost}
               placeholder="e.g. 500000"
             />
+          </div>
+          <div>
+            {/* Deducted per crew member from a session's logged hours when
+                the Sheet Report computes man-hours (Total Hours column and
+                SF/Man-Hour) — the session itself still keeps the raw crew
+                size and hours exactly as entered. */}
+            <label className="label">Lunch Break (minutes)</label>
+            <input className="input" type="number" min="0" value={lunchBreak} onChange={e => setLunchBreak(e.target.value)} placeholder="e.g. 30" />
           </div>
 
           {error && (

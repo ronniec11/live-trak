@@ -350,6 +350,7 @@ export default function Canvas() {
     let projectName        = ''
     let projectDescription = ''  // e.g. "Final Clean" — the scope's own name/description
     let jobName             = ''  // the scope's parent project (job) — the Sheet Report's real "Project name"
+    let lunchBreakMinutes   = 0   // per-crew-member deduction applied to man-hours in the Sheet Report (see Scope Settings)
     let calYear         = 0
     let calMonth        = 0
     let calSelectedDate = null
@@ -3479,12 +3480,19 @@ export default function Canvas() {
         : 'All Time'
       const snapshot = await buildSheetSnapshot(included)
 
-      // Man-hours is per-session crew×hours, summed — not a plain sum of
-      // each session's crew or hours (dropped from the Total row entirely;
-      // neither means anything added straight across sessions once crew
-      // size or duration vary). This is what drives SF/Man-Hour below, and
-      // also shows per row and totaled as its own Total Hours column.
-      const totalManHours = included.reduce((a, s) => a + (s.crewSize || 0) * (s.hoursWorked || 0), 0)
+      // Man-hours is per-session crew×(hours - lunch break), summed — not a
+      // plain sum of each session's crew or hours (dropped from the Total
+      // row entirely; neither means anything added straight across
+      // sessions once crew size or duration vary). The lunch break (Scope
+      // Settings, minutes/crew member) comes off each session's hours
+      // before multiplying by crew — a session logged as "10 people, 10
+      // hours" with a 30-minute lunch nets 10 x 9.5 = 95 man-hours, not
+      // 100. Sessions keep their raw crew/hours exactly as entered; only
+      // this derived figure (and what it feeds — Total Hours, SF/Man-Hour)
+      // reflects the deduction.
+      const lunchHours = lunchBreakMinutes / 60
+      const sessionManHours = s => (s.crewSize || 0) * Math.max(0, (s.hoursWorked || 0) - lunchHours)
+      const totalManHours = included.reduce((a, s) => a + sessionManHours(s), 0)
 
       lastReportData = {
         sheetName: activePage.name,
@@ -3500,8 +3508,9 @@ export default function Canvas() {
         rows: included.map(s => ({
           date: formatDate(s.date), time: s.time || '', name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
-          manHours: (s.crewSize || 0) * (s.hoursWorked || 0),
+          manHours: sessionManHours(s),
         })),
+        lunchBreakMinutes,
         // Flattened across all included sessions — each photo keeps its own
         // session's color so it's still clear which session it came from
         // once they're all shown together.
@@ -3544,7 +3553,10 @@ export default function Canvas() {
     // Shared by the on-screen view and the printable version.
     function reportRatesHtml(data, cls) {
       const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
-      return `<div class="${cls}">SF / Man-Hour: <strong>${rate(data.sfPerManHour)}</strong> &nbsp;&nbsp;•&nbsp;&nbsp; SF / Day: <strong>${rate(data.sfPerDay)}</strong></div>`
+      const lunchNote = data.lunchBreakMinutes > 0
+        ? ` &nbsp;&nbsp;•&nbsp;&nbsp; <span style="opacity:0.7;">${data.lunchBreakMinutes}-minute lunch/person deducted from man-hours</span>`
+        : ''
+      return `<div class="${cls}">SF / Man-Hour: <strong>${rate(data.sfPerManHour)}</strong> &nbsp;&nbsp;•&nbsp;&nbsp; SF / Day: <strong>${rate(data.sfPerDay)}</strong>${lunchNote}</div>`
     }
     // Each photo's border is tinted with its own session's color, same
     // color used for that session's dot/snapshot markup, so it's still
@@ -4270,7 +4282,7 @@ export default function Canvas() {
         // Load project target and apply it before the progress bar renders
         const { data: projectData, error: projErr } = await supabase
           .from('projects')
-          .select('name, description, daily_sf_target, total_sf_target, cost, job_id')
+          .select('name, description, daily_sf_target, total_sf_target, cost, job_id, lunch_break_minutes')
           .eq('id', pg.project_id)
           .single()
         if (projErr) throw projErr
@@ -4299,6 +4311,7 @@ export default function Canvas() {
       }
       projectName = project?.name || ''
       projectDescription = project?.description || ''
+      lunchBreakMinutes = project?.lunch_break_minutes || 0
       // Best-effort, separate from the project fetch above so a hiccup here
       // (or a job_id that doesn't resolve) can never take down the whole
       // sheet load — the Sheet Report title just falls back to the scope's
