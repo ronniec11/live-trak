@@ -289,8 +289,16 @@ function JobSettingsModal({ job, onClose, onSaved }) {
         address: address.trim() || null,
         status,
       }
-      const { error: sErr } = await supabase.from('jobs').update(patch).eq('id', job.id)
+      // .select().single() on purpose — a plain .update() with no .select()
+      // returns success with an empty result if RLS blocks the row (a
+      // WHERE/policy match of zero rows is not an error to Postgres), which
+      // is exactly why this looked like it saved (the local onSaved(patch)
+      // below still ran) but reverted the moment the job was reloaded from
+      // the database. Asking for the row back turns that silent no-op into
+      // a real, visible error instead.
+      const { data, error: sErr } = await supabase.from('jobs').update(patch).eq('id', job.id).select().single()
       if (sErr) throw sErr
+      if (!data) throw new Error('Nothing was saved — you may not have permission to edit this job (check the jobs table\'s RLS update policy).')
       onSaved(patch)
       onClose()
     } catch (err) {
@@ -574,12 +582,13 @@ export default function JobDetail() {
             </svg>
           </button>
           <div className="flex-1 min-w-0">
+            {/* GC name / address stay in Project Settings only for now
+                (not shown here) — flagged as not wanted under the job
+                name in the header. */}
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
               <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
             </div>
-            {job.gc_name && <p className="text-sm text-muted mt-0.5">GC: {job.gc_name}</p>}
-            {job.address && <p className="text-sm text-muted">{job.address}</p>}
           </div>
         </div>
       </div>
