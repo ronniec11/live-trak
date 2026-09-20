@@ -574,6 +574,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
 function JobSettingsModal({ job, onClose, onSaved }) {
   const [name, setName] = useState(job.name || '')
   const [gcName, setGcName] = useState(job.gc_name || '')
+  const [ownerName, setOwnerName] = useState(job.owner_name || '')
   const [address, setAddress] = useState(job.address || '')
   const [status, setStatus] = useState(job.status || 'active')
   const [saving, setSaving] = useState(false)
@@ -589,6 +590,7 @@ function JobSettingsModal({ job, onClose, onSaved }) {
       const patch = {
         name: trimmedName,
         gc_name: gcName.trim() || null,
+        owner_name: ownerName.trim() || null,
         address: address.trim() || null,
         status,
       }
@@ -629,8 +631,12 @@ function JobSettingsModal({ job, onClose, onSaved }) {
             <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Job name" required />
           </div>
           <div>
-            <label className="label">GC Name</label>
+            <label className="label">General Contractor</label>
             <input className="input" value={gcName} onChange={e => setGcName(e.target.value)} placeholder="e.g. DPR Construction" />
+          </div>
+          <div>
+            <label className="label">Owner</label>
+            <input className="input" value={ownerName} onChange={e => setOwnerName(e.target.value)} placeholder="e.g. Bosque" />
           </div>
           <div>
             <label className="label">Project Address</label>

@@ -23,7 +23,7 @@ const GripIcon = () => (
 )
 
 function CreateProjectModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', gc_name: '', address: '', status: 'active' })
+  const [form, setForm] = useState({ name: '', gc_name: '', owner_name: '', address: '', status: 'active' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -40,6 +40,7 @@ function CreateProjectModal({ onClose, onCreated }) {
           organization_id: ORGANIZATION_ID,
           name: form.name.trim(),
           gc_name: form.gc_name.trim() || null,
+          owner_name: form.owner_name.trim() || null,
           address: form.address.trim() || null,
           status: form.status,
         })
@@ -73,8 +74,12 @@ function CreateProjectModal({ onClose, onCreated }) {
             <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. CyrusOne DFW10" required />
           </div>
           <div>
-            <label className="label">GC Name</label>
+            <label className="label">General Contractor</label>
             <input className="input" value={form.gc_name} onChange={e => set('gc_name', e.target.value)} placeholder="e.g. DPR Construction" />
+          </div>
+          <div>
+            <label className="label">Owner</label>
+            <input className="input" value={form.owner_name} onChange={e => set('owner_name', e.target.value)} placeholder="e.g. Bosque" />
           </div>
           <div>
             <label className="label">Project Address</label>
@@ -186,6 +191,9 @@ function ProjectCard({ job, totalSF, activeScopeCount, onClick, canReorder, isDr
           <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
           {job.gc_name && (
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">GC: {job.gc_name}</p>
+          )}
+          {job.owner_name && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">Owner: {job.owner_name}</p>
           )}
         </div>
         <span className={`${badgeClass(job.status)} ml-2 shrink-0 capitalize`}>{job.status || 'active'}</span>
