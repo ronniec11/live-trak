@@ -15,8 +15,8 @@ const REPORT_COLUMNS = [
   { key: 'countItems', label: 'Count Items' },
   { key: 'crewSize', label: 'Crew Size' },
   { key: 'hoursWorked', label: 'Hours Worked' },
+  { key: 'totalHours', label: 'Total Hours' },
   { key: 'sfPerPersonHour', label: 'SF per Person-Hour' },
-  { key: 'photoCount', label: 'Photos' },
 ]
 
 function todayISO() {
@@ -44,7 +44,13 @@ function shapeRow(s) {
   const hours = s.hours_worked ?? null
   const sf = parseFloat(s.sf) || 0
   const lf = parseFloat(s.lf) || 0
-  const sfPerPersonHour = (crew > 0 && hours > 0) ? sf / (crew * hours) : null
+  // Same lunch-break deduction as the Sheet Report (Canvas.jsx) — Scope
+  // Settings' Lunch Break (minutes) comes off each session's hours before
+  // multiplying by crew, so Total Hours (and SF/Person-Hour, derived from
+  // it) reflect actual production time, not raw crew x hours.
+  const lunchHours = (s.pages?.projects?.lunch_break_minutes || 0) / 60
+  const totalHours = (crew > 0 && hours > 0) ? crew * Math.max(0, hours - lunchHours) : null
+  const sfPerPersonHour = totalHours > 0 ? sf / totalHours : null
   return {
     person: s.profiles?.full_name || 'Unknown',
     project: s.pages?.projects?.name || '',
@@ -56,8 +62,8 @@ function shapeRow(s) {
     countItems: countItemsFor(s.count_data),
     crewSize: crew ?? '',
     hoursWorked: hours ?? '',
+    totalHours: totalHours != null ? totalHours.toFixed(1) : '',
     sfPerPersonHour: sfPerPersonHour != null ? sfPerPersonHour.toFixed(1) : '',
-    photoCount: Array.isArray(s.photos) ? s.photos.length : 0,
   }
 }
 
@@ -110,10 +116,19 @@ export default function Reports() {
       const pageIds = (pgs || []).map(p => p.id)
       if (pageIds.length === 0) { setRows([]); setHasRun(true); return }
 
-      const FULL_COLUMNS = 'id, page_id, user_id, name, sf, lf, work_date, created_at, count_data, crew_size, hours_worked, photos, profiles(full_name), pages(name, project_id, projects(name))'
-      const NO_PHOTOS_COLUMNS = 'id, page_id, user_id, name, sf, lf, work_date, created_at, count_data, crew_size, hours_worked, profiles(full_name), pages(name, project_id, projects(name))'
-      const NO_LF_COLUMNS = 'id, page_id, user_id, name, sf, work_date, created_at, count_data, crew_size, hours_worked, profiles(full_name), pages(name, project_id, projects(name))'
-      const MINIMAL_COLUMNS = 'id, page_id, user_id, name, sf, work_date, created_at, count_data, profiles(full_name), pages(name, project_id, projects(name))'
+      // lf, crew_size/hours_worked, and lunch_break_minutes are independent
+      // migrations — any subset might not have been run yet, so each flag
+      // falls back on its own rather than assuming they're all missing
+      // together (see the one-at-a-time retries below).
+      function buildColumns({ lf = true, crewHours = true, lunch = true } = {}) {
+        const cols = ['id', 'page_id', 'user_id', 'name', 'sf']
+        if (lf) cols.push('lf')
+        cols.push('work_date', 'created_at', 'count_data')
+        if (crewHours) cols.push('crew_size', 'hours_worked')
+        cols.push('profiles(full_name)')
+        cols.push(`pages(name, project_id, projects(name${lunch ? ', lunch_break_minutes' : ''}))`)
+        return cols.join(', ')
+      }
 
       function buildQuery(columns) {
         let q = supabase.from('sessions').select(columns).in('page_id', pageIds)
@@ -123,26 +138,26 @@ export default function Reports() {
         return q
       }
 
-      let { data, error: sessErr } = await buildQuery(FULL_COLUMNS)
+      const flags = { lf: true, crewHours: true, lunch: true }
+      let { data, error: sessErr } = await buildQuery(buildColumns(flags))
       let missingMigration = false
-      // photos, lf, and crew_size/hours_worked are three independent
-      // migrations — any subset might not have been run yet, so these fall
-      // back one at a time rather than assuming they're always missing together.
-      if (sessErr && /\bphotos\b/.test(sessErr.message)) {
-        console.warn('[Reports] photos column not found, retrying without it — run the migration noted in Canvas.jsx / supabase-schema.sql.')
-        missingMigration = true
-        ;({ data, error: sessErr } = await buildQuery(NO_PHOTOS_COLUMNS))
-      }
       if (sessErr && /\blf\b/.test(sessErr.message)) {
         console.warn('[Reports] lf column not found, retrying without it — run the migration noted in Canvas.jsx / supabase-schema.sql.')
         missingMigration = true
-        ;({ data, error: sessErr } = await buildQuery(NO_LF_COLUMNS))
+        flags.lf = false
+        ;({ data, error: sessErr } = await buildQuery(buildColumns(flags)))
       }
       if (sessErr && /crew_size|hours_worked/.test(sessErr.message)) {
-        // Pre-migration DB — retry without the not-yet-existing columns.
         console.warn('[Reports] crew_size/hours_worked columns not found, retrying without them — run the migration noted in Canvas.jsx / supabase-schema.sql.')
         missingMigration = true
-        ;({ data, error: sessErr } = await buildQuery(MINIMAL_COLUMNS))
+        flags.crewHours = false
+        ;({ data, error: sessErr } = await buildQuery(buildColumns(flags)))
+      }
+      if (sessErr && /lunch_break_minutes/.test(sessErr.message)) {
+        console.warn('[Reports] lunch_break_minutes column not found, retrying without it — run supabase-migration-lunch-break.sql.')
+        missingMigration = true
+        flags.lunch = false
+        ;({ data, error: sessErr } = await buildQuery(buildColumns(flags)))
       }
       if (sessErr) throw sessErr
       setMigrationMissing(missingMigration)
@@ -235,7 +250,7 @@ export default function Reports() {
 
         {!error && hasRun && migrationMissing && (
           <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-800 dark:text-yellow-200">
-            Some columns (Linear Footage, Crew Size / Hours Worked, and/or Photos) don't exist in the database yet, so those fields are blank below for every row. Run the migrations noted in Canvas.jsx / supabase-schema.sql (ALTER TABLE ... lf / lf_data / crew_size / hours_worked / photos) in the Supabase SQL editor, then run this report again.
+            Some columns (Linear Footage, Crew Size / Hours Worked, and/or Lunch Break) don't exist in the database yet, so those fields are blank (or Total Hours is un-adjusted) below for every row. Run the migrations noted in Canvas.jsx / supabase-schema.sql and supabase-migration-lunch-break.sql in the Supabase SQL editor, then run this report again.
           </div>
         )}
 
@@ -264,8 +279,8 @@ export default function Reports() {
                     <th className="py-2 pr-4 text-right">Count</th>
                     <th className="py-2 pr-4 text-right">Crew</th>
                     <th className="py-2 pr-4 text-right">Hours</th>
+                    <th className="py-2 pr-4 text-right">Total Hours</th>
                     <th className="py-2 pr-4 text-right">SF/Person-Hr</th>
-                    <th className="py-2 pr-4 text-right">Photos</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -281,8 +296,8 @@ export default function Reports() {
                       <td className="py-2 pr-4 text-right">{r.countItems || '—'}</td>
                       <td className="py-2 pr-4 text-right">{r.crewSize || '—'}</td>
                       <td className="py-2 pr-4 text-right">{r.hoursWorked || '—'}</td>
+                      <td className="py-2 pr-4 text-right">{r.totalHours || '—'}</td>
                       <td className="py-2 pr-4 text-right">{r.sfPerPersonHour || '—'}</td>
-                      <td className="py-2 pr-4 text-right">{r.photoCount || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
