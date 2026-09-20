@@ -521,13 +521,12 @@ export default function JobDetail() {
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="flex items-start gap-3 mb-6">
-          <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
+          <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-2 shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
             </svg>
           </button>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-muted uppercase tracking-wider">{job.organizations?.name}</p>
             {editingJob ? (
                 <div className="space-y-1.5 mt-1 max-w-sm">
                   <input
@@ -565,8 +564,8 @@ export default function JobDetail() {
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h1 className="text-xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{job.name}</h1>
                     <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
                     {canManage && (
                       <button onClick={openEditJob} className="btn-ghost p-0.5 opacity-60 hover:opacity-100" title="Edit job">
