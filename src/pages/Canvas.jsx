@@ -3774,6 +3774,16 @@ export default function Canvas() {
           headStyles: { fontSize: 7, textColor: '#6b7280', fontStyle: 'bold', fillColor: false },
           footStyles: { fontStyle: 'bold', textColor: '#1c1c1a', fillColor: false, lineWidth: { top: 0.02 } },
           columnStyles,
+          // Right-alignment from columnStyles wasn't reliably reaching the
+          // foot row (its "Total" figures rendered a bit left of where the
+          // body's right-aligned numbers above them landed) — forcing it
+          // here, after normal style resolution, guarantees the foot
+          // matches every numeric column's alignment above it exactly.
+          didParseCell(hook) {
+            if (hook.section !== 'foot') return
+            const wanted = columnStyles[hook.column.index]?.halign
+            if (wanted) hook.cell.styles.halign = wanted
+          },
           // Each session's color dot, same as the on-screen report — the
           // extra left cellPadding on the Session column (above) is the
           // room reserved for it so it doesn't overlap the name.
