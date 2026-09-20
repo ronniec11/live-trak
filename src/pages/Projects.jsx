@@ -8,12 +8,6 @@ import { supabase } from '../lib/supabase'
 // coded rather than built out into an org switcher nobody needs yet.
 const ORGANIZATION_ID = '2fc904e9-daa0-4d4d-8fb3-85fb0e84360e'
 
-function badgeClass(status) {
-  if (status === 'active') return 'badge-active'
-  if (status === 'completed') return 'badge-completed'
-  return 'badge-on-hold'
-}
-
 const GripIcon = () => (
   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
     <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
@@ -110,7 +104,7 @@ function CreateProjectModal({ onClose, onCreated }) {
   )
 }
 
-function ProjectCard({ job, totalSF, activeScopeCount, onClick, canReorder, isDragging, isDropTarget, onDragStart }) {
+function ProjectCard({ job, onClick, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same as the Scopes
@@ -175,7 +169,7 @@ function ProjectCard({ job, totalSF, activeScopeCount, onClick, canReorder, isDr
       } ${isDropTarget ? 'ring-2 ring-accent' : ''} ${pressing ? 'scale-[0.98]' : ''}`}
       style={{ WebkitTouchCallout: 'none' }}
     >
-      <div className="flex items-start justify-between mb-3">
+      <div className="flex items-center justify-between">
         {canReorder && (
           <button
             onPointerDown={e => { e.stopPropagation(); onDragStart(e, job.id) }}
@@ -187,31 +181,8 @@ function ProjectCard({ job, totalSF, activeScopeCount, onClick, canReorder, isDr
             <GripIcon />
           </button>
         )}
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
-          {job.owner_name && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">Owner: {job.owner_name}</p>
-          )}
-        </div>
-        <span className={`${badgeClass(job.status)} ml-2 shrink-0 capitalize`}>{job.status || 'active'}</span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="bg-surface-2 rounded-lg p-2.5">
-          <p className="text-xs text-muted mb-0.5">Total SF</p>
-          <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-            {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-xs font-normal text-muted">SF</span>
-          </p>
-        </div>
-        <div className="bg-surface-2 rounded-lg p-2.5">
-          <p className="text-xs text-muted mb-0.5">Active Scopes</p>
-          <p className="text-sm font-semibold text-accent">{activeScopeCount}</p>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between pt-3 border-t border-border">
-        <span className="text-xs text-muted">Click to open project</span>
-        <svg className="w-4 h-4 text-muted group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <h3 className="flex-1 min-w-0 font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
+        <svg className="w-4 h-4 text-muted group-hover:text-accent transition-colors shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
       </div>
@@ -224,8 +195,6 @@ export default function Projects() {
   const navigate = useNavigate()
   const [orgName, setOrgName] = useState('')
   const [jobs, setJobs] = useState([])
-  const [sfByJob, setSfByJob] = useState({})
-  const [activeScopesByJob, setActiveScopesByJob] = useState({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
@@ -327,50 +296,6 @@ export default function Projects() {
 
       setJobs(jobsData || [])
       setOrgName(jobsData?.[0]?.organizations?.name || '')
-
-      const jobIds = (jobsData || []).map(j => j.id)
-      if (jobIds.length === 0) { setSfByJob({}); setActiveScopesByJob({}); return }
-
-      // Scopes (projects) under these jobs — needed for both the active-
-      // scope count and to map each page/session back to its job.
-      const { data: scopes } = await supabase
-        .from('projects')
-        .select('id, job_id, status')
-        .in('job_id', jobIds)
-
-      const activeMap = {}
-      const scopeToJob = {}
-      ;(scopes || []).forEach(s => {
-        scopeToJob[s.id] = s.job_id
-        if (s.status === 'active') activeMap[s.job_id] = (activeMap[s.job_id] || 0) + 1
-      })
-      setActiveScopesByJob(activeMap)
-
-      const scopeIds = Object.keys(scopeToJob)
-      if (scopeIds.length === 0) { setSfByJob({}); return }
-
-      const { data: pages } = await supabase
-        .from('pages')
-        .select('id, project_id')
-        .in('project_id', scopeIds)
-
-      const pageToJob = {}
-      ;(pages || []).forEach(pg => { pageToJob[pg.id] = scopeToJob[pg.project_id] })
-      const pageIds = Object.keys(pageToJob)
-      if (pageIds.length === 0) { setSfByJob({}); return }
-
-      const { data: sessions } = await supabase
-        .from('sessions')
-        .select('page_id, sf')
-        .in('page_id', pageIds)
-
-      const sfMap = {}
-      ;(sessions || []).forEach(sess => {
-        const jobId = pageToJob[sess.page_id]
-        if (!jobId) return
-        sfMap[jobId] = (sfMap[jobId] || 0) + (parseFloat(sess.sf) || 0)
-      })
-      setSfByJob(sfMap)
     } catch (err) {
       console.error('[Jobs] loadJobs error:', err)
       setLoadError(err.message || 'Failed to load jobs. Please try refreshing.')
@@ -457,12 +382,7 @@ export default function Projects() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => (
               <div key={i} className="card animate-pulse">
-                <div className="h-5 bg-surface-3 rounded w-3/4 mb-3" />
-                <div className="h-4 bg-surface-3 rounded w-1/2 mb-4" />
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div className="h-14 bg-surface-3 rounded-lg" />
-                  <div className="h-14 bg-surface-3 rounded-lg" />
-                </div>
+                <div className="h-5 bg-surface-3 rounded w-3/4" />
               </div>
             ))}
           </div>
@@ -497,8 +417,6 @@ export default function Projects() {
               <ProjectCard
                 key={job.id}
                 job={job}
-                totalSF={sfByJob[job.id] || 0}
-                activeScopeCount={activeScopesByJob[job.id] || 0}
                 onClick={() => navigate(`/projects/${job.id}`)}
                 canReorder={canReorder}
                 isDragging={dragId === job.id}
