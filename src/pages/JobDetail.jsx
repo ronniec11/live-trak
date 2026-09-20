@@ -518,7 +518,7 @@ export default function JobDetail() {
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="px-6 sm:px-8 py-6">
         {/* Header */}
         <div className="flex items-start gap-3 mb-6">
           <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-2 shrink-0">
@@ -615,7 +615,7 @@ export default function JobDetail() {
                 <p className="text-gray-500 dark:text-gray-400 font-medium">No scopes on this job yet</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                 {scopes.map(scope => (
                   <ScopeCard
                     key={scope.id}
