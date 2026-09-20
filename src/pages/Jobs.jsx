@@ -14,6 +14,89 @@ function badgeClass(status) {
   return 'badge-on-hold'
 }
 
+function CreateJobModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({ name: '', gc_name: '', address: '', status: 'active' })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const { data: job, error: jErr } = await supabase
+        .from('jobs')
+        .insert({
+          organization_id: ORGANIZATION_ID,
+          name: form.name.trim(),
+          gc_name: form.gc_name.trim() || null,
+          address: form.address.trim() || null,
+          status: form.status,
+        })
+        .select()
+        .single()
+      if (jErr) throw jErr
+      onCreated(job)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">New Job</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="label">Job Name *</label>
+            <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. CyrusOne DFW10" required />
+          </div>
+          <div>
+            <label className="label">GC Name</label>
+            <input className="input" value={form.gc_name} onChange={e => set('gc_name', e.target.value)} placeholder="e.g. DPR Construction" />
+          </div>
+          <div>
+            <label className="label">Address</label>
+            <input className="input" value={form.address} onChange={e => set('address', e.target.value)} placeholder="e.g. 123 Main St, Dallas, TX" />
+          </div>
+          <div>
+            <label className="label">Status</label>
+            <select className="input" value={form.status} onChange={e => set('status', e.target.value)}>
+              <option value="active">Active</option>
+              <option value="completed">Completed</option>
+              <option value="on hold">On Hold</option>
+            </select>
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={loading} className="btn-primary flex-1">
+              {loading ? 'Creating...' : 'Create Job'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function JobCard({ job, totalSF, activeScopeCount, onClick }) {
   return (
     <div
@@ -54,7 +137,7 @@ function JobCard({ job, totalSF, activeScopeCount, onClick }) {
 }
 
 export default function Jobs() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const navigate = useNavigate()
   const [orgName, setOrgName] = useState('')
   const [jobs, setJobs] = useState([])
@@ -64,6 +147,9 @@ export default function Jobs() {
   const [loadError, setLoadError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [showCreate, setShowCreate] = useState(false)
+
+  const canCreate = profile?.role === 'admin'
 
   async function loadJobs() {
     setLoading(true)
@@ -152,6 +238,14 @@ export default function Jobs() {
               {jobs.length} {jobs.length === 1 ? 'job' : 'jobs'}
             </p>
           </div>
+          {canCreate && (
+            <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-1.5 self-start sm:self-auto">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New Job
+            </button>
+          )}
         </div>
 
         {/* Filters */}
@@ -236,6 +330,13 @@ export default function Jobs() {
           </div>
         )}
       </div>
+
+      {showCreate && (
+        <CreateJobModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => loadJobs()}
+        />
+      )}
     </Layout>
   )
 }
