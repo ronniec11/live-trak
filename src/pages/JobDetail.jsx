@@ -21,6 +21,15 @@ function badgeClass(status) {
   return 'badge-on-hold'
 }
 
+// Same shape-handling as Reports.jsx's countItemsFor — count_data is a
+// bare array of markers on older sessions, or {markers, w, h} on newer
+// ones (added once the count tool started needing to rescale markers
+// against a resized image).
+function countItemsFor(countData) {
+  if (Array.isArray(countData)) return countData.length
+  return countData?.markers?.length ?? 0
+}
+
 // Tap-to-change status badge, matching the one already on Projects.jsx —
 // same dropdown, same dot colors, so status editing feels identical
 // whether you're looking at a job, a scope, or (on that other page) a
@@ -651,6 +660,7 @@ function JobSettingsModal({ job, onClose, onSaved }) {
 }
 
 function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenSettings, canManageScope }) {
+  const uom = scope.uom || 'SF'
   const dailyPct = scope.daily_sf_target > 0
     ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
     : 0
@@ -695,20 +705,20 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenS
       </div>
 
       <div className="bg-surface-2 rounded-lg p-3 mb-3">
-        <p className="text-xs text-muted mb-0.5">Total SF</p>
+        <p className="text-xs text-muted mb-0.5">Total {uom}</p>
         <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">
           {allTimeSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           {scope.total_sf_target > 0 && (
             <span className="text-sm font-normal text-muted"> / {scope.total_sf_target.toLocaleString()}</span>
           )}
-          <span className="text-xs font-normal text-muted"> SF</span>
+          <span className="text-xs font-normal text-muted"> {uom}</span>
         </p>
       </div>
 
       {/* Daily progress bar (green) */}
       <div className="mb-2">
         <div className="flex justify-between text-xs mb-1">
-          <span className="text-muted">Daily progress · {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF</span>
+          <span className="text-muted">Daily progress · {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })} {uom}</span>
           <span className={dailyPct >= 100 ? 'text-accent font-medium' : 'text-gray-500 dark:text-gray-400'}>
             {scope.daily_sf_target > 0 ? `${dailyPct}%` : '—'}
           </span>
@@ -824,20 +834,28 @@ export default function JobDetail() {
 
       const { data: sessions } = await supabase
         .from('sessions')
-        .select('id, page_id, sf, work_date, created_at, name, color, profiles(full_name, avatar_color)')
+        .select('id, page_id, sf, lf, count_data, work_date, created_at, name, color, profiles(full_name, avatar_color)')
         .in('page_id', pageIds)
         .order('created_at', { ascending: false })
 
       const scopeNameById = Object.fromEntries((scopesData || []).map(s => [s.id, s.name]))
+      // Each scope tracks whatever its own uom is (see Scope Settings) —
+      // a session logged against an LF or Count scope has its real number
+      // in sf/lf/count_data respectively, so the totals below have to read
+      // the field matching that scope's uom, not always sf.
+      const scopeUomById = Object.fromEntries((scopesData || []).map(s => [s.id, s.uom || 'SF']))
       const today = new Date().toLocaleDateString('en-CA')
       const todayMap = {}
       const totalMap = {}
       ;(sessions || []).forEach(s => {
         const scopeId = pageToScope[s.page_id]
         if (!scopeId) return
-        const sf = parseFloat(s.sf) || 0
-        totalMap[scopeId] = (totalMap[scopeId] || 0) + sf
-        if (s.work_date === today) todayMap[scopeId] = (todayMap[scopeId] || 0) + sf
+        const uom = scopeUomById[scopeId] || 'SF'
+        const value = uom === 'LF' ? (parseFloat(s.lf) || 0)
+          : uom === 'Count' ? countItemsFor(s.count_data)
+          : (parseFloat(s.sf) || 0)
+        totalMap[scopeId] = (totalMap[scopeId] || 0) + value
+        if (s.work_date === today) todayMap[scopeId] = (todayMap[scopeId] || 0) + value
       })
       setSfTodayByScope(todayMap)
       setSfTotalByScope(totalMap)
