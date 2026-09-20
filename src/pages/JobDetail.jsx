@@ -5,6 +5,11 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
+// A scope's default unit of measure — not every scope is measured in SF
+// (e.g. base installation is tracked in linear feet, fixture counts in
+// units), so this is what a scope is expected to be tracked in unless a
+// given session's markup says otherwise.
+const UOM_OPTIONS = ['SF', 'LF', 'Count']
 // Austin, TX — used for the weather widget whenever a job has no address
 // set yet, so the widget always has something to show rather than an empty
 // box.
@@ -328,7 +333,7 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
 }
 
 function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', status: 'active', daily_sf_target: '', total_sf_target: '', cost: '' })
+  const [form, setForm] = useState({ name: '', status: 'active', uom: 'SF', daily_sf_target: '', total_sf_target: '', cost: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -353,6 +358,7 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
           name: trimmedName,
           description: trimmedName,
           status: form.status,
+          uom: form.uom,
           daily_sf_target: parseFloat(form.daily_sf_target) || 0,
           total_sf_target: parseFloat(form.total_sf_target) || 0,
           cost: form.cost === '' ? null : parseFloat(form.cost) || null,
@@ -407,19 +413,25 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
               </select>
             </div>
             <div>
-              <label className="label">Daily SF Target</label>
-              <input className="input" type="number" min="0" value={form.daily_sf_target} onChange={e => set('daily_sf_target', e.target.value)} placeholder="5000" />
+              <label className="label">Unit of Measure</label>
+              <select className="input" value={form.uom} onChange={e => set('uom', e.target.value)}>
+                {UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Total SF Target</label>
-              <input className="input" type="number" min="0" value={form.total_sf_target} onChange={e => set('total_sf_target', e.target.value)} placeholder="e.g. 250000" />
+              <label className="label">Daily {form.uom} Target</label>
+              <input className="input" type="number" min="0" value={form.daily_sf_target} onChange={e => set('daily_sf_target', e.target.value)} placeholder="5000" />
             </div>
             <div>
-              <label className="label">Contract Cost ($)</label>
-              <input className="input" type="number" min="0" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 500000" />
+              <label className="label">Total {form.uom} Target</label>
+              <input className="input" type="number" min="0" value={form.total_sf_target} onChange={e => set('total_sf_target', e.target.value)} placeholder="e.g. 250000" />
             </div>
+          </div>
+          <div>
+            <label className="label">Contract Cost ($)</label>
+            <input className="input" type="number" min="0" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 500000" />
           </div>
 
           {error && (
@@ -446,6 +458,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
   // "what is this scope" question again.
   const [name, setName] = useState(scope.description || scope.name || '')
   const [status, setStatus] = useState(scope.status || 'active')
+  const [uom, setUom] = useState(scope.uom || 'SF')
   const [dailyTarget, setDailyTarget] = useState(scope.daily_sf_target ?? '')
   const [totalTarget, setTotalTarget] = useState(scope.total_sf_target ?? '')
   const [cost, setCost] = useState(scope.cost ?? '')
@@ -463,6 +476,7 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
         name: trimmedName,
         description: trimmedName,
         status,
+        uom,
         daily_sf_target: parseFloat(dailyTarget) || 0,
         total_sf_target: parseFloat(totalTarget) || 0,
         cost: cost === '' ? null : (parseFloat(cost) || null),
@@ -507,19 +521,29 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
               </select>
             </div>
             <div>
-              <label className="label">Daily SF Target</label>
-              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="5000" />
+              {/* Not every scope is measured in square feet — base install
+                  is tracked in linear feet, fixture counts in units, etc.
+                  This is what a session in this scope defaults to unless
+                  its own markup says otherwise. */}
+              <label className="label">Unit of Measure</label>
+              <select className="input" value={uom} onChange={e => setUom(e.target.value)}>
+                {UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Total SF Target</label>
-              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
+              <label className="label">Daily {uom} Target</label>
+              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="5000" />
             </div>
             <div>
-              <label className="label">Contract Cost ($)</label>
-              <input className="input" type="number" min="0" value={cost} onChange={e => setCost(e.target.value)} placeholder="e.g. 500000" />
+              <label className="label">Total {uom} Target</label>
+              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
             </div>
+          </div>
+          <div>
+            <label className="label">Contract Cost ($)</label>
+            <input className="input" type="number" min="0" value={cost} onChange={e => setCost(e.target.value)} placeholder="e.g. 500000" />
           </div>
 
           {error && (
