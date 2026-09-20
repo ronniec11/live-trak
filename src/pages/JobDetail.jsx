@@ -518,7 +518,7 @@ export default function JobDetail() {
 
   return (
     <Layout>
-      <div className="px-6 sm:px-8 py-6">
+      <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 py-8">
         {/* Header */}
         <div className="flex items-start gap-3 mb-6">
           <button onClick={() => navigate('/jobs')} className="btn-ghost p-1.5 mt-2 shrink-0">
