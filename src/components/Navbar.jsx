@@ -37,6 +37,16 @@ export default function Navbar() {
               Team
             </Link>
           )}
+          {profile?.role === 'admin' && (
+            <Link
+              to="/hub"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                location.pathname.startsWith('/hub') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
+              }`}
+            >
+              Company Hub
+            </Link>
+          )}
         </nav>
       )}
 

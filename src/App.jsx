@@ -11,6 +11,7 @@ import Canvas from './pages/Canvas'
 import Profile from './pages/Profile'
 import Reports from './pages/Reports'
 import Team from './pages/Team'
+import CompanyHub from './pages/CompanyHub'
 
 // A magic-link click can land on "/" or an unmatched path carrying the
 // session as a #access_token=... hash fragment (see supabase.js — implicit
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/scopes/:projectId" element={<ProtectedRoute><ScopeDetail /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/team" element={<ProtectedRoute><Team /></ProtectedRoute>} />
+            <Route path="/hub" element={<ProtectedRoute><CompanyHub /></ProtectedRoute>} />
             <Route path="/canvas/:pageId" element={<ProtectedRoute><Canvas /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
             <Route path="/" element={<RootRedirect />} />
