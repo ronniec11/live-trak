@@ -303,6 +303,9 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
+            <p className="text-xs text-muted mt-2">
+              * Total Hours already deducts each scope's lunch break (set in Scope Settings) — crew &times; (hours &minus; lunch), not raw crew &times; hours. SF/Person-Hr is calculated from that adjusted figure too.
+            </p>
           </>
         )}
       </div>
