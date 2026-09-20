@@ -189,11 +189,8 @@ function ProjectCard({ job, totalSF, activeScopeCount, onClick, canReorder, isDr
         )}
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
-          {job.gc_name && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">GC: {job.gc_name}</p>
-          )}
           {job.owner_name && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">Owner: {job.owner_name}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">Owner: {job.owner_name}</p>
           )}
         </div>
         <span className={`${badgeClass(job.status)} ml-2 shrink-0 capitalize`}>{job.status || 'active'}</span>
