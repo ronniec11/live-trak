@@ -15,7 +15,7 @@ export default function Login() {
   // resolves. Without this, the user is signed in moments later but just
   // sits on the login form with no indication anything happened.
   useEffect(() => {
-    if (user) navigate('/jobs', { replace: true })
+    if (user) navigate('/projects', { replace: true })
   }, [user, navigate])
 
   async function handleSubmit(e) {
@@ -24,7 +24,7 @@ export default function Login() {
     setLoading(true)
     try {
       await signIn(email, password)
-      navigate('/jobs')
+      navigate('/projects')
     } catch (err) {
       setError(err.message || 'Invalid email or password')
     } finally {

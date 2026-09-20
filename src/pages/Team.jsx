@@ -266,7 +266,7 @@ export default function Team() {
   const canAccessTeam = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
 
   useEffect(() => {
-    if (profile && !canAccessTeam) navigate('/jobs', { replace: true })
+    if (profile && !canAccessTeam) navigate('/projects', { replace: true })
   }, [profile, canAccessTeam, navigate])
 
   async function loadPeople() {

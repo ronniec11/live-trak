@@ -13,19 +13,19 @@ export default function Navbar() {
 
   return (
     <header className="h-14 bg-surface border-b border-border flex items-center px-4 gap-4 shrink-0 z-40">
-      <Link to="/jobs" className="flex items-center group">
+      <Link to="/projects" className="flex items-center group">
         <img src={theme === 'light' ? LiveTrakLogoLight : LiveTrakLogoDark} alt="Live-Trak" className="h-11 w-auto" />
       </Link>
 
       {!isCanvas && (
         <nav className="flex items-center gap-1 ml-2">
           <Link
-            to="/jobs"
+            to="/projects"
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              location.pathname.startsWith('/jobs') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
+              location.pathname.startsWith('/projects') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
             }`}
           >
-            Jobs
+            Projects
           </Link>
           {(profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent') && (
             <Link

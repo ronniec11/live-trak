@@ -81,7 +81,7 @@ export default function Profile() {
       setSaved(true)
       setTimeout(() => {
         setSaved(false)
-        navigate(returnTo || '/jobs', { replace: true })
+        navigate(returnTo || '/projects', { replace: true })
       }, 1000)
     } catch (err) {
       setError(err.message)
