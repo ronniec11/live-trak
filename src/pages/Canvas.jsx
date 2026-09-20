@@ -3583,7 +3583,7 @@ export default function Canvas() {
       const html = `
         <div class="ct-rep-title">${data.label} — <span class="ct-rep-title-scope">${data.scopeLabel}</span></div>
         <div class="ct-rep-desc">${data.sheetName}</div>
-        <div class="ct-rep-sub">${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
+        <div class="ct-rep-sub">Production Tracking Report &nbsp;•&nbsp; ${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
           <colgroup>
@@ -3703,10 +3703,10 @@ export default function Canvas() {
         doc.text(data.sheetName, margin, y)
         y += 0.2
 
-        // Range / generated
+        // "Production Tracking Report" • range • generated
         doc.setFont(undefined, 'normal')
         doc.setFontSize(9)
-        doc.text(`${data.range}    •    Generated ${data.generated}`, margin, y)
+        doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
 
         // Snapshot — capped by height, not just width, same as before:
