@@ -186,18 +186,18 @@ function LocationMap({ location }) {
 // someone with zero scopes on the job — never a partial-membership case
 // that could conflict with project_members' one-row-per-(project,user)
 // constraint.
-function AddMemberModal({ scopeIds, existingMemberIds, onClose, onAdded }) {
-  const [directory, setDirectory] = useState(null) // null = still loading
+// directory is prefetched by JobDetail's loadJobDetail() alongside
+// everything else this page needs, rather than fetched fresh the moment
+// this modal opens — the fetch-then-render gap was exactly the "lag then
+// pop" the Add Team Member button felt like: the modal appeared instantly
+// but sat on a bare "Loading..." for a beat, then the whole list snapped
+// in and pushed the modal's height out all at once. With the directory
+// already in hand, the modal opens already populated.
+function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdded }) {
   const [search, setSearch] = useState('')
   const [addingId, setAddingId] = useState(null)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    supabase.from('profiles').select('*').order('full_name').then(({ data, error: dErr }) => {
-      if (dErr) { setError(dErr.message); setDirectory([]); return }
-      setDirectory((data || []).filter(p => !existingMemberIds.includes(p.id)))
-    })
-  }, [])
+  const [added, setAdded] = useState([]) // ids added this session, hidden immediately without waiting on onAdded's reload
 
   async function addPerson(person) {
     setAddingId(person.id)
@@ -207,7 +207,7 @@ function AddMemberModal({ scopeIds, existingMemberIds, onClose, onAdded }) {
         .from('project_members')
         .insert(scopeIds.map(project_id => ({ project_id, user_id: person.id })))
       if (mErr) throw mErr
-      setDirectory(d => d.filter(p => p.id !== person.id))
+      setAdded(a => [...a, person.id])
       onAdded()
     } catch (err) {
       setError(err.message)
@@ -216,15 +216,16 @@ function AddMemberModal({ scopeIds, existingMemberIds, onClose, onAdded }) {
     }
   }
 
-  const filtered = (directory || []).filter(p => {
+  const available = (directory || []).filter(p => !existingMemberIds.includes(p.id) && !added.includes(p.id))
+  const filtered = available.filter(p => {
     const q = search.trim().toLowerCase()
     if (!q) return true
     return p.full_name?.toLowerCase().includes(q) || p.email?.toLowerCase().includes(q)
   })
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -239,9 +240,8 @@ function AddMemberModal({ scopeIds, existingMemberIds, onClose, onAdded }) {
         />
         {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-3">{error}</div>}
         <div className="flex-1 overflow-auto space-y-1 -mx-2 px-2">
-          {directory === null && <p className="text-sm text-muted">Loading...</p>}
-          {directory !== null && filtered.length === 0 && (
-            <p className="text-sm text-muted">{directory.length === 0 ? 'Everyone in the directory is already on this job.' : 'No matches.'}</p>
+          {filtered.length === 0 && (
+            <p className="text-sm text-muted">{available.length === 0 ? 'Everyone in the directory is already on this job.' : 'No matches.'}</p>
           )}
           {filtered.map(p => (
             <button
@@ -309,8 +309,8 @@ function JobSettingsModal({ job, onClose, onSaved }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Project Settings</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -448,6 +448,7 @@ export default function JobDetail() {
   const [todaySessions, setTodaySessions] = useState([])
   const [recentSessions, setRecentSessions] = useState([])
   const [members, setMembers] = useState([])
+  const [directory, setDirectory] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
@@ -463,15 +464,21 @@ export default function JobDetail() {
     setLoading(true)
     setLoadError('')
     try {
-      const [{ data: jobData, error: jobErr }, { data: scopesData, error: scopesErr }] = await Promise.all([
+      // The profile directory (for Add Team Member) is fetched here, up
+      // front with everything else this page needs, rather than only once
+      // that modal opens — an org's directory doesn't change mid-visit, so
+      // there's no reason to make "+ Add" wait on a fresh fetch every time.
+      const [{ data: jobData, error: jobErr }, { data: scopesData, error: scopesErr }, { data: directoryData }] = await Promise.all([
         supabase.from('jobs').select('*, organizations(name)').eq('id', jobId).single(),
         supabase.from('projects').select('*').eq('job_id', jobId).order('created_at', { ascending: false }),
+        supabase.from('profiles').select('*').order('full_name'),
       ])
       if (jobErr) throw jobErr
       if (scopesErr) throw scopesErr
 
       setJob(jobData)
       setScopes(scopesData || [])
+      setDirectory(directoryData || [])
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
@@ -761,6 +768,7 @@ export default function JobDetail() {
 
       {showAddMember && (
         <AddMemberModal
+          directory={directory}
           scopeIds={scopes.map(s => s.id)}
           existingMemberIds={members.map(m => m.id)}
           onClose={() => setShowAddMember(false)}

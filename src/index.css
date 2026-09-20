@@ -148,3 +148,24 @@
 .progress-bar {
   animation: progress-fill 0.8s ease-out forwards;
 }
+
+/* Modal open transition — every modal's backdrop/panel pair (fixed inset-0
+   bg-black/60 ... + the bg-surface panel inside it) previously appeared
+   with a hard, instant snap; fading the backdrop in and fading+scaling the
+   panel in over the same short duration this app already uses for other
+   transitions (150-200ms) reads as a deliberate open instead of a stutter. */
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+}
+
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+}
+
+.modal-backdrop {
+  animation: modal-backdrop-in 0.15s ease-out;
+}
+
+.modal-panel {
+  animation: modal-panel-in 0.18s ease-out;
+}
