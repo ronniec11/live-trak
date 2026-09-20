@@ -3478,6 +3478,14 @@ export default function Canvas() {
         : 'All Time'
       const snapshot = await buildSheetSnapshot(included)
 
+      // Man-hours is per-session crew×hours, summed — not totalCrew×totalHours,
+      // which would be wrong whenever crew size or hours vary session to
+      // session. This is what actually drives SF/Man-Hour below; the plain
+      // "Hours" column/total (sum of each session's duration) doesn't mean
+      // anything on its own once crew size varies, so the report also shows
+      // this per row and totaled, not just folded into that one ratio.
+      const totalManHours = included.reduce((a, s) => a + (s.crewSize || 0) * (s.hoursWorked || 0), 0)
+
       lastReportData = {
         sheetName: activePage.name,
         label: projectName || activePage.name || 'Floor Plan',
@@ -3487,6 +3495,7 @@ export default function Canvas() {
         rows: included.map(s => ({
           date: formatDate(s.date), time: s.time || '', name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
+          manHours: (s.crewSize || 0) * (s.hoursWorked || 0),
         })),
         // Flattened across all included sessions — each photo keeps its own
         // session's color so it's still clear which session it came from
@@ -3496,16 +3505,14 @@ export default function Canvas() {
         totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
         totalCrew:  included.reduce((a, s) => a + (s.crewSize || 0), 0),
         totalHours: included.reduce((a, s) => a + (s.hoursWorked || 0), 0),
-        // Man-hours is per-session crew×hours, summed — not totalCrew×totalHours,
-        // which would be wrong whenever crew size or hours vary session to
-        // session. sfPerDay divides by DISTINCT calendar days actually worked
-        // in the included sessions (not the date range's span), so a report
-        // scoped to a week with only 2 working days in it isn't diluted by
-        // the other 5.
+        totalManHours,
+        // sfPerDay divides by DISTINCT calendar days actually worked in the
+        // included sessions (not the date range's span), so a report scoped
+        // to a week with only 2 working days in it isn't diluted by the
+        // other 5.
         sfPerManHour: (() => {
-          const manHours = included.reduce((a, s) => a + (s.crewSize || 0) * (s.hoursWorked || 0), 0)
           const sf = included.reduce((a, s) => a + s.sf, 0)
-          return manHours > 0 ? sf / manHours : null
+          return totalManHours > 0 ? sf / totalManHours : null
         })(),
         sfPerDay: (() => {
           const days = new Set(included.map(s => s.date)).size
@@ -3528,6 +3535,7 @@ export default function Canvas() {
           <td class="${numClass}">${r.lf ? Math.round(r.lf).toLocaleString() : '–'}</td>
           <td class="${numClass}">${r.crew || '–'}</td>
           <td class="${numClass}">${r.hours ? r.hours.toFixed(1) : '–'}</td>
+          <td class="${numClass}">${r.manHours ? r.manHours.toFixed(1) : '–'}</td>
         </tr>`).join('')
     }
     // Shared by the on-screen view and the printable version.
@@ -3563,6 +3571,7 @@ export default function Canvas() {
               <th class="ct-rep-num">LF</th>
               <th class="ct-rep-num">Crew</th>
               <th class="ct-rep-num">Hours</th>
+              <th class="ct-rep-num">Total Hours</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -3575,6 +3584,7 @@ export default function Canvas() {
               <td class="ct-rep-num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
               <td class="ct-rep-num">${data.totalCrew || '–'}</td>
               <td class="ct-rep-num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
+              <td class="ct-rep-num">${data.totalManHours ? data.totalManHours.toFixed(1) : '–'}</td>
             </tr>
           </tfoot>
         </table>
@@ -3649,6 +3659,7 @@ export default function Canvas() {
         <th class="num">LF</th>
         <th class="num">Crew</th>
         <th class="num">Hours</th>
+        <th class="num">Total Hours</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -3661,6 +3672,7 @@ export default function Canvas() {
         <td class="num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
         <td class="num">${data.totalCrew || '–'}</td>
         <td class="num">${data.totalHours ? data.totalHours.toFixed(1) : '–'}</td>
+        <td class="num">${data.totalManHours ? data.totalManHours.toFixed(1) : '–'}</td>
       </tr>
     </tfoot>
   </table>
