@@ -69,7 +69,7 @@ function CreateJobModal({ onClose, onCreated }) {
             <input className="input" value={form.gc_name} onChange={e => set('gc_name', e.target.value)} placeholder="e.g. DPR Construction" />
           </div>
           <div>
-            <label className="label">Address</label>
+            <label className="label">Project Address</label>
             <input className="input" value={form.address} onChange={e => set('address', e.target.value)} placeholder="e.g. 123 Main St, Dallas, TX" />
           </div>
           <div>

@@ -131,12 +131,21 @@ function useJobLocation(address) {
       let usedDefault = true
       if (address) {
         try {
-          const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(address)}&count=1`)
-          const geo = await geoRes.json()
-          const match = geo?.results?.[0]
+          // Nominatim (OpenStreetMap's own geocoder), not Open-Meteo's
+          // geocoding API — Open-Meteo only indexes place names (cities,
+          // towns, landmarks), not street addresses, so a real job address
+          // like "2801 W Bethel Rd, Coppell, TX" returned zero results
+          // there every time and silently fell back to the Austin, TX
+          // default, which is exactly why the weather/map never matched
+          // the address actually set in Project Settings. Nominatim
+          // geocodes full street addresses correctly.
+          const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&addressdetails=1`)
+          const results = await geoRes.json()
+          const match = results?.[0]
           if (match) {
-            lat = match.latitude; lon = match.longitude
-            label = [match.name, match.admin1 || match.country].filter(Boolean).join(', ')
+            lat = parseFloat(match.lat); lon = parseFloat(match.lon)
+            const city = match.address?.city || match.address?.town || match.address?.village
+            label = [city, match.address?.state].filter(Boolean).join(', ') || match.display_name
             usedDefault = false
           }
         } catch (e) {
@@ -380,7 +389,7 @@ function JobSettingsModal({ job, onClose, onSaved }) {
             <input className="input" value={gcName} onChange={e => setGcName(e.target.value)} placeholder="e.g. DPR Construction" />
           </div>
           <div>
-            <label className="label">Address</label>
+            <label className="label">Project Address</label>
             <input className="input" value={address} onChange={e => setAddress(e.target.value)} placeholder="e.g. 123 Main St, Dallas, TX" />
           </div>
           <div>
