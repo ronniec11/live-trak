@@ -965,7 +965,7 @@ export default function ScopeDetail() {
               variable named todaySessions. */}
           <div>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Recent Sessions</h2>
-            <div className="border border-border rounded-xl overflow-hidden">
+            <div className="border border-border rounded-xl overflow-hidden elevated">
               {todaySessions.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet</div>
               ) : (() => {
@@ -1025,7 +1025,7 @@ export default function ScopeDetail() {
             {/* Progress */}
             <div>
               <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Progress</h3>
-              <div className="bg-surface-2 rounded-xl p-3 space-y-4">
+              <div className="bg-surface-2 rounded-xl p-3 space-y-4 elevated">
 
                 {/* Total progress (blue) */}
                 <div>

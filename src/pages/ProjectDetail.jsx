@@ -232,13 +232,13 @@ function WeatherWidget({ location }) {
 // a bounding box + marker and returns an iframe-able map page directly.
 function LocationMap({ location }) {
   if (location.status !== 'ready') {
-    return <div className="rounded-xl border border-border overflow-hidden h-40 bg-surface-2 animate-pulse" />
+    return <div className="rounded-xl border border-border overflow-hidden elevated h-40 bg-surface-2 animate-pulse" />
   }
   const { lat, lon } = location
   const delta = 0.01
   const bbox = [lon - delta, lat - delta, lon + delta, lat + delta].join(',')
   return (
-    <div className="rounded-xl border border-border overflow-hidden">
+    <div className="rounded-xl border border-border overflow-hidden elevated">
       <iframe
         title="Job location"
         width="100%"
@@ -1211,7 +1211,7 @@ export default function ProjectDetail() {
                 <span className="text-xs text-muted">{todayTotalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF today</span>
               )}
             </div>
-            <div className="border border-border rounded-xl overflow-hidden">
+            <div className="border border-border rounded-xl overflow-hidden elevated">
               {todaySessions.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet today</div>
               ) : (
@@ -1242,7 +1242,7 @@ export default function ProjectDetail() {
           {/* Recent sessions across all scopes (not limited to today) */}
           <div>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Recent Sessions</h2>
-            <div className="border border-border rounded-xl overflow-hidden">
+            <div className="border border-border rounded-xl overflow-hidden elevated">
               {recentSessions.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-muted">No sessions saved yet</div>
               ) : (
