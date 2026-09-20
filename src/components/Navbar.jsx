@@ -27,7 +27,10 @@ export default function Navbar() {
           >
             Projects
           </Link>
-          {(profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent') && (
+          {/* Admins reach Team via the Company Hub's own Team card now, so
+              this top-level link is only needed for pm/superintendent —
+              they can manage the team but don't have Hub access. */}
+          {(profile?.role === 'pm' || profile?.role === 'superintendent') && (
             <Link
               to="/team"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
