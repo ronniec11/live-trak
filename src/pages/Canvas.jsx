@@ -3718,7 +3718,7 @@ export default function Canvas() {
             const props = doc.getImageProperties(data.snapshot)
             let w = contentWidth
             let h = w * props.height / props.width
-            const maxH = 3.2
+            const maxH = 4.5
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             ensureRoom(h)
             doc.addImage(data.snapshot, 'PNG', margin + (contentWidth - w) / 2, y, w, h)
@@ -3731,47 +3731,81 @@ export default function Canvas() {
         // Table — Session gets the most width, same allocation as the
         // on-screen report's own colgroup, and for the same reason: it's
         // the field most likely to need room, everything else is short.
+        // LF only appears at all when at least one included session
+        // actually logged linear footage — a sheet that's purely SF work
+        // has nothing to show there, so the column (and its freed-up
+        // width, handed to Session) drops entirely rather than sit as a
+        // column of dashes.
+        const showLF = data.rows.some(r => r.lf > 0)
+        const sessionColWidth = showLF ? 0.33 : 0.41
+        const head = ['Date', 'Session', 'SF', ...(showLF ? ['LF'] : []), 'Crew', 'Hours', 'Total Hours']
+        const body = data.rows.map(r => [
+          r.date, r.name,
+          r.sf ? Math.round(r.sf).toLocaleString() : '–',
+          ...(showLF ? [r.lf ? Math.round(r.lf).toLocaleString() : '–'] : []),
+          r.crew || '–',
+          r.hours ? r.hours.toFixed(1) : '–',
+          r.manHours ? r.manHours.toFixed(1) : '–',
+        ])
+        const foot = ['Total', '',
+          Math.round(data.totalSF).toLocaleString(),
+          ...(showLF ? [data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'] : []),
+          '', '',
+          data.totalManHours ? data.totalManHours.toFixed(1) : '–',
+        ]
+        const columnStyles = {
+          0: { cellWidth: contentWidth * 0.13 },
+          1: { cellWidth: contentWidth * sessionColWidth, cellPadding: { top: 0.06, right: 0.06, bottom: 0.06, left: 0.22 } },
+          2: { cellWidth: contentWidth * 0.11, halign: 'right' },
+        }
+        let col = 3
+        if (showLF) columnStyles[col++] = { cellWidth: contentWidth * 0.08, halign: 'right' }
+        columnStyles[col++] = { cellWidth: contentWidth * 0.08, halign: 'right' } // Crew
+        columnStyles[col++] = { cellWidth: contentWidth * 0.10, halign: 'right' } // Hours
+        columnStyles[col] = { cellWidth: contentWidth * 0.17, halign: 'right' }   // Total Hours
+
         autoTable(doc, {
           startY: y,
           margin: { top: margin, right: margin, bottom: margin, left: margin },
-          head: [['Date', 'Session', 'SF', 'LF', 'Crew', 'Hours', 'Total Hours']],
-          body: data.rows.map(r => [
-            r.date, r.name,
-            r.sf ? Math.round(r.sf).toLocaleString() : '–',
-            r.lf ? Math.round(r.lf).toLocaleString() : '–',
-            r.crew || '–',
-            r.hours ? r.hours.toFixed(1) : '–',
-            r.manHours ? r.manHours.toFixed(1) : '–',
-          ]),
-          foot: [[
-            'Total', '',
-            Math.round(data.totalSF).toLocaleString(),
-            data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–',
-            '', '',
-            data.totalManHours ? data.totalManHours.toFixed(1) : '–',
-          ]],
+          head: [head],
+          body,
+          foot: [foot],
           styles: { fontSize: 9, cellPadding: 0.06, textColor: '#1c1c1a', lineColor: '#e5e7eb', lineWidth: 0.005 },
           headStyles: { fontSize: 7, textColor: '#6b7280', fontStyle: 'bold', fillColor: false },
           footStyles: { fontStyle: 'bold', textColor: '#1c1c1a', fillColor: false, lineWidth: { top: 0.02 } },
-          columnStyles: {
-            0: { cellWidth: contentWidth * 0.13 },
-            1: { cellWidth: contentWidth * 0.33 },
-            2: { cellWidth: contentWidth * 0.11, halign: 'right' },
-            3: { cellWidth: contentWidth * 0.08, halign: 'right' },
-            4: { cellWidth: contentWidth * 0.08, halign: 'right' },
-            5: { cellWidth: contentWidth * 0.10, halign: 'right' },
-            6: { cellWidth: contentWidth * 0.17, halign: 'right' },
+          columnStyles,
+          // Each session's color dot, same as the on-screen report — the
+          // extra left cellPadding on the Session column (above) is the
+          // room reserved for it so it doesn't overlap the name.
+          didDrawCell(hook) {
+            if (hook.section !== 'body' || hook.column.index !== 1) return
+            const color = data.rows[hook.row.index]?.color || '#4ade80'
+            doc.setFillColor(color)
+            doc.circle(hook.cell.x + 0.09, hook.cell.y + hook.cell.height / 2, 0.035, 'F')
           },
         })
         y = doc.lastAutoTable.finalY + 0.2
 
-        // Rates
+        // Rates — the two numbers bold, same as <strong> in the on-screen
+        // report; jsPDF applies one style per text() call, so this is
+        // built as a run of separate calls rather than one string.
         ensureRoom(0.2)
         doc.setFontSize(9)
-        doc.setTextColor('#374151')
-        let ratesText = `SF / Man-Hour: ${rate(data.sfPerManHour)}    SF / Day: ${rate(data.sfPerDay)}`
-        if (data.lunchBreakMinutes > 0) ratesText += `    ${data.lunchBreakMinutes}-minute lunch/person deducted from man-hours`
-        doc.text(ratesText, margin, y)
+        let rx = margin
+        function ratesSeg(text, { bold = false, color = '#374151' } = {}) {
+          doc.setFont(undefined, bold ? 'bold' : 'normal')
+          doc.setTextColor(color)
+          doc.text(text, rx, y)
+          rx += doc.getTextWidth(text)
+        }
+        ratesSeg('SF / Man-Hour: ')
+        ratesSeg(rate(data.sfPerManHour), { bold: true, color: '#1c1c1a' })
+        ratesSeg('    SF / Day: ')
+        ratesSeg(rate(data.sfPerDay), { bold: true, color: '#1c1c1a' })
+        if (data.lunchBreakMinutes > 0) {
+          ratesSeg(`    ${data.lunchBreakMinutes}-minute lunch/person deducted from man-hours`, { color: '#9ca3af' })
+        }
+        doc.setFont(undefined, 'normal')
         y += 0.3
 
         // Photos — same per-session color border as the on-screen report.
