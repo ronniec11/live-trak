@@ -327,6 +327,114 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
   )
 }
 
+function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated }) {
+  const [form, setForm] = useState({ name: '', description: '', status: 'active', daily_sf_target: '', total_sf_target: '', cost: '' })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const { data: scope, error: sErr } = await supabase
+        .from('projects')
+        .insert({
+          job_id: jobId,
+          name: form.name.trim(),
+          description: form.description.trim() || null,
+          status: form.status,
+          daily_sf_target: parseFloat(form.daily_sf_target) || 0,
+          total_sf_target: parseFloat(form.total_sf_target) || 0,
+          cost: form.cost === '' ? null : parseFloat(form.cost) || null,
+          created_by: userId,
+        })
+        .select()
+        .single()
+      if (sErr) throw sErr
+
+      // Carry over the job's existing team (plus whoever's creating this,
+      // in case they're not on it yet) rather than starting the new scope
+      // with zero members — otherwise it'd be invisible to everyone
+      // already working this job until someone remembered to add them
+      // back one at a time.
+      const memberIds = [...new Set([...existingMemberIds, userId])]
+      const { error: mErr } = await supabase
+        .from('project_members')
+        .insert(memberIds.map(user_id => ({ project_id: scope.id, user_id })))
+      if (mErr && !mErr.message.includes('duplicate key')) throw mErr
+
+      onCreated(scope)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">New Scope</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="label">Scope Name *</label>
+            <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Final Clean" required />
+          </div>
+          <div>
+            <label className="label">Description</label>
+            <input className="input" value={form.description} onChange={e => set('description', e.target.value)} placeholder="e.g. Overhead steel cleaning, Level 1 final clean" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Status</label>
+              <select className="input capitalize" value={form.status} onChange={e => set('status', e.target.value)}>
+                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Daily SF Target</label>
+              <input className="input" type="number" min="0" value={form.daily_sf_target} onChange={e => set('daily_sf_target', e.target.value)} placeholder="5000" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Total SF Target</label>
+              <input className="input" type="number" min="0" value={form.total_sf_target} onChange={e => set('total_sf_target', e.target.value)} placeholder="e.g. 250000" />
+            </div>
+            <div>
+              <label className="label">Contract Cost ($)</label>
+              <input className="input" type="number" min="0" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 500000" />
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={loading || !form.name.trim()} className="btn-primary flex-1">
+              {loading ? 'Creating...' : 'Create Scope'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function JobSettingsModal({ job, onClose, onSaved }) {
   const [name, setName] = useState(job.name || '')
   const [gcName, setGcName] = useState(job.gc_name || '')
@@ -501,7 +609,7 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus }) {
 
 export default function JobDetail() {
   const { jobId } = useParams()
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
   const navigate = useNavigate()
 
   const [job, setJob] = useState(null)
@@ -517,11 +625,15 @@ export default function JobDetail() {
 
   const [showJobSettings, setShowJobSettings] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
+  const [showAddScope, setShowAddScope] = useState(false)
 
   const canManage = profile?.role === 'admin'
   // Broader than canManage above (job editing stays admin-only) — matches
   // ProjectDetail.jsx's own gate for adding/removing a scope's members.
   const canManageMembers = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
+  // Matches Projects.jsx's own gate for creating a project — a scope is a
+  // projects row under the hood, same permission level applies.
+  const canCreateScope = profile?.role === 'admin' || profile?.role === 'pm'
 
   async function loadJobDetail() {
     setLoading(true)
@@ -714,7 +826,17 @@ export default function JobDetail() {
           </div>
 
           <div>
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Scopes</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Scopes</h2>
+              {canCreateScope && (
+                <button onClick={() => setShowAddScope(true)} className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  Add Scope
+                </button>
+              )}
+            </div>
             {scopes.length === 0 ? (
               <div className="text-center py-16">
                 <p className="text-gray-500 dark:text-gray-400 font-medium">No scopes on this job yet</p>
@@ -866,6 +988,15 @@ export default function JobDetail() {
           job={job}
           onClose={() => setShowJobSettings(false)}
           onSaved={patch => setJob(j => ({ ...j, ...patch }))}
+        />
+      )}
+      {showAddScope && (
+        <AddScopeModal
+          jobId={jobId}
+          userId={user.id}
+          existingMemberIds={members.map(m => m.id)}
+          onClose={() => setShowAddScope(false)}
+          onCreated={loadJobDetail}
         />
       )}
     </Layout>
