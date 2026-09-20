@@ -4981,16 +4981,21 @@ export default function Canvas() {
           </div>
           <div ref={reportDayFieldRef} className="ct-modal-field">
             <label className="ct-modal-lbl">Date</label>
+            {/* Blurring right after a date is picked closes the native
+                calendar popup immediately — without this, picking a date
+                leaves it open and the only way to dismiss it is tapping
+                somewhere else on screen first, before the box can be
+                tapped again for the next field. */}
             <input ref={reportDayInputRef} className="ct-modal-input" type="date"
-              onChange={() => api.current.renderReportSessionList?.()} />
+              onChange={e => { e.target.blur(); api.current.renderReportSessionList?.() }} />
           </div>
           <div ref={reportRangeFieldRef} className="ct-modal-field" style={{ display: 'none' }}>
             <label className="ct-modal-lbl">From</label>
             <input ref={reportStartInputRef} className="ct-modal-input" type="date"
-              onChange={() => api.current.renderReportSessionList?.()} />
+              onChange={e => { e.target.blur(); api.current.renderReportSessionList?.() }} />
             <label className="ct-modal-lbl" style={{ marginTop: 8 }}>To</label>
             <input ref={reportEndInputRef} className="ct-modal-input" type="date"
-              onChange={() => api.current.renderReportSessionList?.()} />
+              onChange={e => { e.target.blur(); api.current.renderReportSessionList?.() }} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Sessions to include</label>
