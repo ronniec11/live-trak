@@ -1,12 +1,20 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
+import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { downloadProjectForOffline, isProjectCached } from '../lib/offlineCache'
 
 // Single-tenant for now — there's only one organization, so this is hard-
 // coded rather than built out into an org switcher nobody needs yet.
 const ORGANIZATION_ID = '2fc904e9-daa0-4d4d-8fb3-85fb0e84360e'
+
+function badgeClass(status) {
+  if (status === 'active') return 'badge-active'
+  if (status === 'completed') return 'badge-completed'
+  return 'badge-on-hold'
+}
 
 const GripIcon = () => (
   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
@@ -104,7 +112,71 @@ function CreateProjectModal({ onClose, onCreated }) {
   )
 }
 
-function ProjectCard({ job, onClick, canReorder, isDragging, isDropTarget, onDragStart }) {
+// Compact icon-only download for full offline mode (see
+// src/lib/offlineCache.js) — a job has no offline cache entry of its own,
+// so this downloads each of its scopes in turn (the same per-scope cache
+// the Scopes list's own download button writes to), which is what
+// ScopeDetail's offline fallback actually reads from.
+function DownloadOfflineButton({ jobName, scopeIds, onStatus }) {
+  const [state, setState] = useState('idle') // 'idle' | 'downloading' | 'done' | 'error'
+
+  useEffect(() => {
+    let cancelled = false
+    async function checkCached() {
+      if (!scopeIds || scopeIds.length === 0) return
+      const cached = await Promise.all(scopeIds.map(isProjectCached))
+      if (!cancelled && cached.every(Boolean)) setState('done')
+    }
+    checkCached()
+    return () => { cancelled = true }
+  }, [scopeIds])
+
+  async function handleDownload(e) {
+    e.stopPropagation()
+    if (state === 'downloading' || !scopeIds || scopeIds.length === 0) return
+    setState('downloading')
+    onStatus?.({ text: `Downloading ${jobName} for offline use…`, isError: false })
+    try {
+      for (const scopeId of scopeIds) {
+        await downloadProjectForOffline(scopeId, text => onStatus?.({ text: `${jobName}: ${text}`, isError: false }))
+      }
+      setState('done')
+      onStatus?.({ text: `${jobName} downloaded for offline use.`, isError: false })
+    } catch (err) {
+      console.error('[Projects] Download for offline failed:', err)
+      setState('error')
+      onStatus?.({ text: `Failed to download ${jobName}: ${err.message || 'check console'}`, isError: true })
+      setTimeout(() => setState('idle'), 3000)
+    }
+  }
+
+  const noScopes = !scopeIds || scopeIds.length === 0
+  const titles = {
+    idle: noScopes ? 'No scopes to download yet' : 'Download for offline use',
+    downloading: 'Downloading…',
+    done: 'Downloaded for offline use — tap to refresh',
+    error: 'Download failed — tap to retry',
+  }
+
+  return (
+    <button
+      onClick={handleDownload}
+      disabled={state === 'downloading' || noScopes}
+      className={`btn-ghost p-1.5 shrink-0 ${state === 'done' ? 'text-accent' : state === 'error' ? 'text-red-500' : 'text-muted'} ${noScopes ? 'opacity-40' : ''}`}
+      title={titles[state]}
+    >
+      <svg className={`w-4 h-4 ${state === 'downloading' ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        {state === 'downloading' ? (
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+        ) : (
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        )}
+      </svg>
+    </button>
+  )
+}
+
+function ProjectCard({ job, activeScopeCount, overallPct, scopeIds, onClick, canReorder, isDragging, isDropTarget, onDragStart, onDownloadStatus }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same as the Scopes
@@ -169,7 +241,7 @@ function ProjectCard({ job, onClick, canReorder, isDragging, isDropTarget, onDra
       } ${isDropTarget ? 'ring-2 ring-accent' : ''} ${pressing ? 'scale-[0.98]' : ''}`}
       style={{ WebkitTouchCallout: 'none' }}
     >
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between mb-3">
         {canReorder && (
           <button
             onPointerDown={e => { e.stopPropagation(); onDragStart(e, job.id) }}
@@ -182,9 +254,21 @@ function ProjectCard({ job, onClick, canReorder, isDragging, isDropTarget, onDra
           </button>
         )}
         <h3 className="flex-1 min-w-0 font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
-        <svg className="w-4 h-4 text-muted group-hover:text-accent transition-colors shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
+        <div className="flex items-center gap-1 ml-2 shrink-0">
+          <DownloadOfflineButton jobName={job.name} scopeIds={scopeIds} onStatus={onDownloadStatus} />
+          <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-surface-2 rounded-lg p-2.5">
+          <p className="text-xs text-muted mb-0.5">Active Scopes</p>
+          <p className="text-sm font-semibold text-accent">{activeScopeCount}</p>
+        </div>
+        <div className="bg-surface-2 rounded-lg p-2.5">
+          <p className="text-xs text-muted mb-0.5">Overall Progress</p>
+          <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{overallPct != null ? `${overallPct}%` : '—'}</p>
+        </div>
       </div>
     </div>
   )
@@ -195,11 +279,19 @@ export default function Projects() {
   const navigate = useNavigate()
   const [orgName, setOrgName] = useState('')
   const [jobs, setJobs] = useState([])
+  const [activeScopesByJob, setActiveScopesByJob] = useState({})
+  const [overallPctByJob, setOverallPctByJob] = useState({})
+  const [scopeIdsByJob, setScopeIdsByJob] = useState({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [showCreate, setShowCreate] = useState(false)
+  // Shared with each card's DownloadOfflineButton so a status/failure is
+  // actually visible — alert() has been confirmed to silently do nothing on
+  // an iPad's home-screen (standalone) install (see Scopes.jsx, which this
+  // mirrors).
+  const [downloadBanner, setDownloadBanner] = useState({ text: '', isError: false })
 
   const canCreate = profile?.role === 'admin'
   const canReorderRole = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
@@ -296,6 +388,69 @@ export default function Projects() {
 
       setJobs(jobsData || [])
       setOrgName(jobsData?.[0]?.organizations?.name || '')
+
+      const jobIds = (jobsData || []).map(j => j.id)
+      if (jobIds.length === 0) {
+        setActiveScopesByJob({}); setOverallPctByJob({}); setScopeIdsByJob({})
+        return
+      }
+
+      // Scopes (projects) under these jobs — active count, per-job scope
+      // ids (for the download-offline button), and each job's total SF
+      // target (the denominator for Overall Progress below).
+      const { data: scopes } = await supabase
+        .from('projects')
+        .select('id, job_id, status, total_sf_target')
+        .in('job_id', jobIds)
+
+      const activeMap = {}
+      const targetMap = {}
+      const scopeIdMap = {}
+      const scopeToJob = {}
+      ;(scopes || []).forEach(s => {
+        scopeToJob[s.id] = s.job_id
+        if (s.status === 'active') activeMap[s.job_id] = (activeMap[s.job_id] || 0) + 1
+        targetMap[s.job_id] = (targetMap[s.job_id] || 0) + (parseFloat(s.total_sf_target) || 0)
+        if (!scopeIdMap[s.job_id]) scopeIdMap[s.job_id] = []
+        scopeIdMap[s.job_id].push(s.id)
+      })
+      setActiveScopesByJob(activeMap)
+      setScopeIdsByJob(scopeIdMap)
+
+      const scopeIds = Object.keys(scopeToJob)
+      if (scopeIds.length === 0) { setOverallPctByJob({}); return }
+
+      const { data: pages } = await supabase
+        .from('pages')
+        .select('id, project_id')
+        .in('project_id', scopeIds)
+
+      const pageToJob = {}
+      ;(pages || []).forEach(pg => { pageToJob[pg.id] = scopeToJob[pg.project_id] })
+      const pageIds = Object.keys(pageToJob)
+      if (pageIds.length === 0) { setOverallPctByJob({}); return }
+
+      const { data: sessions } = await supabase
+        .from('sessions')
+        .select('page_id, sf')
+        .in('page_id', pageIds)
+
+      const sfMap = {}
+      ;(sessions || []).forEach(sess => {
+        const jobId = pageToJob[sess.page_id]
+        if (!jobId) return
+        sfMap[jobId] = (sfMap[jobId] || 0) + (parseFloat(sess.sf) || 0)
+      })
+
+      // null (rendered as "—") rather than 0% whenever no target's been set
+      // yet — 0% reads as "nothing done," which isn't the same claim as
+      // "there's nothing to measure against."
+      const pctMap = {}
+      jobIds.forEach(jobId => {
+        const target = targetMap[jobId] || 0
+        pctMap[jobId] = target > 0 ? Math.min(100, Math.round(((sfMap[jobId] || 0) / target) * 100)) : null
+      })
+      setOverallPctByJob(pctMap)
     } catch (err) {
       console.error('[Jobs] loadJobs error:', err)
       setLoadError(err.message || 'Failed to load jobs. Please try refreshing.')
@@ -328,6 +483,18 @@ export default function Projects() {
           {reorderError} <strong>(tap to dismiss)</strong>
         </div>
       )}
+      {downloadBanner.text && (
+        <div
+          onClick={() => setDownloadBanner({ text: '', isError: false })}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+            background: downloadBanner.isError ? '#ef4444' : '#60a5fa', color: '#000', fontSize: '12px',
+            padding: '10px 12px', wordBreak: 'break-word', cursor: 'pointer',
+          }}
+        >
+          {downloadBanner.text} <strong>(tap to dismiss)</strong>
+        </div>
+      )}
       <div className="max-w-[1600px] mx-auto px-6 sm:px-10 lg:px-16 py-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -338,14 +505,25 @@ export default function Projects() {
               {jobs.length} {jobs.length === 1 ? 'project' : 'projects'}
             </p>
           </div>
-          {canCreate && (
-            <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-1.5 self-start sm:self-auto">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              New Project
-            </button>
-          )}
+          <div className="flex gap-2 self-start sm:self-auto">
+            <OfflineSyncButton />
+            {canCreate && (
+              <>
+                <button onClick={() => navigate('/reports')} className="btn-secondary flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h12M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5-6h6m-6 3h6m-6-6h6" />
+                  </svg>
+                  Reports
+                </button>
+                <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  New Project
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Filters */}
@@ -382,7 +560,11 @@ export default function Projects() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => (
               <div key={i} className="card animate-pulse">
-                <div className="h-5 bg-surface-3 rounded w-3/4" />
+                <div className="h-5 bg-surface-3 rounded w-3/4 mb-3" />
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="h-12 bg-surface-3 rounded-lg" />
+                  <div className="h-12 bg-surface-3 rounded-lg" />
+                </div>
               </div>
             ))}
           </div>
@@ -417,11 +599,15 @@ export default function Projects() {
               <ProjectCard
                 key={job.id}
                 job={job}
+                activeScopeCount={activeScopesByJob[job.id] || 0}
+                overallPct={overallPctByJob[job.id] ?? null}
+                scopeIds={scopeIdsByJob[job.id] || []}
                 onClick={() => navigate(`/projects/${job.id}`)}
                 canReorder={canReorder}
                 isDragging={dragId === job.id}
                 isDropTarget={hoverId === job.id}
                 onDragStart={handleDragStart}
+                onDownloadStatus={setDownloadBanner}
               />
             ))}
           </div>
