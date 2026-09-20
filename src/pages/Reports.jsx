@@ -183,12 +183,18 @@ export default function Reports() {
                   calendar popup immediately — without this, picking a date
                   leaves it open and the only way to dismiss it is tapping
                   somewhere else on screen first (see Canvas.jsx's own
-                  Report date fields, which this matches). */}
-              <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); e.target.blur() }} className="input" />
+                  Report date fields, which this matches).
+                  Only once the field already had a value, though — on an
+                  empty field, iOS Safari has been seen firing this same
+                  change event with today's date the instant the picker
+                  opens, before any real tap; auto-closing on that would
+                  silently lock in today and never let a first-time pick of
+                  any other date happen. */}
+              <input type="date" value={startDate} onChange={e => { const hadValue = !!startDate; setStartDate(e.target.value); if (hadValue) e.target.blur() }} className="input" />
             </div>
             <div className="flex-1 min-w-[140px]">
               <label className="block text-xs text-muted mb-1">End date</label>
-              <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); e.target.blur() }} className="input" />
+              <input type="date" value={endDate} onChange={e => { const hadValue = !!endDate; setEndDate(e.target.value); if (hadValue) e.target.blur() }} className="input" />
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">
               <button onClick={() => setPreset('week')} className="btn-secondary text-sm">Last 7 days</button>
