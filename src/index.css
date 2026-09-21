@@ -46,7 +46,7 @@
   body {
     background-color: rgb(var(--color-bg));
     color: rgb(var(--color-text));
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Blinker', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
