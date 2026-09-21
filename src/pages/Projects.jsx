@@ -10,10 +10,58 @@ import { downloadJobForOffline, isJobCached, getCachedJobsList } from '../lib/of
 // coded rather than built out into an org switcher nobody needs yet.
 const ORGANIZATION_ID = '2fc904e9-daa0-4d4d-8fb3-85fb0e84360e'
 
+const STATUS_OPTIONS = ['active', 'completed', 'on hold']
+
 function badgeClass(status) {
   if (status === 'active') return 'badge-active'
   if (status === 'completed') return 'badge-completed'
   return 'badge-on-hold'
+}
+
+// Same tap-to-change badge as the Scopes/ScopeDetail/ProjectDetail cards
+// already have — this was the one card left showing status as plain,
+// read-only text instead of letting you change it right from the list.
+function StatusBadge({ status, onSave, className = '' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e) { if (!ref.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  async function select(e, s) {
+    e.stopPropagation()
+    setOpen(false)
+    if (s !== status) await onSave(s)
+  }
+
+  return (
+    <div ref={ref} className={`relative inline-flex ${className}`} onClick={e => e.stopPropagation()}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        className={`${badgeClass(status)} cursor-pointer hover:opacity-80 transition-opacity capitalize`}
+      >
+        {status || 'active'}
+      </button>
+      {open && (
+        <div className="absolute top-full right-0 mt-1 bg-surface border border-border rounded-lg shadow-xl z-50 min-w-[110px] py-1 overflow-hidden">
+          {STATUS_OPTIONS.map(s => (
+            <button
+              key={s}
+              onClick={e => select(e, s)}
+              className={`w-full text-left px-3 py-1.5 text-xs capitalize hover:bg-surface-2 transition-colors flex items-center gap-2 ${s === status ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s === 'active' ? 'bg-accent' : s === 'completed' ? 'bg-blue-400' : 'bg-yellow-400'}`} />
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const GripIcon = () => (
@@ -168,7 +216,7 @@ function DownloadOfflineButton({ jobId, jobName, hasScopes, onStatus }) {
   )
 }
 
-function ProjectCard({ job, activeScopeCount, overallPct, scopeIds, onClick, canReorder, isDragging, isDropTarget, onDragStart, onDownloadStatus }) {
+function ProjectCard({ job, activeScopeCount, overallPct, scopeIds, onClick, canReorder, isDragging, isDropTarget, onDragStart, onDownloadStatus, onUpdateJob }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same as the Scopes
@@ -248,7 +296,15 @@ function ProjectCard({ job, activeScopeCount, overallPct, scopeIds, onClick, can
         <h3 className="flex-1 min-w-0 font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">{job.name}</h3>
         <div className="flex items-center gap-1 ml-2 shrink-0">
           <DownloadOfflineButton jobId={job.id} jobName={job.name} hasScopes={scopeIds && scopeIds.length > 0} onStatus={onDownloadStatus} />
-          <span className={`${badgeClass(job.status)} capitalize`}>{job.status || 'active'}</span>
+          <StatusBadge
+            status={job.status}
+            onSave={async s => {
+              const { data, error } = await supabase.from('jobs').update({ status: s }).eq('id', job.id).select().single()
+              if (error) { alert('Failed to update status: ' + error.message); return }
+              if (!data) { alert('Nothing was saved — you may not have permission to edit this project.'); return }
+              onUpdateJob(job.id, { status: s })
+            }}
+          />
         </div>
       </div>
 
@@ -303,6 +359,10 @@ export default function Projects() {
   function handleDragStart(e, jobId) {
     setDragId(jobId)
     setDragPos({ x: e.clientX, y: e.clientY })
+  }
+
+  function handleUpdateJob(id, patch) {
+    setJobs(js => js.map(j => j.id === id ? { ...j, ...patch } : j))
   }
 
   useEffect(() => {
@@ -627,6 +687,7 @@ export default function Projects() {
                 isDropTarget={hoverId === job.id}
                 onDragStart={handleDragStart}
                 onDownloadStatus={setDownloadBanner}
+                onUpdateJob={handleUpdateJob}
               />
             ))}
           </div>
