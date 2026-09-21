@@ -10,6 +10,30 @@ export default function Login() {
   const { signIn, user } = useAuth()
   const navigate = useNavigate()
 
+  // A magic-link/invite click that failed to authenticate lands here
+  // (ProtectedRoute carries the hash forward) with an error Supabase put
+  // right in the URL — most often because the one-time link was already
+  // used by the time the person actually clicked it. That's not always
+  // user error: some email providers/corporate scanners pre-fetch links in
+  // incoming mail to check them for malware, which silently consumes a
+  // single-use auth link before the real recipient ever opens it. Reading
+  // it here turns "why am I on a plain login form?" into an actual answer.
+  const [linkError, setLinkError] = useState('')
+  useEffect(() => {
+    const hash = window.location.hash
+    if (!hash.includes('error=')) return
+    const params = new URLSearchParams(hash.slice(1))
+    const description = params.get('error_description')
+    setLinkError(
+      description
+        ? description.replace(/\+/g, ' ')
+        : 'That link has expired or was already used.'
+    )
+    // Drop the error out of the URL so refreshing/sharing it doesn't keep
+    // re-showing a stale message.
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  }, [])
+
   // Covers a magic-link click landing here: exchanging the link's code for
   // a session is a network round-trip, so this page can render before it
   // resolves. Without this, the user is signed in moments later but just
@@ -53,6 +77,12 @@ export default function Login() {
         {/* Card */}
         <div className="card border-border/60">
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-5">Sign in to your account</h2>
+
+          {linkError && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-400 text-sm mb-4">
+              {linkError} If you were trying to open an invite link, ask your admin to resend it from the Team page — or set a password once you're in, under Profile, so you don't need a fresh link next time.
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

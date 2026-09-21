@@ -1,10 +1,11 @@
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useEffect, useState } from 'react'
 
 export default function ProtectedRoute({ children }) {
   const { user, profile, loading, signOut } = useAuth()
   const [timedOut, setTimedOut] = useState(false)
+  const location = useLocation()
 
   useEffect(() => {
     if (!loading) return
@@ -33,6 +34,14 @@ export default function ProtectedRoute({ children }) {
     )
   }
 
-  if (!user || profile?.active === false) return <Navigate to="/login" replace />
+  // Carries the hash forward on the way to /login — an invite/magic-link
+  // click that failed to authenticate (expired, or already consumed by an
+  // email link-scanner before the person ever clicked it themselves — a
+  // common real-world failure for this kind of link) redirects here with
+  // #error=...&error_description=... still attached, which Login.jsx reads
+  // to explain what happened instead of just showing a bare sign-in form.
+  if (!user || profile?.active === false) {
+    return <Navigate to={{ pathname: '/login', hash: location.hash }} replace />
+  }
   return children
 }

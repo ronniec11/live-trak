@@ -15,7 +15,17 @@ const PRESET_COLORS = [
 // doesn't recognize, silently dropping the session. One canonical URL means
 // this only needs to be allow-listed in Supabase once, regardless of which
 // domain the admin is actually browsing from.
-const INVITE_REDIRECT_URL = 'https://www.live-trak.ai/projects'
+//
+// Points at /profile, not /projects — that's the only place someone can
+// actually set a password (see Profile.jsx's "Password" card), and
+// everyone invited this way starts out with none at all, fully dependent
+// on getting a fresh working link every single time otherwise. This is
+// only reachable if /profile is itself allow-listed in Supabase's Auth ->
+// URL Configuration -> Redirect URLs alongside whatever's there for
+// /projects already — a link to a URL that isn't allow-listed gets its
+// session silently dropped by Supabase, which looks exactly like "the
+// link didn't work."
+const INVITE_REDIRECT_URL = 'https://www.live-trak.ai/profile'
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
@@ -70,7 +80,10 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
         // email, which this can't catch — but stopping the same-email case
         // here at least surfaces "this already exists" instead of the
         // silent no-op, and points at Resend Invite instead.
-        const { data: existing } = await supabase.from('profiles').select('id, full_name').ilike('email', email).maybeSingle()
+        const { data: existing } = await supabase.from('profiles').select('id, full_name, active').ilike('email', email).maybeSingle()
+        if (existing && existing.active === false) {
+          throw new Error(`${existing.full_name || 'Someone'} was removed from the team with this email. Restore them from the Removed section instead — or delete them permanently first if you want to invite this email as a new person.`)
+        }
         if (existing) {
           throw new Error(`${existing.full_name || 'Someone'} is already in the directory with this email — use Resend Invite on their row instead of adding them again.`)
         }
@@ -191,7 +204,7 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
   )
 }
 
-function PersonCard({ person, currentUserId, viewerIsAdmin, onClose, onEdit, onRemove, onRestore }) {
+function PersonCard({ person, currentUserId, viewerIsAdmin, onClose, onEdit, onRemove, onRestore, onDeletePermanently }) {
   const [projects, setProjects] = useState(null) // null = loading
   const isSelf = person.id === currentUserId
   const isActive = person.active !== false
@@ -273,7 +286,12 @@ function PersonCard({ person, currentUserId, viewerIsAdmin, onClose, onEdit, onR
           </button>
         )}
         {viewerIsAdmin && !isActive && (
-          <button onClick={() => onRestore(person)} className="btn-secondary w-full mt-2">Restore to Team</button>
+          <>
+            <button onClick={() => onRestore(person)} className="btn-secondary w-full mt-2">Restore to Team</button>
+            <button onClick={() => onDeletePermanently(person)} className="btn-ghost w-full mt-2 text-red-500 hover:bg-red-500/10">
+              Delete Permanently
+            </button>
+          </>
         )}
         {viewerIsAdmin && isSelf && (
           <p className="text-xs text-muted text-center mt-2">You can't remove yourself — have another admin do it.</p>
@@ -374,6 +392,40 @@ export default function Team() {
       return
     }
     setToast(`${person.full_name || person.email} restored to the team. Add them back to any project they need.`)
+    setTimeout(() => setToast(''), 3000)
+    setViewPerson(null)
+    loadPeople()
+  }
+
+  // Actually deletes the profile — unlike removePerson's deactivate, this
+  // cannot be undone, and it's the point: it frees up their email so
+  // inviting them (or anyone reusing that address) fresh later isn't
+  // blocked by Add Person's "already in the directory" check, which
+  // matches on the profiles row this removes. The trade-off is the one
+  // removePerson was built to specifically avoid: any past session they
+  // logged will show a blank name once the profiles row it was reading
+  // through is gone. Only ever offered on someone already deactivated —
+  // deleting a still-active person isn't offered here, deactivate first.
+  async function deletePersonPermanently(person) {
+    if (!confirm(`Permanently delete ${person.full_name || person.email}? This cannot be undone — their name will show blank on any past work they logged. You can invite this email again afterward as a new person.`)) return
+    const { error: mErr } = await supabase.from('project_members').delete().eq('user_id', person.id)
+    if (mErr) {
+      setToast(mErr.message)
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    const { data: deleted, error: pErr } = await supabase.from('profiles').delete().eq('id', person.id).select()
+    if (pErr) {
+      setToast(pErr.message)
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    if (!deleted || deleted.length === 0) {
+      setToast("Nothing was deleted — you may not have permission (this is admin-only).")
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    setToast(`${person.full_name || person.email} permanently deleted.`)
     setTimeout(() => setToast(''), 3000)
     setViewPerson(null)
     loadPeople()
@@ -513,6 +565,7 @@ export default function Team() {
           onEdit={() => { setEditPerson(viewPerson); setViewPerson(null) }}
           onRemove={removePerson}
           onRestore={restorePerson}
+          onDeletePermanently={deletePersonPermanently}
         />
       )}
       {editPerson && (
