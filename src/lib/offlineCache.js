@@ -368,6 +368,26 @@ export async function getCachedPage(pageId) {
   return dbGet('cachedPages', pageId)
 }
 
+// Re-caches one page after offline-queued edits for it have synced —
+// offlineSync.js's syncPendingOps() only pushes those edits to Supabase,
+// it never touches this page's own offline snapshot, so without this the
+// next time the device goes offline it would show the pre-sync version
+// again: edits sync and look right online, but reappear reverted the next
+// time offline, needing a full manual re-download to actually fix. Only
+// refreshes a page that was already downloaded — one nobody downloaded has
+// no snapshot to go stale in the first place.
+export async function refreshCachedPageIfDownloaded(pageId, onProgress) {
+  const existing = await getCachedPage(pageId)
+  if (!existing) return false
+  const { data: pg, error } = await supabase.from('pages').select('*').eq('id', pageId).single()
+  if (error || !pg) {
+    console.warn('[offlineCache] Could not refresh cached page after sync:', pageId, error)
+    return false
+  }
+  await cachePage(pg, existing.projectId, onProgress)
+  return true
+}
+
 export async function listCachedProjects() {
   return dbGetAll('cachedProjects')
 }

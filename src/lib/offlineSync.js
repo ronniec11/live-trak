@@ -7,6 +7,7 @@
 // is open) and from the Projects/ProjectDetail "Sync" buttons.
 import { supabase } from './supabase'
 import { dbPut, dbGetAll, dbDelete, requestPersistentStorage } from './offlineDb'
+import { refreshCachedPageIfDownloaded } from './offlineCache'
 
 function newId() {
   return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`)
@@ -131,11 +132,18 @@ export async function syncPendingOps(onOpSynced) {
   try {
     const ops = (await getPendingOps()).sort((a, b) => a.createdAt - b.createdAt)
     let synced = 0
+    // Every page touched by a successfully-synced op needs its offline
+    // snapshot refreshed below (see refreshCachedPageIfDownloaded) — a Set
+    // so a page with several queued ops (or several pages synced in one
+    // pass, e.g. from the global Sync button rather than one open sheet)
+    // only gets re-cached once each, not once per op.
+    const syncedPageIds = new Set()
     for (const op of ops) {
       try {
         const result = await syncOneOp(op)
         await dbDelete('pendingOps', op.id)
         synced++
+        if (op.pageId) syncedPageIds.add(op.pageId)
         onOpSynced?.(op, result)
       } catch (err) {
         if (isNetworkError(err)) {
@@ -144,6 +152,13 @@ export async function syncPendingOps(onOpSynced) {
         console.error('[offlineSync] Op failed (not a connectivity issue):', op.id, err)
         await dbPut('pendingOps', { ...op, lastError: err.message || String(err) })
       }
+    }
+    // Best-effort — a failure here shouldn't turn an otherwise-successful
+    // sync into an error, it just means the offline snapshot stays stale
+    // until the next sync retries it (or a manual re-download).
+    for (const pageId of syncedPageIds) {
+      try { await refreshCachedPageIfDownloaded(pageId) }
+      catch (e) { console.warn('[offlineSync] Failed to refresh offline cache for page:', pageId, e) }
     }
     return { synced, remaining: (await getPendingOps()).length, stillOffline: false }
   } finally {
