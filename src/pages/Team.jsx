@@ -59,6 +59,21 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
         }).eq('id', person.id)
         if (uErr) throw uErr
       } else {
+        // Catches the exact scenario that produced two "Taylor Nave"
+        // entries in the directory: re-running Add Person for someone
+        // already invited (under the same email) looks, from here, exactly
+        // like nothing happened the first time, so the natural next move
+        // is to try again — but signInWithOtp silently no-ops on an
+        // existing auth user rather than erroring, so a second attempt
+        // with the SAME email wouldn't actually double anything up. What
+        // does is a second attempt with a DIFFERENT (typo'd/corrected)
+        // email, which this can't catch — but stopping the same-email case
+        // here at least surfaces "this already exists" instead of the
+        // silent no-op, and points at Resend Invite instead.
+        const { data: existing } = await supabase.from('profiles').select('id, full_name').ilike('email', email).maybeSingle()
+        if (existing) {
+          throw new Error(`${existing.full_name || 'Someone'} is already in the directory with this email — use Resend Invite on their row instead of adding them again.`)
+        }
         // Passwordless invite: creates the auth.users row (firing the
         // existing handle_new_user trigger) and emails them a sign-in link.
         // Never use supabase.auth.admin.* here — that needs the service_role
@@ -75,14 +90,21 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
         // The trigger may not know about every field (phone/company/
         // avatar_color, and possibly not full_name/role either, depending on
         // its exact metadata keys) — set them directly regardless.
-        const { error: uErr } = await supabase.from('profiles').update({
+        // .select().single() on purpose — a plain .update() with no
+        // .select() reports success even if this raced the trigger above
+        // and matched zero rows, which is exactly the kind of silent no-op
+        // that leaves an admin unsure whether the invite actually worked
+        // and re-doing it "just in case" (see supabase-migration-jobs-
+        // write-policies.sql's note on this same failure mode elsewhere).
+        const { data: updated, error: uErr } = await supabase.from('profiles').update({
           full_name: form.full_name.trim(),
           phone: form.phone.trim() || null,
           company: form.company.trim() || null,
           role: form.role,
           avatar_color: form.avatar_color,
-        }).eq('email', email)
+        }).eq('email', email).select().single()
         if (uErr) throw uErr
+        if (!updated) throw new Error('The invite email was sent, but the directory entry for it was not found to finish setting up — check back in a moment and edit them once it appears.')
       }
       onSaved()
       onClose()
