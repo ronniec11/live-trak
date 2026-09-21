@@ -19,7 +19,7 @@ export default function Navbar() {
           — the text is now real HTML and always tracks the page font. */}
       <Link to="/projects" className="flex items-center gap-2 group">
         <img src="/live-trak-icon.svg?v=3" alt="" className="h-10 w-10 shrink-0" />
-        <span className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Live-Trak</span>
+        <span className="text-2xl font-extralight text-gray-900 dark:text-white tracking-tight">Live-Trak</span>
       </Link>
 
       {!isCanvas && (
