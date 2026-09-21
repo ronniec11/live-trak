@@ -102,7 +102,7 @@ export default function Login() {
       <div className="w-full max-w-sm relative">
         {/* Logo */}
         <div className="flex items-center justify-center gap-4 mb-8">
-          <img src="/live-trak-icon.svg?v=2" style={{ width: '56px', height: '56px' }} />
+          <img src="/live-trak-icon.svg?v=3" style={{ width: '56px', height: '56px' }} />
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Live-Trak</h1>
         </div>
 

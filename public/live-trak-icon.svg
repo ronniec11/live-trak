@@ -1,53 +1,36 @@
 <svg viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2d3f66"/>
-      <stop offset="100%" stop-color="#141b30"/>
+    <clipPath id="roundedIcon">
+      <rect x="0" y="0" width="56" height="56" rx="11"/>
+    </clipPath>
+    <linearGradient id="checkGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d7dbea"/>
     </linearGradient>
-    <radialGradient id="glossGrad" cx="50%" cy="0%" r="80%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.16"/>
-      <stop offset="60%" stop-color="#ffffff" stop-opacity="0.04"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
-      <feDropShadow dx="0" dy="0.6" stdDeviation="0.6" flood-color="#0b1120" flood-opacity="0.6"/>
+    <filter id="checkPop" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0.8" dy="1.3" stdDeviation="0.8" flood-color="#0b1120" flood-opacity="0.55"/>
     </filter>
   </defs>
 
-  <!-- Base: lightened gradient + glowing blue edge instead of a flat fill,
-       so it separates from a dark navbar instead of blending into it.
-       (This rounded/bordered version is for the browser-tab favicon only —
+  <!-- Tri-Tone mark: blue/green top blocks, navy bottom block — same
+       three-block layout as the original sketch, flattened (no gradients
+       on the blocks themselves), with the checkmark given a "glossy pop"
+       treatment: a dark offset shadow pass, a soft white-to-gray gradient
+       fill, a drop shadow, and a small specular highlight near the peak.
+       This rounded/bordered version is for the browser-tab favicon only —
        browsers render it as-is with no extra masking. The PWA/home-screen
-       icons use live-trak-icon-touch.svg, a full-bleed unrounded version,
-       since iOS applies its own corner mask and double-rounding crops
-       unevenly. Grid/checkmark/bracket geometry below is kept identical
-       to that file so every logo instance in the app matches.) -->
-  <rect x="1" y="1" width="54" height="54" rx="11" fill="url(#bgGrad)" stroke="#3b82f6" stroke-width="1" stroke-opacity="0.35"/>
+       icons use live-trak-icon-touch.svg, a full-bleed unrounded version;
+       block/checkmark geometry below is kept identical to that file so
+       every logo instance in the app matches. -->
+  <g clip-path="url(#roundedIcon)">
+    <rect x="0" y="0" width="32" height="32" fill="#3b82f6"/>
+    <rect x="32" y="0" width="24" height="32" fill="#4ade80"/>
+    <rect x="0" y="32" width="56" height="24" fill="#333a5c"/>
+    <line x1="32" y1="0" x2="32" y2="32" stroke="#ffffff" stroke-width="0.6" opacity="0.35"/>
+    <line x1="0" y1="32" x2="56" y2="32" stroke="#ffffff" stroke-width="0.6" opacity="0.35"/>
 
-  <!-- Floor plan grid — light blue instead of gray, more visible -->
-  <rect x="11" y="13" width="18" height="15" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-  <rect x="29" y="13" width="16" height="15" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-  <rect x="11" y="28" width="34" height="15" fill="none" stroke="#93c5fd" stroke-width="0.7" opacity="0.8"/>
-
-  <!-- Highlighted cells — blue and green so the icon isn't a single flat color -->
-  <rect x="11.4" y="13.4" width="17.2" height="14.2" fill="#60a5fa" opacity="0.3"/>
-  <rect x="29.4" y="13.4" width="15.2" height="14.2" fill="#4ade80" opacity="0.3"/>
-
-  <!-- Top gloss for a raised, glassy feel -->
-  <rect x="1" y="1" width="54" height="54" rx="11" fill="url(#glossGrad)"/>
-
-  <!-- Checkmark — white -->
-  <polyline points="14,20 19,26 28,16" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
-
-  <!-- Corner brackets — white -->
-  <g stroke="#ffffff" stroke-width="1.3" opacity="0.9">
-    <line x1="8"  y1="10" x2="13" y2="10"/>
-    <line x1="8"  y1="10" x2="8"  y2="15"/>
-    <line x1="48" y1="10" x2="43" y2="10"/>
-    <line x1="48" y1="10" x2="48" y2="15"/>
-    <line x1="8"  y1="46" x2="13" y2="46"/>
-    <line x1="8"  y1="46" x2="8"  y2="41"/>
-    <line x1="48" y1="46" x2="43" y2="46"/>
-    <line x1="48" y1="46" x2="48" y2="41"/>
+    <polyline points="5,18 13,25 27,6" fill="none" stroke="#0b1120" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4" transform="translate(0.5,0.5)"/>
+    <polyline points="5,18 13,25 27,6" fill="none" stroke="url(#checkGrad)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#checkPop)"/>
+    <line x1="24" y1="9" x2="26" y2="7" stroke="#ffffff" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>
   </g>
 </svg>
