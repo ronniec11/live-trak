@@ -1,12 +1,24 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
+
+// Same canonical URL Team.jsx's invite flow redirects to (see
+// INVITE_REDIRECT_URL there) — /profile is where the password field
+// actually lives (Profile.jsx's "Password" card), and it's already
+// allow-listed in Supabase's Auth -> Redirect URLs for that same reason.
+// Duplicated rather than imported/shared, matching how this app already
+// keeps a couple of other one-off constants local to whichever page uses
+// them instead of a shared constants file.
+const RESET_REDIRECT_URL = 'https://www.live-trak.ai/profile'
 
 export default function Login() {
+  const [mode, setMode] = useState('signin') // 'signin' | 'forgot'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
   const { signIn, user } = useAuth()
   const navigate = useNavigate()
 
@@ -56,6 +68,26 @@ export default function Login() {
     }
   }
 
+  async function handleReset(e) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      // Same recovery-link mechanism as Team.jsx's invite (signInWithOtp) —
+      // clicking it signs them in and lands them on RESET_REDIRECT_URL,
+      // where Profile.jsx's Password card is what actually sets the new
+      // one. Doesn't reveal whether the email exists either way, so this
+      // can't be used to probe the directory.
+      const { error: err } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: RESET_REDIRECT_URL })
+      if (err) throw err
+      setResetSent(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-bg flex items-center justify-center px-4">
       {/* Background grid */}
@@ -76,60 +108,129 @@ export default function Login() {
 
         {/* Card */}
         <div className="card border-border/60">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-5">Sign in to your account</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-5">
+            {mode === 'forgot' ? 'Reset your password' : 'Sign in to your account'}
+          </h2>
 
-          {linkError && (
+          {linkError && mode === 'signin' && (
             <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-400 text-sm mb-4">
               {linkError} If you were trying to open an invite link, ask your admin to resend it from the Team page — or set a password once you're in, under Profile, so you don't need a fresh link next time.
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="label">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="input"
-                placeholder="you@company.com"
-                required
-                autoComplete="email"
-              />
-            </div>
-
-            <div>
-              <label className="label">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="input"
-                placeholder="••••••••"
-                required
-                autoComplete="current-password"
-              />
-            </div>
-
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
-                {error}
+          {mode === 'forgot' ? (
+            resetSent ? (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-700 dark:text-gray-300">
+                  Check <span className="font-medium">{email}</span> for a link to reset your password.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => { setMode('signin'); setResetSent(false); setError('') }}
+                  className="btn-secondary w-full"
+                >
+                  Back to sign in
+                </button>
               </div>
-            )}
+            ) : (
+              <form onSubmit={handleReset} className="space-y-4">
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="input"
+                    placeholder="you@company.com"
+                    required
+                    autoComplete="email"
+                  />
+                </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary w-full flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
-                  Signing in...
-                </>
-              ) : 'Sign in'}
-            </button>
-          </form>
+                {error && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+                      Sending...
+                    </>
+                  ) : 'Send Reset Link'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('signin'); setError('') }}
+                  className="btn-ghost w-full text-sm"
+                >
+                  Back to sign in
+                </button>
+              </form>
+            )
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="label">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="input"
+                  placeholder="you@company.com"
+                  required
+                  autoComplete="email"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="label mb-0">Password</label>
+                  <button
+                    type="button"
+                    onClick={() => { setMode('forgot'); setError('') }}
+                    className="text-xs text-muted hover:text-gray-700 dark:hover:text-gray-300"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="input"
+                  placeholder="••••••••"
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+                    Signing in...
+                  </>
+                ) : 'Sign in'}
+              </button>
+            </form>
+          )}
         </div>
 
         <p className="text-center text-xs text-muted mt-4">
