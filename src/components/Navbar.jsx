@@ -1,20 +1,25 @@
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { useTheme } from '../contexts/ThemeContext'
-import LiveTrakLogoDark from '../assets/live-trak-logo-full.svg'
-import LiveTrakLogoLight from '../assets/live-trak-logo-full-light.svg'
 
 export default function Navbar() {
   const { profile } = useAuth()
-  const { theme } = useTheme()
   const location = useLocation()
 
   const isCanvas = location.pathname.includes('/canvas/')
 
   return (
     <header className="h-14 bg-surface border-b border-border flex items-center px-4 gap-4 shrink-0 z-40">
-      <Link to="/projects" className="flex items-center group">
-        <img src={theme === 'light' ? LiveTrakLogoLight : LiveTrakLogoDark} alt="Live-Trak" className="h-11 w-auto" />
+      {/* The wordmark used to be baked into one combined icon+text SVG,
+          loaded via <img> — an externally-referenced SVG image can't see
+          fonts the page itself loaded (Google Fonts, here), so its text
+          silently stayed on the SVG's own fallback stack through a font
+          change instead of picking up the new one, unlike every other
+          "Live-Trak" text in the app (plain HTML, e.g. Login.jsx's own
+          title). Splitting the icon from the text fixes that at the root
+          — the text is now real HTML and always tracks the page font. */}
+      <Link to="/projects" className="flex items-center gap-2 group">
+        <img src="/live-trak-icon.svg?v=3" alt="" className="h-10 w-10 shrink-0" />
+        <span className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Live-Trak</span>
       </Link>
 
       {!isCanvas && (
