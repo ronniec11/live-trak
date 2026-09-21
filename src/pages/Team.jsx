@@ -191,7 +191,7 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
   )
 }
 
-function PersonCard({ person, currentUserId, onClose, onEdit, onRemove, onRestore }) {
+function PersonCard({ person, currentUserId, viewerIsAdmin, onClose, onEdit, onRemove, onRestore }) {
   const [projects, setProjects] = useState(null) // null = loading
   const isSelf = person.id === currentUserId
   const isActive = person.active !== false
@@ -267,15 +267,15 @@ function PersonCard({ person, currentUserId, onClose, onEdit, onRemove, onRestor
           <button onClick={onClose} className="btn-secondary flex-1">Close</button>
           <button onClick={onEdit} className="btn-primary flex-1">Edit</button>
         </div>
-        {isActive && !isSelf && (
+        {viewerIsAdmin && isActive && !isSelf && (
           <button onClick={() => onRemove(person)} className="btn-ghost w-full mt-2 text-red-500 hover:bg-red-500/10">
             Remove from Team
           </button>
         )}
-        {!isActive && (
+        {viewerIsAdmin && !isActive && (
           <button onClick={() => onRestore(person)} className="btn-secondary w-full mt-2">Restore to Team</button>
         )}
-        {isSelf && (
+        {viewerIsAdmin && isSelf && (
           <p className="text-xs text-muted text-center mt-2">You can't remove yourself — have another admin do it.</p>
         )}
       </div>
@@ -320,13 +320,36 @@ export default function Team() {
   // Removing someone deactivates their profile rather than deleting it —
   // their past sessions/reports still reference it (see
   // supabase-migration-team-active.sql), and it's reversible. The actual
-  // lockout is ProtectedRoute.jsx signing them out once this loads.
+  // lockout is ProtectedRoute.jsx signing them out once this loads. Also
+  // clears every project_members row they're in — deactivating alone left
+  // a removed person still listed (and still effectively a member, since
+  // that's what every scope's own RLS actually checks) on any project they
+  // were on, which is exactly the bug just reported: an old, wrong-email
+  // duplicate stayed on a project's Team Members after being "removed."
   async function removePerson(person) {
-    if (!confirm(`Remove ${person.full_name || person.email} from the team? They'll no longer be able to sign in, but their name stays on any past work they logged.`)) return
-    const { error } = await supabase.from('profiles').update({ active: false }).eq('id', person.id)
-    if (error) {
-      setToast(error.message)
+    if (!confirm(`Remove ${person.full_name || person.email} from the team? They'll no longer be able to sign in or show up as a member on any project, but their name stays on any past work they logged.`)) return
+    // .select().single() on purpose — a plain .update() with no .select()
+    // reports success even if RLS blocks it (e.g. a pm/superintendent
+    // clicking this — deactivating is admin-only, same as editing role),
+    // which is exactly the silent-no-op failure mode this codebase has hit
+    // more than once now.
+    const { data: updated, error: pErr } = await supabase.from('profiles').update({ active: false }).eq('id', person.id).select().single()
+    if (pErr) {
+      setToast(pErr.message)
       setTimeout(() => setToast(''), 4000)
+      return
+    }
+    if (!updated) {
+      setToast("Nothing was removed — you may not have permission (removing is admin-only).")
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    const { error: mErr } = await supabase.from('project_members').delete().eq('user_id', person.id)
+    if (mErr) {
+      setToast(`Removed, but couldn't clear their project memberships: ${mErr.message}`)
+      setTimeout(() => setToast(''), 4000)
+      setViewPerson(null)
+      loadPeople()
       return
     }
     setToast(`${person.full_name || person.email} removed from the team.`)
@@ -335,14 +358,22 @@ export default function Team() {
     loadPeople()
   }
 
+  // Restoring only reactivates sign-in — it does not re-add whatever
+  // project memberships removePerson cleared, since there's no way to know
+  // which of those (if any) should still apply.
   async function restorePerson(person) {
-    const { error } = await supabase.from('profiles').update({ active: true }).eq('id', person.id)
+    const { data: updated, error } = await supabase.from('profiles').update({ active: true }).eq('id', person.id).select().single()
     if (error) {
       setToast(error.message)
       setTimeout(() => setToast(''), 4000)
       return
     }
-    setToast(`${person.full_name || person.email} restored to the team.`)
+    if (!updated) {
+      setToast("Nothing was restored — you may not have permission (restoring is admin-only).")
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    setToast(`${person.full_name || person.email} restored to the team. Add them back to any project they need.`)
     setTimeout(() => setToast(''), 3000)
     setViewPerson(null)
     loadPeople()
@@ -477,6 +508,7 @@ export default function Team() {
         <PersonCard
           person={viewPerson}
           currentUserId={profile?.id}
+          viewerIsAdmin={profile?.role === 'admin'}
           onClose={() => setViewPerson(null)}
           onEdit={() => { setEditPerson(viewPerson); setViewPerson(null) }}
           onRemove={removePerson}
