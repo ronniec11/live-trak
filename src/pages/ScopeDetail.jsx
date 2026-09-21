@@ -210,7 +210,10 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
   useEffect(() => {
     supabase.from('profiles').select('*').order('full_name').then(({ data, error: dErr }) => {
       if (dErr) { setError(dErr.message); setDirectory([]); return }
-      setDirectory((data || []).filter(p => !existingMemberIds.includes(p.id)))
+      // Excludes anyone removed from the team (see Team.jsx) — filtered
+      // client-side so this still works before
+      // supabase-migration-team-active.sql has been run.
+      setDirectory((data || []).filter(p => !existingMemberIds.includes(p.id) && p.active !== false))
     })
   }, [])
 

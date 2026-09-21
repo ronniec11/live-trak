@@ -169,8 +169,10 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
   )
 }
 
-function PersonCard({ person, onClose, onEdit }) {
+function PersonCard({ person, currentUserId, onClose, onEdit, onRemove, onRestore }) {
   const [projects, setProjects] = useState(null) // null = loading
+  const isSelf = person.id === currentUserId
+  const isActive = person.active !== false
 
   useEffect(() => {
     let cancelled = false
@@ -205,8 +207,10 @@ function PersonCard({ person, onClose, onEdit }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{person.full_name || '(no name)'}</p>
-              <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${person.last_login_at ? 'bg-accent/10 text-accent' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'}`}>
-                {person.last_login_at ? 'Active' : 'Invited'}
+              <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${
+                !isActive ? 'bg-red-500/10 text-red-500' : person.last_login_at ? 'bg-accent/10 text-accent' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+              }`}>
+                {!isActive ? 'Removed' : person.last_login_at ? 'Active' : 'Invited'}
               </span>
             </div>
             <p className="text-xs text-muted capitalize">{ROLE_LABELS[person.role] || person.role}</p>
@@ -241,6 +245,17 @@ function PersonCard({ person, onClose, onEdit }) {
           <button onClick={onClose} className="btn-secondary flex-1">Close</button>
           <button onClick={onEdit} className="btn-primary flex-1">Edit</button>
         </div>
+        {isActive && !isSelf && (
+          <button onClick={() => onRemove(person)} className="btn-ghost w-full mt-2 text-red-500 hover:bg-red-500/10">
+            Remove from Team
+          </button>
+        )}
+        {!isActive && (
+          <button onClick={() => onRestore(person)} className="btn-secondary w-full mt-2">Restore to Team</button>
+        )}
+        {isSelf && (
+          <p className="text-xs text-muted text-center mt-2">You can't remove yourself — have another admin do it.</p>
+        )}
       </div>
     </div>
   )
@@ -262,6 +277,7 @@ export default function Team() {
   const [viewPerson, setViewPerson] = useState(null)
   const [resendingId, setResendingId] = useState(null)
   const [toast, setToast] = useState('')
+  const [showRemoved, setShowRemoved] = useState(false)
 
   const canAccessTeam = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
 
@@ -278,6 +294,37 @@ export default function Team() {
   }
 
   useEffect(() => { if (canAccessTeam) loadPeople() }, [canAccessTeam])
+
+  // Removing someone deactivates their profile rather than deleting it —
+  // their past sessions/reports still reference it (see
+  // supabase-migration-team-active.sql), and it's reversible. The actual
+  // lockout is ProtectedRoute.jsx signing them out once this loads.
+  async function removePerson(person) {
+    if (!confirm(`Remove ${person.full_name || person.email} from the team? They'll no longer be able to sign in, but their name stays on any past work they logged.`)) return
+    const { error } = await supabase.from('profiles').update({ active: false }).eq('id', person.id)
+    if (error) {
+      setToast(error.message)
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    setToast(`${person.full_name || person.email} removed from the team.`)
+    setTimeout(() => setToast(''), 3000)
+    setViewPerson(null)
+    loadPeople()
+  }
+
+  async function restorePerson(person) {
+    const { error } = await supabase.from('profiles').update({ active: true }).eq('id', person.id)
+    if (error) {
+      setToast(error.message)
+      setTimeout(() => setToast(''), 4000)
+      return
+    }
+    setToast(`${person.full_name || person.email} restored to the team.`)
+    setTimeout(() => setToast(''), 3000)
+    setViewPerson(null)
+    loadPeople()
+  }
 
   async function resendInvite(person) {
     setResendingId(person.id)
@@ -299,6 +346,9 @@ export default function Team() {
 
   if (!canAccessTeam) return null
 
+  const activePeople = people.filter(p => p.active !== false)
+  const removedPeople = people.filter(p => p.active === false)
+
   return (
     <Layout>
       <div className="max-w-3xl mx-auto px-4 py-8">
@@ -319,42 +369,82 @@ export default function Team() {
         {loading ? (
           <p className="text-sm text-muted">Loading...</p>
         ) : (
-          <div className="card divide-y divide-border">
-            {people.map(p => (
-              <div
-                key={p.id} onClick={() => setViewPerson(p)}
-                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-surface-2 -mx-2 px-2 rounded-lg transition-colors"
-              >
+          <>
+            <div className="card divide-y divide-border">
+              {activePeople.map(p => (
                 <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-bg shrink-0"
-                  style={{ backgroundColor: p.avatar_color || '#4ade80' }}
+                  key={p.id} onClick={() => setViewPerson(p)}
+                  className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-surface-2 -mx-2 px-2 rounded-lg transition-colors"
                 >
-                  {(p.full_name || p.email || 'U')[0].toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{p.full_name || '(no name)'}</p>
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${p.last_login_at ? 'bg-accent/10 text-accent' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'}`}>
-                      {p.last_login_at ? 'Active' : 'Invited'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted truncate">
-                    {p.email}{p.phone ? ` · ${p.phone}` : ''}{p.company ? ` · ${p.company}` : ''}
-                  </p>
-                </div>
-                <span className="text-xs text-muted capitalize shrink-0">{ROLE_LABELS[p.role] || p.role}</span>
-                {!p.last_login_at && (
-                  <button
-                    onClick={e => { e.stopPropagation(); resendInvite(p) }} disabled={resendingId === p.id}
-                    className="btn-ghost py-1 px-2 text-xs shrink-0"
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-bg shrink-0"
+                    style={{ backgroundColor: p.avatar_color || '#4ade80' }}
                   >
-                    {resendingId === p.id ? 'Sending...' : 'Resend Invite'}
-                  </button>
+                    {(p.full_name || p.email || 'U')[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{p.full_name || '(no name)'}</p>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${p.last_login_at ? 'bg-accent/10 text-accent' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'}`}>
+                        {p.last_login_at ? 'Active' : 'Invited'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted truncate">
+                      {p.email}{p.phone ? ` · ${p.phone}` : ''}{p.company ? ` · ${p.company}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-xs text-muted capitalize shrink-0">{ROLE_LABELS[p.role] || p.role}</span>
+                  {!p.last_login_at && (
+                    <button
+                      onClick={e => { e.stopPropagation(); resendInvite(p) }} disabled={resendingId === p.id}
+                      className="btn-ghost py-1 px-2 text-xs shrink-0"
+                    >
+                      {resendingId === p.id ? 'Sending...' : 'Resend Invite'}
+                    </button>
+                  )}
+                </div>
+              ))}
+              {activePeople.length === 0 && <p className="text-sm text-muted py-4">No one yet.</p>}
+            </div>
+
+            {removedPeople.length > 0 && (
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowRemoved(v => !v)}
+                  className="text-xs text-muted hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
+                >
+                  <svg className={`w-3 h-3 transition-transform ${showRemoved ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  Removed ({removedPeople.length})
+                </button>
+                {showRemoved && (
+                  <div className="card divide-y divide-border mt-2 opacity-70">
+                    {removedPeople.map(p => (
+                      <div key={p.id} onClick={() => setViewPerson(p)} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-surface-2 -mx-2 px-2 rounded-lg transition-colors">
+                        <div
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-bg shrink-0"
+                          style={{ backgroundColor: p.avatar_color || '#4ade80' }}
+                        >
+                          {(p.full_name || p.email || 'U')[0].toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{p.full_name || '(no name)'}</p>
+                          <p className="text-xs text-muted truncate">{p.email}</p>
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); restorePerson(p) }}
+                          className="btn-ghost py-1 px-2 text-xs shrink-0"
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            ))}
-            {people.length === 0 && <p className="text-sm text-muted py-4">No one yet.</p>}
-          </div>
+            )}
+          </>
         )}
       </div>
 
@@ -364,8 +454,11 @@ export default function Team() {
       {viewPerson && (
         <PersonCard
           person={viewPerson}
+          currentUserId={profile?.id}
           onClose={() => setViewPerson(null)}
           onEdit={() => { setEditPerson(viewPerson); setViewPerson(null) }}
+          onRemove={removePerson}
+          onRestore={restorePerson}
         />
       )}
       {editPerson && (

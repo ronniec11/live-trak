@@ -324,7 +324,12 @@ export default function CompanyHub() {
       ])
       if (orgErr) throw orgErr
       setOrg(orgData)
-      setPeople(peopleData || [])
+      // Excludes anyone removed from the team (see Team.jsx) — filtered
+      // client-side so this still works before
+      // supabase-migration-team-active.sql has been run. The full roster,
+      // removed people included, still lives on the Team page this links
+      // to ("Manage Team" below).
+      setPeople((peopleData || []).filter(p => p.active !== false))
       setUsage({ sessions: sessionCount ?? 0, pages: pageCount ?? 0 })
     } catch (err) {
       console.error('[CompanyHub] load error:', err)

@@ -977,7 +977,12 @@ export default function ProjectDetail() {
 
       setJob(jobData)
       setScopes(scopesData || [])
-      setDirectory(directoryData || [])
+      // Excludes anyone removed from the team (see Team.jsx) — filtered
+      // client-side rather than with .eq('active', true) so this still
+      // works before supabase-migration-team-active.sql has been run
+      // (active is undefined on every row until then, which reads as
+      // "not removed" here, same as PersonCard/Team.jsx's own check).
+      setDirectory((directoryData || []).filter(p => p.active !== false))
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
