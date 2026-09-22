@@ -71,6 +71,7 @@ async function uploadBlob(projectId, pageId, storageKey, blob, type, ext) {
 // tried once the previous attempt's error names it specifically.
 const OPTIONAL_COLUMN_GROUPS = [
   { test: /crew_size|hours_worked/, keys: ['crew_size', 'hours_worked'] },
+  { test: /\btotal_hours\b/, keys: ['total_hours'] },
   { test: /\blf\b|lf_data/, keys: ['lf', 'lf_data'] },
   { test: /\bphotos\b/, keys: ['photos'] },
 ]

@@ -47,9 +47,13 @@ function shapeRow(s) {
   // Same lunch-break deduction as the Sheet Report (Canvas.jsx) — Scope
   // Settings' Lunch Break (minutes) comes off each session's hours before
   // multiplying by crew, so Total Hours (and SF/Person-Hour, derived from
-  // it) reflect actual production time, not raw crew x hours.
+  // it) reflect actual production time, not raw crew x hours. An explicit
+  // total_hours override (set in the session edit modal when the crew x
+  // hours math doesn't fit reality, e.g. someone left early) is used as-is
+  // instead — it's the real total already, not something to deduct from.
   const lunchHours = (s.pages?.projects?.lunch_break_minutes || 0) / 60
-  const totalHours = (crew > 0 && hours > 0) ? crew * Math.max(0, hours - lunchHours) : null
+  const override = s.total_hours != null ? parseFloat(s.total_hours) : null
+  const totalHours = override != null ? override : ((crew > 0 && hours > 0) ? crew * Math.max(0, hours - lunchHours) : null)
   const sfPerPersonHour = totalHours > 0 ? sf / totalHours : null
   return {
     person: s.profiles?.full_name || 'Unknown',
@@ -116,15 +120,16 @@ export default function Reports() {
       const pageIds = (pgs || []).map(p => p.id)
       if (pageIds.length === 0) { setRows([]); setHasRun(true); return }
 
-      // lf, crew_size/hours_worked, and lunch_break_minutes are independent
-      // migrations — any subset might not have been run yet, so each flag
-      // falls back on its own rather than assuming they're all missing
-      // together (see the one-at-a-time retries below).
-      function buildColumns({ lf = true, crewHours = true, lunch = true } = {}) {
+      // lf, crew_size/hours_worked, total_hours, and lunch_break_minutes are
+      // independent migrations — any subset might not have been run yet, so
+      // each flag falls back on its own rather than assuming they're all
+      // missing together (see the one-at-a-time retries below).
+      function buildColumns({ lf = true, crewHours = true, totalHours = true, lunch = true } = {}) {
         const cols = ['id', 'page_id', 'user_id', 'name', 'sf']
         if (lf) cols.push('lf')
         cols.push('work_date', 'created_at', 'count_data')
         if (crewHours) cols.push('crew_size', 'hours_worked')
+        if (totalHours) cols.push('total_hours')
         cols.push('profiles(full_name)')
         cols.push(`pages(name, project_id, projects(name${lunch ? ', lunch_break_minutes' : ''}))`)
         return cols.join(', ')
@@ -138,7 +143,7 @@ export default function Reports() {
         return q
       }
 
-      const flags = { lf: true, crewHours: true, lunch: true }
+      const flags = { lf: true, crewHours: true, totalHours: true, lunch: true }
       let { data, error: sessErr } = await buildQuery(buildColumns(flags))
       let missingMigration = false
       if (sessErr && /\blf\b/.test(sessErr.message)) {
@@ -151,6 +156,12 @@ export default function Reports() {
         console.warn('[Reports] crew_size/hours_worked columns not found, retrying without them — run the migration noted in Canvas.jsx / supabase-schema.sql.')
         missingMigration = true
         flags.crewHours = false
+        ;({ data, error: sessErr } = await buildQuery(buildColumns(flags)))
+      }
+      if (sessErr && /\btotal_hours\b/.test(sessErr.message)) {
+        console.warn('[Reports] total_hours column not found, retrying without it — run supabase-migration-session-total-hours.sql.')
+        missingMigration = true
+        flags.totalHours = false
         ;({ data, error: sessErr } = await buildQuery(buildColumns(flags)))
       }
       if (sessErr && /lunch_break_minutes/.test(sessErr.message)) {

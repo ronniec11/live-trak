@@ -19,6 +19,12 @@ import './Canvas.css'
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS crew_size integer;
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS hours_worked numeric;
 //
+// NOTE: Run this migration to enable overriding the Total Hours shown in
+// those same dialogs (defaults to crew_size x hours_worked, editable to
+// account for real-world attendance irregularities, e.g. someone leaving
+// early) — see supabase-migration-session-total-hours.sql:
+// ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS total_hours numeric;
+//
 // NOTE: Run this migration to enable the Linear Footage tool:
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS lf numeric;
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS lf_data jsonb;
@@ -213,6 +219,13 @@ export default function Canvas() {
     let savePendingPhotos = []
     let editPendingPhotos = []
     let editKeptPhotoUrls = []
+    // True once the person has typed directly into the Total Hours field
+    // (vs. it just showing the crew x hours default) — while true, crew/hours
+    // edits stop silently overwriting it, so an explicit override (e.g. one
+    // crew member left early, so the true total is less than crew x hours)
+    // sticks until the field is cleared or the modal is reopened.
+    let saveTotalHoursTouched = false
+    let editTotalHoursTouched = false
 
     let calibrating   = false
     let calibPt1      = null
@@ -2185,28 +2198,51 @@ export default function Canvas() {
       openSaveModal()
     }
 
-    // Crew size × hours worked, shown live as either field is typed — pure
-    // display convenience (e.g. "8 crew, 8 hrs" -> "64 total hours"), not
-    // the lunch-deducted man-hours the Sheet/Production reports compute
-    // (see sessionManHours) — this is just the direct multiplication of
-    // whatever's currently in the two fields, so it always matches what the
-    // person just typed.
-    function totalHoursText(crewRaw, hoursRaw) {
+    // Crew size × hours worked is the *default* Total Hours, live-recomputed
+    // as either field is typed — but the field itself is editable, so a
+    // supervisor can override it when the math doesn't fit reality (e.g. 8
+    // crew for 8 hours, but one person left after 4). An explicit override
+    // is what sessionManHours (Sheet Report) and Reports.jsx use in place of
+    // crew x (hours - lunch) once one exists — it's the person asserting the
+    // real total, not something to further adjust.
+    function computeDefaultTotalHours(crewRaw, hoursRaw) {
       const crew = parseFloat(crewRaw)
       const hours = parseFloat(hoursRaw)
-      if (!crew || !hours) return '—'
-      const total = crew * hours
-      return `${total % 1 === 0 ? total : total.toFixed(2)} total hours`
+      if (!crew || !hours) return null
+      return crew * hours
+    }
+    function formatTotalHours(n) {
+      if (n == null || isNaN(n)) return ''
+      return String(n % 1 === 0 ? n : n.toFixed(2))
+    }
+    // A typed Total Hours value only counts as an override if it actually
+    // differs from the crew x hours default — otherwise it's just what
+    // auto-fill already put there, and should keep tracking crew/hours edits
+    // (and not be persisted as a separate total_hours value at all).
+    function resolveTotalHours(crewRaw, hoursRaw, totalRaw) {
+      const totalVal = totalRaw != null && totalRaw !== '' ? parseFloat(totalRaw) : null
+      if (totalVal == null || isNaN(totalVal)) return null
+      const defaultVal = computeDefaultTotalHours(crewRaw, hoursRaw)
+      if (defaultVal != null && Math.abs(totalVal - defaultVal) < 0.001) return null
+      return totalVal
     }
     function updateSaveTotalHours() {
+      if (saveTotalHoursTouched) return
       if (saveTotalHoursRef.current) {
-        saveTotalHoursRef.current.textContent = totalHoursText(saveCrewRef.current?.value, saveHoursRef.current?.value)
+        saveTotalHoursRef.current.value = formatTotalHours(computeDefaultTotalHours(saveCrewRef.current?.value, saveHoursRef.current?.value))
       }
     }
     function updateEditTotalHours() {
+      if (editTotalHoursTouched) return
       if (editTotalHoursRef.current) {
-        editTotalHoursRef.current.textContent = totalHoursText(editCrewRef.current?.value, editHoursRef.current?.value)
+        editTotalHoursRef.current.value = formatTotalHours(computeDefaultTotalHours(editCrewRef.current?.value, editHoursRef.current?.value))
       }
+    }
+    function handleSaveTotalHoursInput() {
+      saveTotalHoursTouched = !!saveTotalHoursRef.current?.value?.trim()
+    }
+    function handleEditTotalHoursInput() {
+      editTotalHoursTouched = !!editTotalHoursRef.current?.value?.trim()
     }
 
     function openSaveModal() {
@@ -2215,6 +2251,8 @@ export default function Canvas() {
       if (saveDateRef.current)  saveDateRef.current.value  = getCurrentDate()
       if (saveCrewRef.current)  saveCrewRef.current.value  = ''
       if (saveHoursRef.current) saveHoursRef.current.value = ''
+      saveTotalHoursTouched = false
+      if (saveTotalHoursRef.current) saveTotalHoursRef.current.value = ''
       updateSaveTotalHours()
       savePendingPhotos = []
       renderSavePhotos()
@@ -2284,8 +2322,10 @@ export default function Canvas() {
       const sessionName = nameRaw || userName
       const crewRaw  = saveCrewRef.current?.value
       const hoursRaw = saveHoursRef.current?.value
+      const totalRaw = saveTotalHoursRef.current?.value
       const crewSize    = crewRaw  ? parseInt(crewRaw, 10)   : null
       const hoursWorked = hoursRaw ? parseFloat(hoursRaw)    : null
+      const totalHours  = resolveTotalHours(crewRaw, hoursRaw, totalRaw)
       closeSaveModal()
 
       const sf   = toSF(countPx(liveHlCanvas))
@@ -2317,7 +2357,7 @@ export default function Canvas() {
         hlCanvas: snapHL, penCanvas: snapPen,
         countMarkers: snapCount,
         lfLines: snapLFLines,
-        crewSize, hoursWorked,
+        crewSize, hoursWorked, totalHours,
         pageId: activePage.id, pageName: activePage.name,
         photos: [],
         _pendingPhotoFiles: savePendingPhotos,
@@ -2494,6 +2534,7 @@ export default function Canvas() {
           : null,
         crew_size: session.crewSize ?? null,
         hours_worked: session.hoursWorked ?? null,
+        total_hours: session.totalHours ?? null,
         lf: session.lf || null,
         lf_data: session.lfLines?.length > 0
           ? { w: activePage.image.width, h: activePage.image.height, lines: session.lfLines }
@@ -2530,6 +2571,7 @@ export default function Canvas() {
             : null,
           crew_size:      session.crewSize ?? null,
           hours_worked:   session.hoursWorked ?? null,
+          total_hours:    session.totalHours ?? null,
           lf:             session.lf || null,
           // Lines are stored as raw image-space points with no embedded
           // reference, same reasoning as count_data — bundle the image size
@@ -2556,6 +2598,17 @@ export default function Canvas() {
           ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
           if (!error && (session.crewSize != null || session.hoursWorked != null)) {
             alert('Session saved, but Crew Size / Hours Worked were NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (crew_size/hours_worked ALTER TABLE) in the Supabase SQL editor, then re-enter them via the session\'s edit (pencil) button.')
+          }
+        }
+        if (error && /\btotal_hours\b/.test(error.message)) {
+          // Separate migration from crew_size/hours_worked — falls back on
+          // its own so a DB that already has those two but not this one
+          // doesn't lose them here too.
+          console.warn('[Canvas] total_hours column missing on insert, retrying without it.')
+          const { total_hours, ...rest } = insertPayload
+          ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
+          if (!error && session.totalHours != null) {
+            alert('Session saved, but the Total Hours override was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (total_hours ALTER TABLE) in the Supabase SQL editor, then re-enter it via the session\'s edit (pencil) button.')
           }
         }
         if (error && /\blf\b|lf_data/.test(error.message)) {
@@ -2847,7 +2900,13 @@ export default function Canvas() {
       if (editColorsRef.current) editColorsRef.current.querySelectorAll('.ct-modal-cc').forEach(el => el.classList.toggle('sel', el.dataset.c === s.color))
       if (editCrewRef.current) editCrewRef.current.value = s.crewSize ?? ''
       if (editHoursRef.current) editHoursRef.current.value = s.hoursWorked ?? ''
-      updateEditTotalHours()
+      if (s.totalHours != null) {
+        editTotalHoursTouched = true
+        if (editTotalHoursRef.current) editTotalHoursRef.current.value = formatTotalHours(s.totalHours)
+      } else {
+        editTotalHoursTouched = false
+        updateEditTotalHours()
+      }
       editKeptPhotoUrls = [...(s.photos || [])]
       editPendingPhotos = []
       renderEditPhotos()
@@ -2862,8 +2921,10 @@ export default function Canvas() {
       const sel     = editColorsRef.current?.querySelector('.ct-modal-cc.sel')
       const crewRaw  = editCrewRef.current?.value
       const hoursRaw = editHoursRef.current?.value
+      const totalRaw = editTotalHoursRef.current?.value
       const newCrew  = crewRaw  ? parseInt(crewRaw, 10) : null
       const newHours = hoursRaw ? parseFloat(hoursRaw) : null
+      const newTotalHours = resolveTotalHours(crewRaw, hoursRaw, totalRaw)
       // SF/LF/Count are read-only here on purpose (see the disabled inputs
       // below) — they're derived from the actual painted markup, and typing
       // a number in directly (bypassing the markup entirely) is exactly the
@@ -2877,6 +2938,7 @@ export default function Canvas() {
       if (sel) s.color = sel.dataset.c
       s.crewSize    = (newCrew != null && !isNaN(newCrew)) ? newCrew : null
       s.hoursWorked = (newHours != null && !isNaN(newHours)) ? newHours : null
+      s.totalHours  = newTotalHours
       const newPhotoFiles = editPendingPhotos
       const keptPhotoUrls = editKeptPhotoUrls
       editPendingPhotos = []; editKeptPhotoUrls = []
@@ -2888,7 +2950,7 @@ export default function Canvas() {
       if (photoResult.failed.length > 0) await queueFailedPhotos(s, photoResult.failed, s.photos)
       if (s.supabaseId) {
         console.log('[Canvas] Updating session in Supabase:', s.supabaseId, s.name)
-        const editFields = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked }
+        const editFields = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked, total_hours: s.totalHours }
         const payload = { ...editFields, photos: s.photos }
         try {
           let { error } = await supabase.from('sessions').update(payload).eq('id', s.supabaseId)
@@ -2905,6 +2967,16 @@ export default function Canvas() {
           }
           if (!error && crewHoursDropped) {
             alert('Session saved, but Crew Size / Hours Worked were NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (crew_size/hours_worked ALTER TABLE) in the Supabase SQL editor, then re-enter them.')
+          }
+          let totalHoursDropped = false
+          if (error && /\btotal_hours\b/.test(error.message)) {
+            console.warn('[Canvas] total_hours column missing, retrying without it — run the migration noted at the top of this file.')
+            totalHoursDropped = true
+            const { total_hours, ...rest } = payload
+            ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+          }
+          if (!error && totalHoursDropped) {
+            alert('Session saved, but the Total Hours override was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (total_hours ALTER TABLE) in the Supabase SQL editor, then re-enter it.')
           }
           let lfDropped = false
           if (error && /\blf\b/.test(error.message)) {
@@ -3529,7 +3601,11 @@ export default function Canvas() {
       // this derived figure (and what it feeds — Total Hours, SF/Man-Hour)
       // reflects the deduction.
       const lunchHours = lunchBreakMinutes / 60
-      const sessionManHours = s => (s.crewSize || 0) * Math.max(0, (s.hoursWorked || 0) - lunchHours)
+      // An explicit Total Hours override (set when the crew x hours math
+      // doesn't fit reality — e.g. someone left early) is used as-is here:
+      // it's the person directly asserting the real total, not something to
+      // apply the lunch deduction to on top of.
+      const sessionManHours = s => (s.totalHours != null ? s.totalHours : (s.crewSize || 0) * Math.max(0, (s.hoursWorked || 0) - lunchHours))
       const totalManHours = included.reduce((a, s) => a + sessionManHours(s), 0)
 
       lastReportData = {
@@ -4109,6 +4185,7 @@ export default function Canvas() {
           time:         dbSess.created_at ? new Date(dbSess.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '',
           crewSize:     dbSess.crew_size ?? null,
           hoursWorked:  dbSess.hours_worked ?? null,
+          totalHours:   dbSess.total_hours ?? null,
           photos:       Array.isArray(dbSess.photos) ? dbSess.photos : [],
           supabaseId:   dbSess.id,
         })
@@ -4388,6 +4465,7 @@ export default function Canvas() {
           time: cs.created_at ? new Date(cs.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
           crewSize: cs.crew_size ?? null,
           hoursWorked: cs.hours_worked ?? null,
+          totalHours: cs.total_hours ?? null,
           photos: Array.isArray(cs.photos) ? cs.photos : [],
           supabaseId: cs.id,
         })
@@ -4769,6 +4847,7 @@ export default function Canvas() {
       handleSavePhotoPick, handleEditPhotoPick,
       ctxSetTool,
       updateEditTotalHours, updateSaveTotalHours,
+      handleEditTotalHoursInput, handleSaveTotalHoursInput,
     }
 
     init()
@@ -5034,7 +5113,8 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Total Hours</label>
-            <span ref={editTotalHoursRef} className="ct-modal-input" style={{ display: 'block', cursor: 'default', opacity: 0.7 }} />
+            <input ref={editTotalHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="crew x hours"
+              onInput={() => api.current.handleEditTotalHoursInput?.()} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Color</label>
@@ -5077,7 +5157,8 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Total Hours</label>
-            <span ref={saveTotalHoursRef} className="ct-modal-input" style={{ display: 'block', cursor: 'default', opacity: 0.7 }} />
+            <input ref={saveTotalHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="crew x hours"
+              onInput={() => api.current.handleSaveTotalHoursInput?.()} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Photos (optional)</label>
