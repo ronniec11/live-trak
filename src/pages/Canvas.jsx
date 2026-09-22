@@ -2716,6 +2716,12 @@ export default function Canvas() {
       const empty = emptyMsgRef.current
       const all   = []
       pages.forEach(pg => pg.sessions.forEach(s => all.push({s, pg})))
+      // Newest work date first, oldest last — sessions are otherwise still in
+      // whatever order they were loaded/created in, so a session logged today
+      // for earlier work (backdated via "Date Performed") used to show up
+      // wherever it was created instead of sinking to the bottom with the
+      // rest of that date's work.
+      all.sort((a, b) => (b.s.date + (b.s.time || '')).localeCompare(a.s.date + (a.s.time || '')))
       list.querySelectorAll('.ct-scard').forEach(c => c.remove())
       if (!all.length) { empty.style.display = 'block'; return }
       empty.style.display = 'none'
