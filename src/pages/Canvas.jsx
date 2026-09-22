@@ -118,6 +118,7 @@ export default function Canvas() {
   const editCountRef     = useRef(null)
   const editCrewRef      = useRef(null)
   const editHoursRef     = useRef(null)
+  const editTotalHoursRef = useRef(null)
   const editDateRef      = useRef(null)
   const editPhotosRef    = useRef(null)   // thumbnail strip container
   const editPhotoInputRef = useRef(null)  // hidden <input type=file>
@@ -127,6 +128,7 @@ export default function Canvas() {
   const saveDateRef      = useRef(null)
   const saveCrewRef      = useRef(null)
   const saveHoursRef     = useRef(null)
+  const saveTotalHoursRef = useRef(null)
   const savePhotosRef    = useRef(null)   // thumbnail strip container
   const savePhotoInputRef = useRef(null)  // hidden <input type=file>
   // history modal
@@ -2183,12 +2185,37 @@ export default function Canvas() {
       openSaveModal()
     }
 
+    // Crew size × hours worked, shown live as either field is typed — pure
+    // display convenience (e.g. "8 crew, 8 hrs" -> "64 total hours"), not
+    // the lunch-deducted man-hours the Sheet/Production reports compute
+    // (see sessionManHours) — this is just the direct multiplication of
+    // whatever's currently in the two fields, so it always matches what the
+    // person just typed.
+    function totalHoursText(crewRaw, hoursRaw) {
+      const crew = parseFloat(crewRaw)
+      const hours = parseFloat(hoursRaw)
+      if (!crew || !hours) return '—'
+      const total = crew * hours
+      return `${total % 1 === 0 ? total : total.toFixed(2)} total hours`
+    }
+    function updateSaveTotalHours() {
+      if (saveTotalHoursRef.current) {
+        saveTotalHoursRef.current.textContent = totalHoursText(saveCrewRef.current?.value, saveHoursRef.current?.value)
+      }
+    }
+    function updateEditTotalHours() {
+      if (editTotalHoursRef.current) {
+        editTotalHoursRef.current.textContent = totalHoursText(editCrewRef.current?.value, editHoursRef.current?.value)
+      }
+    }
+
     function openSaveModal() {
       const userName = userProfile?.full_name || user.email?.split('@')[0] || 'Session'
       if (saveNameRef.current)  saveNameRef.current.value  = userName
       if (saveDateRef.current)  saveDateRef.current.value  = getCurrentDate()
       if (saveCrewRef.current)  saveCrewRef.current.value  = ''
       if (saveHoursRef.current) saveHoursRef.current.value = ''
+      updateSaveTotalHours()
       savePendingPhotos = []
       renderSavePhotos()
       if (saveModalRef.current) saveModalRef.current.classList.add('open')
@@ -2820,6 +2847,7 @@ export default function Canvas() {
       if (editColorsRef.current) editColorsRef.current.querySelectorAll('.ct-modal-cc').forEach(el => el.classList.toggle('sel', el.dataset.c === s.color))
       if (editCrewRef.current) editCrewRef.current.value = s.crewSize ?? ''
       if (editHoursRef.current) editHoursRef.current.value = s.hoursWorked ?? ''
+      updateEditTotalHours()
       editKeptPhotoUrls = [...(s.photos || [])]
       editPendingPhotos = []
       renderEditPhotos()
@@ -4740,6 +4768,7 @@ export default function Canvas() {
       closeSaveModal, confirmSaveSession,
       handleSavePhotoPick, handleEditPhotoPick,
       ctxSetTool,
+      updateEditTotalHours, updateSaveTotalHours,
     }
 
     init()
@@ -4997,11 +5026,15 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Crew Size</label>
-            <input ref={editCrewRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="e.g. 3" />
+            <input ref={editCrewRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="e.g. 3" onInput={() => api.current.updateEditTotalHours?.()} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Hours Worked</label>
-            <input ref={editHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="e.g. 4.5" />
+            <input ref={editHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="e.g. 4.5" onInput={() => api.current.updateEditTotalHours?.()} />
+          </div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Total Hours</label>
+            <span ref={editTotalHoursRef} className="ct-modal-input" style={{ display: 'block', cursor: 'default', opacity: 0.7 }} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Color</label>
@@ -5036,11 +5069,15 @@ export default function Canvas() {
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Crew Size (optional)</label>
-            <input ref={saveCrewRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="e.g. 3" />
+            <input ref={saveCrewRef} className="ct-modal-input" type="number" min="0" step="1" placeholder="e.g. 3" onInput={() => api.current.updateSaveTotalHours?.()} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Hours Worked (optional)</label>
-            <input ref={saveHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="e.g. 4.5" />
+            <input ref={saveHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="e.g. 4.5" onInput={() => api.current.updateSaveTotalHours?.()} />
+          </div>
+          <div className="ct-modal-field">
+            <label className="ct-modal-lbl">Total Hours</label>
+            <span ref={saveTotalHoursRef} className="ct-modal-input" style={{ display: 'block', cursor: 'default', opacity: 0.7 }} />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Photos (optional)</label>
