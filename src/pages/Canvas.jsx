@@ -1776,6 +1776,17 @@ export default function Canvas() {
         if (activeLFLine && !activeLFLine.finished && activeLFLine.points.length <= 1) {
           activeLFLine = null
           drawActiveLFPreview()
+        } else if (activeLFLine && lfDragMode) {
+          // The opposite problem from the stray-point case above: a REAL,
+          // already-finished line whose vertex/body the first finger
+          // happened to land on and start dragging before the second
+          // finger arrived. Left "active" instead of committed here, it
+          // stays exposed to the exact same race on every later pinch —
+          // silently nudged a little further each time, which is what
+          // made the LF/SF total look like it kept changing on its own
+          // just from zooming. Commit it now, same as tapping elsewhere
+          // or switching tools already does.
+          commitLFLine()
         }
         // Same race for Rectangle (a tap-without-drag leaves a zero-size
         // activeRect, its corners all coincident at the touch point) and
@@ -1787,10 +1798,18 @@ export default function Canvas() {
         if (activeRect && (activeRect.maxX - activeRect.minX) < 2 && (activeRect.maxY - activeRect.minY) < 2) {
           activeRect = null; rectFixed = null
           drawActiveRectPreview()
+        } else if (activeRect && rectHandle) {
+          // Same "real shape, not a stray point" race as the LF case above
+          // — a rectangle that can cover most of the screen is an easy
+          // target for a pinch gesture's first finger to land on. Bake it
+          // rather than leave it draggable through the pinch.
+          bakeActiveRect()
         }
         if (activePoly && !activePoly.closed && activePoly.points.length <= 1) {
           activePoly = null
           drawActivePolyPreview()
+        } else if (activePoly && polyDragMode) {
+          bakePolygon()
         }
         touchPainting = false; lastTouchPt = null; rectHandle = null
         polyDragMode = null; polyVertexIdx = null
