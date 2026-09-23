@@ -2041,15 +2041,29 @@ export default function Canvas() {
         else { lastStylusTapEndTime = 0; lastStylusTapEndPos = null }
         stylusTapStartTime = 0; stylusTapStartPos = null
       }
+      // clipLiveHLAgainstSessions is destructive (it erases wherever this
+      // live session overlaps another one's already-painted area) — fine to
+      // re-run after a real paint stroke just added new pixels, but running
+      // it again against UNCHANGED content on every touch lift (this used to
+      // fire unconditionally here, unlike the desktop mouse path's onUp,
+      // which already gated the equivalent block on isPainting) very slowly
+      // erodes any session whose highlighted area touches another one's:
+      // their shared edge is never perfectly crisp (brush/fill
+      // anti-aliasing), so each redundant clip punches out a little more of
+      // that soft boundary than the last, and the SF keeps drifting down —
+      // with no new markup at all — on every zoom, pan, or stray tap.
+      const wasPainting = touchPainting
       touchPainting = false; lastTouchPt = null
       pinchLastDist = 0; pinchLastMid = null
       rectHandle = null
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
-      cancelAnimationFrame(rafId); rafId = 0
-      clipLiveHLAgainstSessions()
-      redrawAll(); updateSF()
-      if (checkHasLiveContent()) updateUnsaved(true)
+      if (wasPainting) {
+        cancelAnimationFrame(rafId); rafId = 0
+        clipLiveHLAgainstSessions()
+        redrawAll(); updateSF()
+        if (checkHasLiveContent()) updateUnsaved(true)
+      }
     }
 
     function onGesturePrevent(e) { e.preventDefault() }
