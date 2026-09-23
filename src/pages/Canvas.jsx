@@ -1166,6 +1166,18 @@ export default function Canvas() {
       return {x: (sx - p.x) / z, y: (sy - p.y) / z}
     }
 
+    // Whole-image-pixel version of s2i — used by the rectangle tool so its
+    // bounds always land on exact pixel boundaries. A rectangle fillRect'd
+    // at fractional coordinates gets anti-aliased along its edges, so the
+    // SF actually counted once it's baked (a real pixel scan of what got
+    // rasterized) can end up visibly different from the exact geometric SF
+    // shown live while sizing it — snapping bounds to whole pixels up front
+    // means both figures are always computed from the same crisp rectangle.
+    function s2iSnapped(sx, sy) {
+      const pt = s2i(sx, sy)
+      return { x: Math.round(pt.x), y: Math.round(pt.y) }
+    }
+
     // Snaps `pt` to the nearest 45°/90° direction from `base`, at the same
     // distance from it — holding Shift while placing an LF or Polygon point
     // locks that segment to a straight horizontal/vertical/diagonal run
@@ -1203,7 +1215,7 @@ export default function Canvas() {
         // shows up until it's cleared. Clear before either tool acts.
         if (soloSession) { soloSession = null; renderSessions() }
         if (tool === 'rect') {
-          const pt = s2i(pos.x, pos.y)
+          const pt = s2iSnapped(pos.x, pos.y)
           if (activeRect) {
             const handle = hitRectHandle(pos.x, pos.y)
             if (handle) { rectHandle = handle; rectFixed = rectAnchorForHandle(handle); return }
@@ -1421,7 +1433,7 @@ export default function Canvas() {
         return
       }
       if (tool === 'rect' && rectHandle) {
-        const pt = s2i(pos.x, pos.y)
+        const pt = s2iSnapped(pos.x, pos.y)
         if (rectHandle === 'move') {
           const dx = pt.x - rectMoveStart.x, dy = pt.y - rectMoveStart.y
           activeRect.minX = rectMoveOrig.minX + dx; activeRect.maxX = rectMoveOrig.maxX + dx
@@ -1827,7 +1839,7 @@ export default function Canvas() {
       // drawing/placing markers hides everything you do until it's cleared.
       if (soloSession) { soloSession = null; renderSessions() }
       if (tool === 'rect') {
-        const pt = s2i(pos.x, pos.y)
+        const pt = s2iSnapped(pos.x, pos.y)
         if (activeRect) {
           const handle = hitRectHandle(pos.x, pos.y)
           if (handle) { rectHandle = handle; rectFixed = rectAnchorForHandle(handle); return }
@@ -1953,7 +1965,7 @@ export default function Canvas() {
       }
       if (tool === 'rect' && rectHandle) {
         const pos = getTouchPos(e)
-        const pt = s2i(pos.x, pos.y)
+        const pt = s2iSnapped(pos.x, pos.y)
         if (rectHandle === 'move') {
           const dx = pt.x - rectMoveStart.x, dy = pt.y - rectMoveStart.y
           activeRect.minX = rectMoveOrig.minX + dx; activeRect.maxX = rectMoveOrig.maxX + dx
