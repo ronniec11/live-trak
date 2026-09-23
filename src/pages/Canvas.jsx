@@ -1166,6 +1166,22 @@ export default function Canvas() {
       return {x: (sx - p.x) / z, y: (sy - p.y) / z}
     }
 
+    // Snaps `pt` to the nearest 45°/90° direction from `base`, at the same
+    // distance from it — holding Shift while placing an LF or Polygon point
+    // locks that segment to a straight horizontal/vertical/diagonal run
+    // instead of whatever angle the mouse happens to be at. Works the same
+    // in screen or image space (uniform zoom preserves angles either way),
+    // so it's used both for the live rubber-band preview (screen coords)
+    // and the point actually committed on click (image coords).
+    function snapToAngle(base, pt) {
+      const dx = pt.x - base.x, dy = pt.y - base.y
+      const dist = Math.hypot(dx, dy)
+      if (dist === 0) return pt
+      const step = Math.PI / 4
+      const angle = Math.round(Math.atan2(dy, dx) / step) * step
+      return { x: base.x + Math.cos(angle) * dist, y: base.y + Math.sin(angle) * dist }
+    }
+
     function getOffset(e) {
       const rect = drawEl.getBoundingClientRect()
       return {x: e.clientX - rect.left, y: e.clientY - rect.top}
@@ -1232,7 +1248,8 @@ export default function Canvas() {
                 return
               }
             }
-            activePoly.points.push(pt)
+            const prevVertex = activePoly.points[activePoly.points.length - 1]
+            activePoly.points.push(e.shiftKey ? snapToAngle(prevVertex, pt) : pt)
             drawActivePolyPreview(); updateSFDisplay(); updateUnsaved(true)
             return
           }
@@ -1265,7 +1282,8 @@ export default function Canvas() {
                 return
               }
             }
-            activeLFLine.points.push(pt)
+            const prevVertex = activeLFLine.points[activeLFLine.points.length - 1]
+            activeLFLine.points.push(e.shiftKey ? snapToAngle(prevVertex, pt) : pt)
             drawActiveLFPreview(); updateUnsaved(true)
             return
           }
@@ -1347,8 +1365,18 @@ export default function Canvas() {
             }
           } else {
             drawEl.style.cursor = 'crosshair'
-            // Rubber-band preview of the next segment while still placing points.
-            if (activePoly) drawActivePolyPreview(pos)
+            // Rubber-band preview of the next segment while still placing
+            // points — snapped to a 45°/90° direction from the last vertex
+            // while Shift is held, matching what a click will actually place.
+            if (activePoly) {
+              let previewPos = pos
+              if (e.shiftKey && activePoly.points.length > 0) {
+                const last = activePoly.points[activePoly.points.length - 1]
+                const z = activePage.zoom, p = activePage.pan
+                previewPos = snapToAngle({x: last.x * z + p.x, y: last.y * z + p.y}, pos)
+              }
+              drawActivePolyPreview(previewPos)
+            }
           }
         }
       } else if (tool === 'lf') {
@@ -1363,8 +1391,18 @@ export default function Canvas() {
             }
           } else {
             drawEl.style.cursor = 'crosshair'
-            // Rubber-band preview of the next segment while still placing points.
-            if (activeLFLine) drawActiveLFPreview(pos)
+            // Rubber-band preview of the next segment while still placing
+            // points — snapped to a 45°/90° direction from the last vertex
+            // while Shift is held, matching what a click will actually place.
+            if (activeLFLine) {
+              let previewPos = pos
+              if (e.shiftKey && activeLFLine.points.length > 0) {
+                const last = activeLFLine.points[activeLFLine.points.length - 1]
+                const z = activePage.zoom, p = activePage.pan
+                previewPos = snapToAngle({x: last.x * z + p.x, y: last.y * z + p.y}, pos)
+              }
+              drawActiveLFPreview(previewPos)
+            }
           }
         }
       } else {
