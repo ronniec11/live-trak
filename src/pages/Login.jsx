@@ -11,14 +11,22 @@ import { supabase } from '../lib/supabase'
 // keeps a couple of other one-off constants local to whichever page uses
 // them instead of a shared constants file.
 const RESET_REDIRECT_URL = 'https://www.live-trak.ai/profile'
+// Same URL, reused rather than a fresh one — it's already allow-listed in
+// Supabase's Auth -> Redirect URLs (see the comment above), and which
+// protected route a confirmation link lands on doesn't actually matter:
+// ProtectedRoute/CompanySetup decides what to show from the session alone.
+const SIGNUP_REDIRECT_URL = RESET_REDIRECT_URL
 
 export default function Login() {
-  const [mode, setMode] = useState('signin') // 'signin' | 'forgot'
+  const [mode, setMode] = useState('signin') // 'signin' | 'forgot' | 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [companyName, setCompanyName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
+  const [signupSent, setSignupSent] = useState(false)
   const { signIn, user } = useAuth()
   const navigate = useNavigate()
 
@@ -68,6 +76,36 @@ export default function Login() {
     }
   }
 
+  async function handleSignup(e) {
+    e.preventDefault()
+    setError('')
+    if (password.length < 6) { setError('Password must be at least 6 characters'); return }
+    setLoading(true)
+    try {
+      // pending_organization_name rides along in user metadata rather than
+      // being created right here — signUp() may not return a live session
+      // at all (email confirmation is required on this project), so there's
+      // nothing yet to attach an organization to. CompanySetup.jsx reads it
+      // back out after the person confirms and actually signs in, and calls
+      // create_organization_and_claim_admin with it — see
+      // supabase-migration-org-scoping-stage5-signup.sql.
+      const { error: err } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+        options: {
+          data: { full_name: fullName.trim(), pending_organization_name: companyName.trim() },
+          emailRedirectTo: SIGNUP_REDIRECT_URL,
+        },
+      })
+      if (err) throw err
+      setSignupSent(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function handleReset(e) {
     e.preventDefault()
     setError('')
@@ -109,7 +147,7 @@ export default function Login() {
         {/* Card */}
         <div className="card border-border/60">
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-5">
-            {mode === 'forgot' ? 'Reset your password' : 'Sign in to your account'}
+            {mode === 'forgot' ? 'Reset your password' : mode === 'signup' ? 'Create your company' : 'Sign in to your account'}
           </h2>
 
           {linkError && mode === 'signin' && (
@@ -174,6 +212,97 @@ export default function Login() {
                 </button>
               </form>
             )
+          ) : mode === 'signup' ? (
+            signupSent ? (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-700 dark:text-gray-300">
+                  Check <span className="font-medium">{email}</span> for a confirmation link — click it, then sign in below to finish setting up {companyName}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => { setMode('signin'); setSignupSent(false); setError('') }}
+                  className="btn-secondary w-full"
+                >
+                  Back to sign in
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSignup} className="space-y-4">
+                <div>
+                  <label className="label">Your Name</label>
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                    className="input"
+                    placeholder="Jane Smith"
+                    required
+                    autoComplete="name"
+                  />
+                </div>
+                <div>
+                  <label className="label">Company Name</label>
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    className="input"
+                    placeholder="Mopping Man"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="input"
+                    placeholder="you@company.com"
+                    required
+                    autoComplete="email"
+                  />
+                </div>
+                <div>
+                  <label className="label">Password</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    className="input"
+                    placeholder="At least 6 characters"
+                    required
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+                      Creating account...
+                    </>
+                  ) : 'Create Company'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('signin'); setError('') }}
+                  className="btn-ghost w-full text-sm"
+                >
+                  Already have an account? Sign in
+                </button>
+              </form>
+            )
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -229,12 +358,19 @@ export default function Login() {
                   </>
                 ) : 'Sign in'}
               </button>
+              <button
+                type="button"
+                onClick={() => { setMode('signup'); setError('') }}
+                className="btn-ghost w-full text-sm"
+              >
+                New company? Create your account
+              </button>
             </form>
           )}
         </div>
 
         <p className="text-center text-xs text-muted mt-4">
-          Contact your project administrator for access.
+          {mode === 'signup' ? 'Already have a Live-Trak account at your company? Ask an admin to invite you from the Team page instead.' : 'Contact your project administrator for access.'}
         </p>
       </div>
     </div>

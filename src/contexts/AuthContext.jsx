@@ -21,10 +21,14 @@ export function AuthProvider({ children }) {
         return data
       }
       // Profile row missing — synthesize a minimal one from auth user so the
-      // app can still render rather than spinning forever
+      // app can still render rather than spinning forever. _synthesized
+      // marks this as a fetch failure, not a real "no organization yet"
+      // state, so ProtectedRoute's CompanySetup gate (which also has no
+      // organization_id to go on) doesn't mistake an existing user's
+      // transient profile-fetch error for a brand new signup.
       const { data: { user: authUser } } = await supabase.auth.getUser()
       if (authUser) {
-        const fallback = { id: authUser.id, email: authUser.email, full_name: authUser.email?.split('@')[0] || 'User', role: 'foreman', avatar_color: '#4ade80' }
+        const fallback = { id: authUser.id, email: authUser.email, full_name: authUser.email?.split('@')[0] || 'User', role: 'foreman', avatar_color: '#4ade80', _synthesized: true }
         setProfile(fallback)
         return fallback
       }

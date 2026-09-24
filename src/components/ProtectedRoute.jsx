@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useEffect, useState } from 'react'
+import CompanySetup from './CompanySetup'
 
 export default function ProtectedRoute({ children }) {
   const { user, profile, loading, signOut } = useAuth()
@@ -43,5 +44,15 @@ export default function ProtectedRoute({ children }) {
   if (!user || profile?.active === false) {
     return <Navigate to={{ pathname: '/login', hash: location.hash }} replace />
   }
+
+  // A brand new self-signup account (see Login.jsx's "Create your company"
+  // mode) — confirmed and signed in, but hasn't finished claiming their
+  // organization yet. Every invited team member already has
+  // organization_id set the moment their profile is created, so this only
+  // ever catches that one case.
+  if (profile && !profile.organization_id && !profile._synthesized) {
+    return <CompanySetup />
+  }
+
   return children
 }
