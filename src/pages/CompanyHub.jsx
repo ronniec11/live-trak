@@ -380,7 +380,11 @@ export default function CompanyHub() {
   }, [profile, isAdmin, navigate])
 
   async function loadAll() {
-    if (!profile?.organization_id) return
+    if (!profile?.organization_id) {
+      setLoading(false)
+      setLoadError('Your account isn\'t linked to a company yet — try refreshing the page.')
+      return
+    }
     setLoading(true)
     setLoadError('')
     try {

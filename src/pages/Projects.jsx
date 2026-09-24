@@ -424,7 +424,15 @@ export default function Projects() {
   }, [dragId, hoverId, jobs])
 
   async function loadProjects() {
-    if (!profile?.organization_id) return
+    // Bails without ever reaching the finally block below if called before
+    // profile.organization_id is actually populated — left loading stuck on
+    // its initial true forever instead of showing anything (confirmed on a
+    // fresh signup where the profile hadn't caught up client-side yet).
+    if (!profile?.organization_id) {
+      setLoading(false)
+      setLoadError('Your account isn\'t linked to a company yet — try refreshing the page.')
+      return
+    }
     setLoading(true)
     setLoadError('')
     setOfflineMode(false)
