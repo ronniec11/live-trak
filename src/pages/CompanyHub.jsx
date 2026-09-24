@@ -332,8 +332,8 @@ function IntegrationsCard() {
             {status === null ? 'Checking connection…' : status.connected ? 'Connected — sheets can be imported from ACC.' : 'Not connected.'}
           </p>
         </div>
-        <button type="button" onClick={connect} disabled={connecting || status?.connected} className="btn-secondary shrink-0">
-          {status?.connected ? 'Connected' : connecting ? 'Connecting…' : 'Connect Autodesk Account'}
+        <button type="button" onClick={connect} disabled={connecting} className="btn-secondary shrink-0">
+          {connecting ? 'Connecting…' : status?.connected ? 'Reconnect Autodesk Account' : 'Connect Autodesk Account'}
         </button>
       </div>
       {error && <div className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
