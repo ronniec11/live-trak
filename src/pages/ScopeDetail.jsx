@@ -1060,7 +1060,7 @@ export default function ScopeDetail() {
                             className={`absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 transition-opacity flex items-center gap-0.5 ${
                               tilingPageId === page.id ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100'
                             } ${page.tile_meta ? 'hover:bg-black/60' : 'hover:bg-accent/60'}`}
-                            title={page.tile_meta ? 'Regenerate deep-zoom tiles' : 'Generate deep-zoom tiles (smooth iPad zoom)'}
+                            title={page.tile_meta ? 'Regenerate deep-zoom tiles' : 'Generate deep-zoom tiles (smooth, fast zoom on iPad and desktop)'}
                           >
                             {tilingPageId === page.id ? (
                               <span className="text-[9px] text-white font-medium">{tilingProgress}%</span>

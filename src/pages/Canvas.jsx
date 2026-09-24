@@ -4729,13 +4729,21 @@ export default function Canvas() {
       uzShow('', 'Loading floor plan…', 'Rendering image…')
 
       try {
-        if (pg.tile_meta && isIPad) {
-          // Tiled page, on the device that actually needs it: iPad Safari's
-          // memory ceiling is the entire reason tiling exists. Desktop never
-          // had that constraint and was already fast on the flat-image path
-          // (plus OSD's own render loop adds real per-frame overhead this
-          // phase doesn't need there) — so desktop keeps using it unchanged,
-          // same as any page without tile_meta at all.
+        if (pg.tile_meta) {
+          // Tiled page: use the deep-zoom viewer on every device, not just
+          // iPad. Desktop's flat-image path (the `else` branch below) draws
+          // the ENTIRE base image fresh on every single zoom/pan frame, at
+          // up to ~4.5x DPR — every zoom/pan step was repainting a canvas
+          // with several times more pixels than iPad's capped flat-image
+          // fallback ever had to, which is exactly what made desktop zoom
+          // and tool use noticeably laggier than iPad rather than faster as
+          // originally assumed here. OSD only ever draws the tiles actually
+          // visible at the current zoom level regardless of device, so this
+          // fixes that instead of trading it off against sharpness — every
+          // zoom/pan/pinch/pan helper and the report-snapshot path
+          // (buildSheetSnapshot/renderFloorPlanBase) already branch on
+          // activePage.tileMeta/osdViewer, not isIPad, so there was nothing
+          // iPad-specific left to change to make this safe on desktop too.
           console.log('[Canvas] floor plan load path: TILED (OpenSeadragon)', pg.tile_meta)
           uzShow('', 'Loading floor plan…', 'Loading deep-zoom tiles…')
 
