@@ -8,6 +8,7 @@ import autoTable from 'jspdf-autotable'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOpsForSession } from '../lib/offlineSync'
 import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource } from '../lib/offlineCache'
+import { resolveStorageUrl } from '../lib/storageUrls'
 import './Canvas.css'
 
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
