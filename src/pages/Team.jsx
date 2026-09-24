@@ -36,7 +36,7 @@ const ROLE_OPTIONS = [
 
 const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map(r => [r.value, r.label]))
 
-function PersonModal({ person, currentUserId, onClose, onSaved }) {
+function PersonModal({ person, currentUserId, currentUserOrgId, onClose, onSaved }) {
   const isEdit = !!person
   const isSelf = isEdit && person.id === currentUserId
   const [form, setForm] = useState({
@@ -91,11 +91,18 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
         // existing handle_new_user trigger) and emails them a sign-in link.
         // Never use supabase.auth.admin.* here — that needs the service_role
         // key, which must not exist in client code.
+        // organization_id: same defensive-redundancy pattern as
+        // full_name/role below — passed both through signup metadata (for
+        // handle_new_user to pick up immediately) and set directly in the
+        // follow-up update, since relying on only one has already bitten
+        // this flow once (see the comment on that update). Without this,
+        // every newly invited teammate would land with no organization at
+        // all once profiles.organization_id is enforced.
         const { error: authErr } = await supabase.auth.signInWithOtp({
           email,
           options: {
             shouldCreateUser: true,
-            data: { full_name: form.full_name.trim(), role: form.role },
+            data: { full_name: form.full_name.trim(), role: form.role, organization_id: currentUserOrgId },
             emailRedirectTo: INVITE_REDIRECT_URL,
           },
         })
@@ -115,6 +122,7 @@ function PersonModal({ person, currentUserId, onClose, onSaved }) {
           company: form.company.trim() || null,
           role: form.role,
           avatar_color: form.avatar_color,
+          organization_id: currentUserOrgId,
         }).eq('email', email).select().single()
         if (uErr) throw uErr
         if (!updated) throw new Error('The invite email was sent, but the directory entry for it was not found to finish setting up — check back in a moment and edit them once it appears.')
@@ -554,7 +562,7 @@ export default function Team() {
       </div>
 
       {showAdd && (
-        <PersonModal onClose={() => setShowAdd(false)} onSaved={loadPeople} />
+        <PersonModal currentUserOrgId={profile?.organization_id} onClose={() => setShowAdd(false)} onSaved={loadPeople} />
       )}
       {viewPerson && (
         <PersonCard
