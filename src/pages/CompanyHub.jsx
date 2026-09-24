@@ -4,10 +4,6 @@ import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
-// Single-tenant for now — matches Projects.jsx's own hard-coded id (there's
-// only one organization, so this isn't built out into an org switcher).
-const ORGANIZATION_ID = '2fc904e9-daa0-4d4d-8fb3-85fb0e84360e'
-
 const TIMEZONE_OPTIONS = [
   { value: 'America/New_York', label: 'Eastern (ET)' },
   { value: 'America/Chicago', label: 'Central (CT)' },
@@ -384,11 +380,12 @@ export default function CompanyHub() {
   }, [profile, isAdmin, navigate])
 
   async function loadAll() {
+    if (!profile?.organization_id) return
     setLoading(true)
     setLoadError('')
     try {
       const [{ data: orgData, error: orgErr }, { data: peopleData }, { count: sessionCount }, { count: pageCount }] = await Promise.all([
-        supabase.from('organizations').select('*').eq('id', ORGANIZATION_ID).single(),
+        supabase.from('organizations').select('*').eq('id', profile.organization_id).single(),
         supabase.from('profiles').select('*').order('full_name'),
         supabase.from('sessions').select('id', { count: 'exact', head: true }),
         supabase.from('pages').select('id', { count: 'exact', head: true }),

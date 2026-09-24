@@ -6,10 +6,6 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { downloadJobForOffline, isJobCached, getCachedJobsList } from '../lib/offlineCache'
 
-// Single-tenant for now — there's only one organization, so this is hard-
-// coded rather than built out into an org switcher nobody needs yet.
-const ORGANIZATION_ID = '2fc904e9-daa0-4d4d-8fb3-85fb0e84360e'
-
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 
 function badgeClass(status) {
@@ -72,7 +68,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function CreateProjectModal({ onClose, onCreated }) {
+function CreateProjectModal({ organizationId, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', gc_name: '', owner_name: '', address: '', status: 'active' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -87,7 +83,7 @@ function CreateProjectModal({ onClose, onCreated }) {
       const { data: job, error: jErr } = await supabase
         .from('jobs')
         .insert({
-          organization_id: ORGANIZATION_ID,
+          organization_id: organizationId,
           name: form.name.trim(),
           gc_name: form.gc_name.trim() || null,
           owner_name: form.owner_name.trim() || null,
@@ -428,6 +424,7 @@ export default function Projects() {
   }, [dragId, hoverId, jobs])
 
   async function loadProjects() {
+    if (!profile?.organization_id) return
     setLoading(true)
     setLoadError('')
     setOfflineMode(false)
@@ -435,7 +432,7 @@ export default function Projects() {
       const { data: jobsData, error: jobsErr } = await supabase
         .from('jobs')
         .select('*, organizations(name)')
-        .eq('organization_id', ORGANIZATION_ID)
+        .eq('organization_id', profile.organization_id)
         .order('sort_order', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false })
       if (jobsErr) throw jobsErr
@@ -532,8 +529,8 @@ export default function Projects() {
   }
 
   useEffect(() => {
-    if (user) loadProjects()
-  }, [user])
+    if (user && profile?.organization_id) loadProjects()
+  }, [user, profile?.organization_id])
 
   const filtered = jobs.filter(j => {
     const matchSearch = !searchTerm || j.name.toLowerCase().includes(searchTerm.toLowerCase()) || (j.gc_name || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -706,6 +703,7 @@ export default function Projects() {
 
       {showCreate && (
         <CreateProjectModal
+          organizationId={profile?.organization_id}
           onClose={() => setShowCreate(false)}
           onCreated={() => loadProjects()}
         />
