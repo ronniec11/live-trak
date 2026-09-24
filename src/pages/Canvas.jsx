@@ -2954,47 +2954,6 @@ export default function Canvas() {
       } catch (e) { console.warn('[Canvas] Draft load failed:', e) }
     }
 
-    // ── EXPORT ────────────────────────────────────────────────────────────────
-    function exportAll() {
-      const date = getCurrentDate()
-      let txt = 'Live-Trak - Daily Report\nDate: ' + date + '\n\n'; let grand = 0
-      pages.forEach(pg => {
-        txt += '=== ' + pg.name + ' ===\n'
-        pg.sessions.forEach((s, i) => {
-          txt += `  ${i+1}. ${s.name} — ${Math.round(s.sf).toLocaleString()} SF`
-          if (s.countMarkers?.length) txt += ` + ${s.countMarkers.length} items counted`
-          txt += ` (${s.time})\n`
-          grand += s.sf
-        })
-        txt += '\n'
-      })
-      txt += 'GRAND TOTAL: ' + Math.round(grand).toLocaleString() + ' SF\n'
-      const blob = new Blob([txt], {type: 'text/plain'})
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
-      a.download = 'live-trak-' + date + '.txt'; a.click()
-
-      pages.forEach(pg => {
-        if (!pg.image) return
-        if (pg.tileMeta) {
-          // Tiled pages have no rasterized base image on this device to
-          // composite into a PNG export (that's the point — Phase 3 territory).
-          console.warn('[Canvas] Skipping PNG export for tiled page (not yet supported):', pg.name)
-          return
-        }
-        const exp = document.createElement('canvas')
-        exp.width = pg.image.width; exp.height = pg.image.height
-        const ec = exp.getContext('2d'); ec.drawImage(pg.image, 0, 0)
-        ec.globalAlpha = 0.3
-        pg.sessions.forEach(s => { if (s.hlCanvas) ec.drawImage(s.hlCanvas, 0, 0) })
-        ec.globalAlpha = 1
-        pg.sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0) })
-        const lk = document.createElement('a')
-        lk.href = exp.toDataURL('image/png')
-        lk.download = 'live-trak-' + pg.name.replace(/\s+/g, '-') + '-' + date + '.png'
-        lk.click()
-      })
-    }
-
     // ── CONTEXT MENU ──────────────────────────────────────────────────────────
     function syncCtxToolBtns() {
       if (ctxBtnHlRef.current)  ctxBtnHlRef.current.className  = 'ct-ctx-tbtn' + (tool === 'highlight' ? ' t-hl' : '')
@@ -3364,7 +3323,7 @@ export default function Canvas() {
         <button class="ct-fb" id="ct-undo-btn" title="Undo (Ctrl+Z)">Undo</button>
         <button class="ct-fb" id="ct-clear-btn">Clear</button>
         <button class="ct-fb" id="ct-save-btn" title="Save Session (Ctrl+S)">+ Save</button>
-        <button class="ct-fb export" id="ct-export-btn">Export</button>
+        <button class="ct-fb export" id="ct-history-btn" title="History (Ctrl+H)">History</button>
       `
       footerRef.current.querySelector('#ct-undo-btn').addEventListener('click', undoLast)
       footerRef.current.querySelector('#ct-clear-btn').addEventListener('click', () => {
@@ -3375,7 +3334,7 @@ export default function Canvas() {
         try { localStorage.removeItem(`draft_${pageId}`) } catch {}
       })
       footerRef.current.querySelector('#ct-save-btn').addEventListener('click', saveSession)
-      footerRef.current.querySelector('#ct-export-btn').addEventListener('click', exportAll)
+      footerRef.current.querySelector('#ct-history-btn').addEventListener('click', openHistory)
     }
 
     // ── TARGET & PROGRESS ─────────────────────────────────────────────────────
@@ -3680,10 +3639,9 @@ export default function Canvas() {
       c.getContext('2d').drawImage(src, 0, 0, targetW, targetH)
       return c
     }
-    // Composites just the given sessions onto the sheet's base image — same
-    // 30%-highlight/full-opacity-pen convention as exportAll(), so a report
-    // scoped to one session only shows that session's markup, not everyone
-    // else's.
+    // Composites just the given sessions onto the sheet's base image —
+    // 30%-alpha highlight, full-opacity pen, so a report scoped to one
+    // session only shows that session's markup, not everyone else's.
     async function buildSheetSnapshot(sessions) {
       const w = activePage?.image?.width, h = activePage?.image?.height
       if (!w || !h) return null
@@ -5189,7 +5147,7 @@ export default function Canvas() {
         </div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
           {canvasProfile && (
-            <div style={{display:'flex',alignItems:'center',gap:8,marginRight:4,cursor:'pointer'}} onClick={() => navigate('/profile', { state: { returnTo: `/canvas/${pageId}` } })}>
+            <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={() => navigate('/profile', { state: { returnTo: `/canvas/${pageId}` } })}>
               <div style={{width:28,height:28,borderRadius:'50%',background:canvasProfile.avatar_color||'#4ade80',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#000',flexShrink:0}}>
                 {(canvasProfile.full_name||user?.email||'U').charAt(0).toUpperCase()}
               </div>
@@ -5198,7 +5156,6 @@ export default function Canvas() {
               </span>
             </div>
           )}
-          <button className="ct-hbtn" title="History (Ctrl+H)" onClick={() => api.current.openHistory?.()}>History</button>
         </div>
       </div>
       {/* Total building progress — 4px strip below header */}
