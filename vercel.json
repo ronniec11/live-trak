@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/auth/autodesk/callback", "destination": "/api/autodesk/callback" },
     { "source": "/:path*", "destination": "/index.html" }
   ]
 }

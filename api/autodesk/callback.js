@@ -21,7 +21,8 @@ export default async function handler(req, res) {
   try {
     const clientId = requireEnv('APS_CLIENT_ID')
     const clientSecret = requireEnv('APS_CLIENT_SECRET')
-    const callbackUrl = process.env.APS_CALLBACK_URL || 'https://live-trak.ai/api/autodesk/callback'
+    // Must match auth.js's own default exactly — see the comment there.
+    const callbackUrl = process.env.APS_CALLBACK_URL || 'https://live-trak.ai/auth/autodesk/callback'
 
     const tokenResp = await fetch('https://developer.api.autodesk.com/authentication/v2/token', {
       method: 'POST',

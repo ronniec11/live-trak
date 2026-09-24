@@ -17,9 +17,12 @@ export default async function handler(req, res) {
     if (!user) { res.status(401).json({ error: 'Sign in to Live-Trak first.' }); return }
 
     const clientId = requireEnv('APS_CLIENT_ID')
-    // Must match api/autodesk/callback.js's own URL exactly, and whatever's
+    // /auth/autodesk/callback (not api/autodesk/callback.js's own path) —
+    // this is the URL already registered in the APS developer portal;
+    // vercel.json rewrites it through to the actual serverless function.
+    // Must match callback.js's own default exactly, and whatever's
     // registered as this app's callback URL in the APS developer portal.
-    const callbackUrl = process.env.APS_CALLBACK_URL || 'https://live-trak.ai/api/autodesk/callback'
+    const callbackUrl = process.env.APS_CALLBACK_URL || 'https://live-trak.ai/auth/autodesk/callback'
     const state = signState({ uid: user.id })
 
     const authUrl = 'https://developer.api.autodesk.com/authentication/v2/authorize?' +
