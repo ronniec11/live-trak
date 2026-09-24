@@ -292,7 +292,14 @@ function IntegrationsCard() {
   }
 
   useEffect(() => {
-    authedFetch('/api/autodesk/status').then(setStatus).catch(() => setStatus({ connected: false }))
+    authedFetch('/api/autodesk/status').then(setStatus).catch(err => {
+      // Swallowing this used to hide real failures (e.g. a missing
+      // SUPABASE_SERVICE_ROLE_KEY on the deployed function) behind a plain
+      // "Not connected" — no way to tell that apart from a genuine
+      // never-connected state. Show it instead.
+      setStatus({ connected: false })
+      setError('Could not check Autodesk connection status: ' + err.message)
+    })
     // Coming back from Autodesk's consent screen — surface any error, then
     // drop the query params so refreshing the page doesn't replay them.
     const params = new URLSearchParams(window.location.search)
