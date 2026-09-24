@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
 import { getCachedProject } from '../lib/offlineCache'
+import { resolveStorageUrl, storagePathFrom } from '../lib/storageUrls'
 
 const UPLOAD_TIMEOUT_MS = 30_000
 
@@ -14,6 +15,15 @@ const UPLOAD_TIMEOUT_MS = 30_000
 // upload/timeout/insert path instead of two copies that can drift —
 // PDF rendering happens lazily later in Canvas.jsx either way, this only
 // ever handles the raw file bytes.
+//
+// floor_plan_url stores the bare Storage PATH now, not a public URL — the
+// floor-plans bucket is private (see
+// supabase-migration-org-scoping-stage4-storage.sql), so there's no public
+// URL to get at upload time anyway. Wherever this actually needs to be
+// displayed/fetched, it gets resolved to a fresh signed URL right before
+// use via resolveStorageUrl() (src/lib/storageUrls.js) — signing it once
+// here and storing THAT would just be a URL that's already partway through
+// expiring by the time it's ever shown.
 async function createPageFromFile(projectId, name, file, onStep) {
   let floor_plan_url = null
 
@@ -31,9 +41,7 @@ async function createPageFromFile(projectId, name, file, onStep) {
     const { error: upErr } = await Promise.race([uploadPromise, timeoutPromise])
     if (upErr) throw upErr
 
-    onStep?.('Getting public URL…')
-    const { data: urlData } = supabase.storage.from('floor-plans').getPublicUrl(path)
-    floor_plan_url = urlData.publicUrl
+    floor_plan_url = path
   }
 
   onStep?.('Saving page…')
@@ -675,11 +683,12 @@ export default function ScopeDetail() {
         // attempt (e.g. a different pyramid depth) before writing new ones.
         await deleteTiles(projectId, page.id)
       }
-      let url = page.floor_plan_url
-      if (!url.startsWith('http')) {
-        const { data } = supabase.storage.from('floor-plans').getPublicUrl(url)
-        url = data.publicUrl
-      }
+      // Tiling needs to actually fetch the source file, which lives in the
+      // now-private floor-plans bucket — resolveStorageUrl signs it first
+      // (floor_plan_url is a bare path now; it also tolerates a leftover
+      // legacy full URL from before this bucket went private).
+      const url = await resolveStorageUrl(page.floor_plan_url)
+      if (!url) throw new Error('Could not access the source floor plan file to tile it.')
       const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
       const onProgress = (done, total) => setTilingProgress(total ? Math.round((done / total) * 100) : 0)
       const opts = { projectId, pageId: page.id, onProgress }
@@ -735,19 +744,12 @@ export default function ScopeDetail() {
     // 2. Delete the page record
     await supabase.from('pages').delete().eq('id', page.id)
 
-    // 3. Delete storage files if present
-    const filesToRemove = []
-    if (page.floor_plan_url && !page.floor_plan_url.startsWith('http')) {
-      filesToRemove.push(page.floor_plan_url)
-    } else if (page.floor_plan_url) {
-      // Extract storage path from public URL
-      const match = page.floor_plan_url.match(/floor-plans\/(.+)$/)
-      if (match) filesToRemove.push(match[1])
-    }
-    if (page.cached_image_url) {
-      const match = page.cached_image_url.match(/floor-plans\/(.+)$/)
-      if (match) filesToRemove.push(match[1])
-    }
+    // 3. Delete storage files if present — floor_plan_url/cached_image_url
+    // are bare Storage paths now (storagePathFrom also strips a legacy
+    // full-URL prefix if an old row still has one).
+    const filesToRemove = [page.floor_plan_url, page.cached_image_url]
+      .filter(Boolean)
+      .map(storagePathFrom)
     if (filesToRemove.length > 0) {
       await supabase.storage.from('floor-plans').remove(filesToRemove)
     }

@@ -36,6 +36,7 @@
 // as-is.
 import { supabase } from './supabase'
 import { dbPut, dbGet, dbGetAll, dbPutMany, dbGetAllByIndex, dbDeleteAllByIndex, requestPersistentStorage } from './offlineDb'
+import { resolveStorageUrl } from './storageUrls'
 
 const isIPadOrSafari = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
   || /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
@@ -54,13 +55,6 @@ async function fetchAsBlob(url) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Fetch failed (${res.status}): ${url}`)
   return res.blob()
-}
-
-function resolveStorageUrl(value) {
-  if (!value) return null
-  if (value.startsWith('http')) return value
-  const { data } = supabase.storage.from('floor-plans').getPublicUrl(value)
-  return data?.publicUrl || null
 }
 
 function loadImage(url) {
@@ -272,8 +266,7 @@ async function cachePage(pg, projectId, onProgress) {
   }
 
   if (!cachedTileMeta && !sourceBlob) {
-    let sourceUrl = pg.floor_plan_url
-    if (sourceUrl && !sourceUrl.startsWith('http')) sourceUrl = resolveStorageUrl(sourceUrl)
+    const sourceUrl = pg.floor_plan_url ? await resolveStorageUrl(pg.floor_plan_url) : null
     const rawBlob = sourceUrl ? await fetchAsBlob(sourceUrl) : null
     // The upload itself sets Storage's Content-Type from the browser File
     // object's own MIME type (see ProjectDetail.jsx's upload call), so the
@@ -310,13 +303,25 @@ async function cachePage(pg, projectId, onProgress) {
   for (const dbSess of (dbSessions || [])) {
     onProgress?.(`${pg.name} — ${dbSess.name}`)
     let hlBlob = null, penBlob = null
-    try { if (dbSess.highlight_data) hlBlob = await fetchAsBlob(dbSess.highlight_data) } catch (e) { console.warn('[offlineCache] hl fetch failed:', e) }
-    try { if (dbSess.pen_data) penBlob = await fetchAsBlob(dbSess.pen_data) } catch (e) { console.warn('[offlineCache] pen fetch failed:', e) }
+    try { if (dbSess.highlight_data) hlBlob = await fetchAsBlob(await resolveStorageUrl(dbSess.highlight_data)) } catch (e) { console.warn('[offlineCache] hl fetch failed:', e) }
+    try { if (dbSess.pen_data) penBlob = await fetchAsBlob(await resolveStorageUrl(dbSess.pen_data)) } catch (e) { console.warn('[offlineCache] pen fetch failed:', e) }
+    // Completion photos, cached as real bytes rather than stored paths —
+    // a signed URL captured now would just expire before this cache is
+    // ever opened offline. initFromCache turns each blob back into a
+    // (session-lifetime) blob: URL, which resolveStorageUrl passes through
+    // as already-usable.
+    const photoBlobs = []
+    for (const storedPath of (dbSess.photos || [])) {
+      try {
+        const signed = await resolveStorageUrl(storedPath)
+        if (signed) photoBlobs.push(await fetchAsBlob(signed))
+      } catch (e) { console.warn('[offlineCache] photo fetch failed:', e) }
+    }
     sessions.push({
       id: dbSess.id, name: dbSess.name, color: dbSess.color,
       sf: dbSess.sf, lf: dbSess.lf, work_date: dbSess.work_date, created_at: dbSess.created_at,
       crew_size: dbSess.crew_size, hours_worked: dbSess.hours_worked,
-      count_data: dbSess.count_data, lf_data: dbSess.lf_data, photos: dbSess.photos,
+      count_data: dbSess.count_data, lf_data: dbSess.lf_data, photoBlobs,
       profiles: dbSess.profiles, hlBlob, penBlob,
     })
   }

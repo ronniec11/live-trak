@@ -60,8 +60,7 @@ async function uploadBlob(projectId, pageId, storageKey, blob, type, ext) {
   const { error } = await supabase.storage.from('floor-plans')
     .upload(path, blob, { upsert: true, contentType: blob.type || 'image/png' })
   if (error) throw error
-  const { data } = supabase.storage.from('floor-plans').getPublicUrl(path)
-  return data.publicUrl
+  return path
 }
 
 // Same "database is missing this optional column" resilience already used

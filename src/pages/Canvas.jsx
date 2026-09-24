@@ -2380,10 +2380,17 @@ export default function Canvas() {
       const container = editPhotosRef.current
       if (!container) return
       container.innerHTML = ''
-      editKeptPhotoUrls.forEach((url, i) => {
-        container.appendChild(makePhotoThumb(url, () => {
+      // editKeptPhotoUrls holds bare Storage paths (floor-plans is
+      // private) — each thumb starts blank and fills itself in once its
+      // signed URL resolves, same pattern as the session card thumbnails.
+      editKeptPhotoUrls.forEach((storedPath, i) => {
+        const thumbEl = makePhotoThumb('', () => {
           editKeptPhotoUrls.splice(i, 1); renderEditPhotos()
-        }))
+        })
+        container.appendChild(thumbEl)
+        resolveStorageUrl(storedPath).then(signed => {
+          if (signed) { const img = thumbEl.querySelector('img'); if (img) img.src = signed }
+        })
       })
       editPendingPhotos.forEach((file, i) => {
         container.appendChild(makePhotoThumb(URL.createObjectURL(file), () => {
@@ -2492,6 +2499,10 @@ export default function Canvas() {
     // encode the same large canvas to PNG twice — a real cost on iPad,
     // where multiple full-size session canvases already push memory close
     // to the ceiling that's crashed this app before).
+    // Returns the bare Storage path, not a public URL — floor-plans is a
+    // private bucket now (see supabase-migration-org-scoping-stage4-storage.sql),
+    // so callers store this path and resolve it to a fresh signed URL
+    // (resolveStorageUrl) only when it's actually about to be displayed.
     async function uploadCanvasToStorage(canvas, storageKey, type, precomputedBlob) {
       if (!canvas || canvas.width === 0) return null
       try {
@@ -2502,8 +2513,7 @@ export default function Canvas() {
           .from('floor-plans')
           .upload(path, blob, { upsert: true, contentType: 'image/png' })
         if (error) { console.warn('[Canvas] Session canvas upload failed:', error); return null }
-        const { data } = supabase.storage.from('floor-plans').getPublicUrl(path)
-        return data.publicUrl
+        return path
       } catch (e) {
         console.warn('[Canvas] Session canvas upload failed:', e)
         return null
@@ -2530,8 +2540,7 @@ export default function Canvas() {
             .from('floor-plans')
             .upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' })
           if (error) { console.warn('[Canvas] Photo upload failed:', error); return { file, ok: false } }
-          const { data } = supabase.storage.from('floor-plans').getPublicUrl(path)
-          return { url: data.publicUrl, ok: true }
+          return { url: path, ok: true }
         } catch (e) {
           console.warn('[Canvas] Photo upload failed:', e)
           return { file, ok: false }
@@ -2852,10 +2861,16 @@ export default function Canvas() {
 
         if (s.photos && s.photos.length > 0) {
           const photoRow = document.createElement('div'); photoRow.className = 'ct-scard-photos'
-          s.photos.forEach(url => {
+          // s.photos holds bare Storage paths (floor-plans is private) —
+          // each thumbnail resolves its own signed URL asynchronously and
+          // fills itself in once ready, rather than making this whole
+          // (synchronous, frequently-called) render function async.
+          s.photos.forEach(storedPath => {
             const thumb = document.createElement('img')
-            thumb.src = url; thumb.className = 'ct-scard-photo'; thumb.alt = 'Completion photo'
-            thumb.addEventListener('click', ev => { ev.stopPropagation(); window.open(url, '_blank') })
+            thumb.className = 'ct-scard-photo'; thumb.alt = 'Completion photo'
+            let resolvedUrl = null
+            resolveStorageUrl(storedPath).then(signed => { resolvedUrl = signed; if (signed) thumb.src = signed })
+            thumb.addEventListener('click', ev => { ev.stopPropagation(); if (resolvedUrl) window.open(resolvedUrl, '_blank') })
             photoRow.appendChild(thumb)
           })
           card.appendChild(photoRow)
@@ -3603,8 +3618,15 @@ export default function Canvas() {
     // depending on the tile source's CORS behavior — re-rendering the
     // source file the same way the non-tiled path already does sidesteps
     // all of that with code this file already trusts.
-    async function renderFloorPlanBase(url, targetW, targetH) {
-      const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
+    async function renderFloorPlanBase(stored, targetW, targetH) {
+      const isPdf = /\.pdf($|\?)/i.test(stored) || stored.toLowerCase().includes('.pdf')
+      // Resolved fresh right before use, not reused from whenever the page
+      // was first opened — activePage.sourceUrl (see addPage) can sit
+      // around for as long as the tab stays open, well past a signed URL's
+      // expiry, so this only ever works from the bare path/original stored
+      // value, never a URL captured earlier.
+      const url = await resolveStorageUrl(stored)
+      if (!url) throw new Error('Could not access the floor plan source file for the report.')
       let src
       if (isPdf) {
         const pdfjsLib = await import('pdfjs-dist')
@@ -3696,6 +3718,20 @@ export default function Canvas() {
       // apply the lunch deduction to on top of.
       const sessionManHours = s => (s.totalHours != null ? s.totalHours : (s.crewSize || 0) * Math.max(0, (s.hoursWorked || 0) - lunchHours))
       const totalManHours = included.reduce((a, s) => a + sessionManHours(s), 0)
+
+      // Resolved to signed URLs once, here, rather than by whatever later
+      // renders them — the report modal and its PDF export both read
+      // straight off lastReportData.photos[].url without re-resolving, and
+      // an 8-hour TTL comfortably outlasts how long a report modal stays
+      // open before someone exports it.
+      const photoEntries = included.flatMap(s => (s.photos || []).map(storedPath => ({ storedPath, color: s.color || '#4ade80', name: s.name })))
+      // Positional Promise.all, not the resolveStorageUrls batch helper —
+      // this needs each result to line up with its own color/name, and
+      // that helper drops failed entries rather than preserving position.
+      const resolvedPhotoUrls = await Promise.all(photoEntries.map(p => resolveStorageUrl(p.storedPath)))
+      const photos = photoEntries
+        .map((p, i) => ({ url: resolvedPhotoUrls[i], color: p.color, name: p.name }))
+        .filter(p => p.url)
 
       lastReportData = {
         sheetName: activePage.name,
@@ -4055,22 +4091,26 @@ export default function Canvas() {
     }
 
     // ── SUPABASE: LOAD SESSIONS ───────────────────────────────────────────────
-    // Handles both legacy base64 data URLs and Storage public URLs (newer
-    // sessions) — crossOrigin is a no-op for data: URLs and required for
-    // reading storage URLs back into a canvas without tainting it.
+    // Handles legacy base64 data URLs, legacy Storage public URLs, and (now)
+    // bare Storage paths (see resolveStorageUrl) — crossOrigin is a no-op
+    // for data: URLs and required for reading storage URLs back into a
+    // canvas without tainting it.
     async function loadCanvasFromDataUrl(dataUrl, targetW, targetH) {
       if (!dataUrl) return null
       // A "Paint More" edit re-uploads to the SAME Storage path every time
       // (see uploadCanvasToStorage — the path is keyed by session id, not a
-      // fresh timestamp), so the URL stored in highlight_data/pen_data never
-      // changes across edits even though the file content does. Without
-      // busting the cache here, the browser (or an intermediate CDN) can
-      // keep serving the pre-edit image on reload, making an erase/repaint
-      // look like it silently reverted even though it saved correctly.
-      // Irrelevant (and unsafe to touch) for legacy `data:` URLs, which
-      // never hit the network at all.
+      // fresh timestamp), so the pre-fix public URL never changed across
+      // edits even though the file content did, and a manually-appended
+      // cache-busting query param was needed here to stop the browser
+      // serving the pre-edit image on reload. resolveStorageUrl's signed
+      // URL is already unique per call (its own signature/expiry differ
+      // every time), so that's no longer needed — and appending an extra
+      // ad hoc query param onto a signed URL would invalidate its
+      // signature anyway. Irrelevant either way for legacy `data:` URLs,
+      // which resolveStorageUrl passes through unchanged.
       const isDataUrl = dataUrl.startsWith('data:')
-      const fetchUrl = isDataUrl ? dataUrl : dataUrl + (dataUrl.includes('?') ? '&' : '?') + '_t=' + Date.now()
+      const fetchUrl = isDataUrl ? dataUrl : await resolveStorageUrl(dataUrl)
+      if (!fetchUrl) return null
       // Cross-device sessions: a source saved on desktop (uncapped flat-image
       // resolution) can be far bigger than this device needs. Decoding it at
       // native size first (a canvas potentially 80M+ pixels) then downscaling
@@ -4113,13 +4153,15 @@ export default function Canvas() {
       }
     }
 
-    async function loadCanvasFromUrl(url) {
-      if (!url) return null
+    async function loadCanvasFromUrl(stored) {
+      if (!stored) return null
       try {
+        const url = await resolveStorageUrl(stored)
+        if (!url) return null
         const img = new Image()
         await new Promise((resolve, reject) => {
           img.onload = resolve; img.onerror = reject
-          img.src = url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now()
+          img.src = url
         })
         const c = document.createElement('canvas'); c.width = img.width; c.height = img.height
         const cCtx = c.getContext('2d')
@@ -4555,7 +4597,10 @@ export default function Canvas() {
           crewSize: cs.crew_size ?? null,
           hoursWorked: cs.hours_worked ?? null,
           totalHours: cs.total_hours ?? null,
-          photos: Array.isArray(cs.photos) ? cs.photos : [],
+          // Cached as real bytes (see offlineCache.js) — converted to
+          // blob: URLs here rather than at download time so they aren't
+          // held open for the whole time the device stays offline.
+          photos: Array.isArray(cs.photoBlobs) ? cs.photoBlobs.map(b => URL.createObjectURL(b)) : [],
           supabaseId: cs.id,
         })
       }
@@ -4653,11 +4698,12 @@ export default function Canvas() {
       const savedCalibrated = pg.calibrated || false
       console.log('[Canvas] Loaded page calibration:', { savedPPF: pg.pixels_per_foot, savedCalibrated: pg.calibrated, scale: pg.scale })
 
-      let url = pg.floor_plan_url
-      if (url && !url.startsWith('http')) {
-        const { data: urlData } = supabase.storage.from('floor-plans').getPublicUrl(url)
-        url = urlData?.publicUrl || null
-      }
+      // Resolved fresh on every page open — floor_plan_url is a bare Storage
+      // path now (the bucket is private), so there's no public URL to fall
+      // back to. pg.floor_plan_url itself (unresolved) is what gets handed
+      // to addPage below as sourceUrl, for report generation to re-resolve
+      // much later rather than reusing this now-signed one past its expiry.
+      const url = await resolveStorageUrl(pg.floor_plan_url)
 
       if (!url) { uzShow('', 'No floor plan loaded', 'Upload a floor plan from the project page'); return }
 
@@ -4701,7 +4747,7 @@ export default function Canvas() {
             width: Math.round(pg.tile_meta.width * osdOverlayScale),
             height: Math.round(pg.tile_meta.height * osdOverlayScale),
           }
-          addPage(placeholderImg, pg.name, 72 * TILE_BASE_SCALE * osdOverlayScale, pg.tile_meta, url)
+          addPage(placeholderImg, pg.name, 72 * TILE_BASE_SCALE * osdOverlayScale, pg.tile_meta, pg.floor_plan_url)
           setupOsdViewer(buildTileSource(pg.tile_meta))
         } else {
         const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
@@ -4711,10 +4757,12 @@ export default function Canvas() {
         if (pg.cached_image_url) {
           // Use cached PNG render — skips PDF.js entirely
           uzShow('', 'Loading floor plan…', 'Loading cached image…')
+          const cachedUrl = await resolveStorageUrl(pg.cached_image_url)
+          if (!cachedUrl) throw new Error('Could not access the cached floor plan render.')
           img = new Image()
           await new Promise((resolve, reject) => {
             img.onload = resolve; img.onerror = reject
-            img.crossOrigin = 'anonymous'; img.src = pg.cached_image_url
+            img.crossOrigin = 'anonymous'; img.src = cachedUrl
           })
           ppi = pg.ppi || 72 * Math.max(3.0, DPR * 1.5)
         } else if (isPdf) {
@@ -4767,7 +4815,7 @@ export default function Canvas() {
           }
         }
 
-        addPage(img, pg.name, ppi, null, url)
+        addPage(img, pg.name, ppi, null, pg.floor_plan_url)
 
         // Cache PDF render as PNG for faster future loads
         if (isPdf && !pg.cached_image_url) {
@@ -4778,9 +4826,8 @@ export default function Canvas() {
               .from('floor-plans')
               .upload(cachePath, blob, { upsert: true, contentType: 'image/png' })
             if (!upErr) {
-              const { data: urlData } = supabase.storage.from('floor-plans').getPublicUrl(cachePath)
-              await supabase.from('pages').update({ cached_image_url: urlData.publicUrl }).eq('id', pageId)
-              console.log('[Canvas] PDF cached as PNG:', urlData.publicUrl)
+              await supabase.from('pages').update({ cached_image_url: cachePath }).eq('id', pageId)
+              console.log('[Canvas] PDF cached as PNG:', cachePath)
             }
           } catch (e) {
             console.warn('[Canvas] Cache save failed:', e)

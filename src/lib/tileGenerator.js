@@ -1,6 +1,13 @@
 import { supabase } from './supabase'
 
-const BUCKET = 'floor-plans'
+// Its own bucket, separate from floor-plans (which went private in
+// supabase-migration-org-scoping-stage4-storage.sql) — tiles are small,
+// low-sensitivity chunks of an already-uploaded floor plan at unguessable
+// UUID-based paths, and OpenSeadragon's tile loader builds hundreds of
+// these URLs synchronously per pan/zoom, which a signed-URL scheme can't
+// practically support. Kept public on purpose; the actual source files,
+// paint layers, and photos are what needed locking down.
+const BUCKET = 'floor-plan-tiles'
 const TILE_SIZE = 256
 // Largest single render/decode allowed per canvas — same ceiling used
 // elsewhere in the app for iPad memory safety (Canvas.jsx MAX_DIM). Any
