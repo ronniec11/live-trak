@@ -208,6 +208,11 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
   const [pageName, setPageName] = useState('')
   const [importing, setImporting] = useState(false)
   const [importStep, setImportStep] = useState('')
+  // Temporary diagnostic aid — Autodesk's exact response shape here hasn't
+  // been verified against a real account yet (see the Phase 3 commit).
+  // Surfacing it directly means a screenshot is enough to debug an empty
+  // list, instead of needing someone non-technical to dig through DevTools.
+  const [rawResponse, setRawResponse] = useState(null)
 
   async function authedFetch(url) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -223,6 +228,7 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
   async function loadView(view) {
     setLoadingItems(true)
     setError('')
+    setRawResponse(null)
     try {
       let data
       if (view.type === 'hubs') {
@@ -242,6 +248,7 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
           kind: e.type === 'folders' ? 'folder' : 'file',
         })))
       }
+      if (!data?.data?.length) setRawResponse(data)
     } catch (err) {
       setError(err.message)
       setItems([])
@@ -394,6 +401,15 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
                 </button>
               ))}
             </div>
+
+            {rawResponse && (
+              <div>
+                <p className="text-xs text-muted mb-1">Raw response from Autodesk (for debugging — screenshot this if the list above looks wrong):</p>
+                <pre className="text-xs bg-surface-2 border border-border rounded-lg p-2 overflow-auto max-h-40 text-gray-600 dark:text-gray-300">
+                  {JSON.stringify(rawResponse, null, 2)}
+                </pre>
+              </div>
+            )}
           </div>
         )}
       </div>
