@@ -1440,8 +1440,22 @@ export default function Canvas() {
           activeRect.minX = rectMoveOrig.minX + dx; activeRect.maxX = rectMoveOrig.maxX + dx
           activeRect.minY = rectMoveOrig.minY + dy; activeRect.maxY = rectMoveOrig.maxY + dy
         } else {
-          activeRect.minX = Math.min(rectFixed.x, pt.x); activeRect.maxX = Math.max(rectFixed.x, pt.x)
-          activeRect.minY = Math.min(rectFixed.y, pt.y); activeRect.maxY = Math.max(rectFixed.y, pt.y)
+          if (e.shiftKey) {
+            // Same square-constraint idea as snapToAngle's 45/90 snap for
+            // poly/LF — drag from the fixed opposite corner, but clamp the
+            // dragged corner's distance on the shorter axis to match the
+            // longer one, keeping each axis's own sign so the square grows
+            // toward wherever the pointer actually is.
+            const dx = pt.x - rectFixed.x, dy = pt.y - rectFixed.y
+            const side = Math.max(Math.abs(dx), Math.abs(dy))
+            const ex = rectFixed.x + (dx < 0 ? -side : side)
+            const ey = rectFixed.y + (dy < 0 ? -side : side)
+            activeRect.minX = Math.min(rectFixed.x, ex); activeRect.maxX = Math.max(rectFixed.x, ex)
+            activeRect.minY = Math.min(rectFixed.y, ey); activeRect.maxY = Math.max(rectFixed.y, ey)
+          } else {
+            activeRect.minX = Math.min(rectFixed.x, pt.x); activeRect.maxX = Math.max(rectFixed.x, pt.x)
+            activeRect.minY = Math.min(rectFixed.y, pt.y); activeRect.maxY = Math.max(rectFixed.y, pt.y)
+          }
         }
         drawActiveRectPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
         return
@@ -1991,8 +2005,22 @@ export default function Canvas() {
           activeRect.minX = rectMoveOrig.minX + dx; activeRect.maxX = rectMoveOrig.maxX + dx
           activeRect.minY = rectMoveOrig.minY + dy; activeRect.maxY = rectMoveOrig.maxY + dy
         } else {
-          activeRect.minX = Math.min(rectFixed.x, pt.x); activeRect.maxX = Math.max(rectFixed.x, pt.x)
-          activeRect.minY = Math.min(rectFixed.y, pt.y); activeRect.maxY = Math.max(rectFixed.y, pt.y)
+          if (e.shiftKey) {
+            // Same square-constraint idea as snapToAngle's 45/90 snap for
+            // poly/LF — drag from the fixed opposite corner, but clamp the
+            // dragged corner's distance on the shorter axis to match the
+            // longer one, keeping each axis's own sign so the square grows
+            // toward wherever the pointer actually is.
+            const dx = pt.x - rectFixed.x, dy = pt.y - rectFixed.y
+            const side = Math.max(Math.abs(dx), Math.abs(dy))
+            const ex = rectFixed.x + (dx < 0 ? -side : side)
+            const ey = rectFixed.y + (dy < 0 ? -side : side)
+            activeRect.minX = Math.min(rectFixed.x, ex); activeRect.maxX = Math.max(rectFixed.x, ex)
+            activeRect.minY = Math.min(rectFixed.y, ey); activeRect.maxY = Math.max(rectFixed.y, ey)
+          } else {
+            activeRect.minX = Math.min(rectFixed.x, pt.x); activeRect.maxX = Math.max(rectFixed.x, pt.x)
+            activeRect.minY = Math.min(rectFixed.y, pt.y); activeRect.maxY = Math.max(rectFixed.y, pt.y)
+          }
         }
         drawActiveRectPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
         return
@@ -3190,7 +3218,7 @@ export default function Canvas() {
       if (editBannerTxtRef.current) editBannerTxtRef.current.textContent = 'Editing: ' + s.name + ' — paint to add more, then tap Update'
       if (!footerRef.current) return
       footerRef.current.innerHTML = `
-        <button class="ct-fb" id="ct-undo-btn">Undo</button>
+        <button class="ct-fb" id="ct-undo-btn" title="Undo (Ctrl+Z)">Undo</button>
         <button class="ct-fb danger" id="ct-cancel-edit-btn">Cancel</button>
         <button class="ct-fb export" id="ct-commit-edit-btn">Update Session</button>
       `
@@ -3333,9 +3361,9 @@ export default function Canvas() {
     function restoreFooter() {
       if (!footerRef.current) return
       footerRef.current.innerHTML = `
-        <button class="ct-fb" id="ct-undo-btn">Undo</button>
+        <button class="ct-fb" id="ct-undo-btn" title="Undo (Ctrl+Z)">Undo</button>
         <button class="ct-fb" id="ct-clear-btn">Clear</button>
-        <button class="ct-fb" id="ct-save-btn">+ Save</button>
+        <button class="ct-fb" id="ct-save-btn" title="Save Session (Ctrl+S)">+ Save</button>
         <button class="ct-fb export" id="ct-export-btn">Export</button>
       `
       footerRef.current.querySelector('#ct-undo-btn').addEventListener('click', undoLast)
@@ -4975,19 +5003,67 @@ export default function Canvas() {
     drawEl.addEventListener('gesturechange', onGesturePrevent)
     window.addEventListener('mouseup', onUp)
     window.addEventListener('keydown', e => {
-      if (e.key !== 'Escape') return
-      if (calibrating) { cancelCalib(); return }
-      if (tool === 'rect' && activeRect) {
-        activeRect = null; rectHandle = null
-        drawActiveRectPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
+      if (e.key === 'Escape') {
+        if (calibrating) { cancelCalib(); return }
+        if (tool === 'rect' && activeRect) {
+          activeRect = null; rectHandle = null
+          drawActiveRectPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
+        }
+        if (tool === 'poly' && activePoly) {
+          activePoly = null; polyDragMode = null; polyVertexIdx = null
+          drawActivePolyPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
+        }
+        if (tool === 'lf' && activeLFLine) {
+          activeLFLine = null; lfDragMode = null; lfVertexIdx = null
+          drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
+        }
+        return
       }
-      if (tool === 'poly' && activePoly) {
-        activePoly = null; polyDragMode = null; polyVertexIdx = null
-        drawActivePolyPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
+
+      // Desktop keyboard shortcuts. Never fire while the user is actually
+      // typing somewhere (a session name, a calibration value, a search
+      // box, ...) — a bare letter key doing something destructive mid-typing
+      // (e.g. hitting 'e' while naming a session "Entryway" and suddenly
+      // switching to Erase) would be exactly the kind of thing that erodes
+      // trust in a tool. Ctrl/Cmd combos are still safe to allow through
+      // even while typing, since a real text field would already consume
+      // its own native ctrl+S/Z/H before this ever needs to react — but
+      // checking isTyping first for all of it keeps this one rule simple.
+      const activeEl = document.activeElement
+      const isTyping = !!activeEl && (
+        activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' ||
+        activeEl.tagName === 'SELECT' || activeEl.isContentEditable
+      )
+      if (isTyping || !activePage) return
+
+      // Ctrl on Windows/Linux, Cmd on Mac — checking both rather than only
+      // the literal "Ctrl" so this works the way a Mac user actually
+      // expects. (Cmd+H specifically is swallowed by macOS itself before
+      // any web page ever sees it — Ctrl+H is the one that's actually
+      // reachable in-browser on a Mac, which is a reason to keep both keys
+      // recognized here rather than picking just one.)
+      const mod = e.ctrlKey || e.metaKey
+      if (mod) {
+        const k = e.key.toLowerCase()
+        if (k === 'z') { e.preventDefault(); undoLast(); return }
+        if (k === 's') { e.preventDefault(); saveSession(); return }
+        if (k === 'h') { e.preventDefault(); openHistory(); return }
+        return
       }
-      if (tool === 'lf' && activeLFLine) {
-        activeLFLine = null; lfDragMode = null; lfVertexIdx = null
-        drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
+
+      // Bare-letter tool shortcuts — no modifier, so only reachable when
+      // nothing editable has focus (guarded above).
+      switch (e.key.toLowerCase()) {
+        case 'h': setTool('highlight'); break
+        case 'r': setTool('rect'); break
+        case 'p': setTool('poly'); break
+        case 'c': setTool('count'); break
+        // Pen's natural letter (P) is already Polygon's — using B (brush)
+        // instead, since Pen is a freehand pixel brush here, not a vector
+        // tool. Easy to remap if a different letter is wanted.
+        case 'b': setTool('pen'); break
+        case 'l': setTool('lf'); break
+        case 'e': setTool('erase'); break
       }
     })
     window.addEventListener('resize', onResize)
@@ -5122,7 +5198,7 @@ export default function Canvas() {
               </span>
             </div>
           )}
-          <button className="ct-hbtn" onClick={() => api.current.openHistory?.()}>History</button>
+          <button className="ct-hbtn" title="History (Ctrl+H)" onClick={() => api.current.openHistory?.()}>History</button>
         </div>
       </div>
       {/* Total building progress — 4px strip below header */}
@@ -5181,17 +5257,17 @@ export default function Canvas() {
           <div className="ct-sb-sec">
             <div className="ct-sb-ttl">Tool</div>
             <div className="ct-tool-row">
-              <div ref={btnHlRef}    className="ct-tbtn"        onClick={() => api.current.setTool?.('highlight')}>Highlight</div>
-              <div ref={btnRectRef}  className="ct-tbtn t-rect" onClick={() => api.current.setTool?.('rect')}>Rectangle</div>
-              <div ref={btnPolyRef}  className="ct-tbtn"        onClick={() => api.current.setTool?.('poly')}>Polygon</div>
+              <div ref={btnHlRef}    className="ct-tbtn"        title="Highlight (H)" onClick={() => api.current.setTool?.('highlight')}>Highlight</div>
+              <div ref={btnRectRef}  className="ct-tbtn t-rect" title="Rectangle (R) — hold Shift for a square" onClick={() => api.current.setTool?.('rect')}>Rectangle</div>
+              <div ref={btnPolyRef}  className="ct-tbtn"        title="Polygon (P) — hold Shift to snap 45°/90°" onClick={() => api.current.setTool?.('poly')}>Polygon</div>
             </div>
             <div className="ct-tool-row">
-              <div ref={btnCountRef} className="ct-tbtn" onClick={() => api.current.setTool?.('count')}>Count</div>
-              <div ref={btnPenRef}   className="ct-tbtn" onClick={() => api.current.setTool?.('pen')}>Pen</div>
-              <div ref={btnLFRef}    className="ct-tbtn" onClick={() => api.current.setTool?.('lf')}>Linear Ft</div>
+              <div ref={btnCountRef} className="ct-tbtn" title="Count (C)" onClick={() => api.current.setTool?.('count')}>Count</div>
+              <div ref={btnPenRef}   className="ct-tbtn" title="Pen (B)" onClick={() => api.current.setTool?.('pen')}>Pen</div>
+              <div ref={btnLFRef}    className="ct-tbtn" title="Linear Ft (L) — hold Shift to snap 45°/90°" onClick={() => api.current.setTool?.('lf')}>Linear Ft</div>
             </div>
             <div className="ct-tool-row">
-              <div ref={btnErRef}    className="ct-tbtn ct-tbtn-wide" onClick={() => api.current.setTool?.('erase')}>Erase</div>
+              <div ref={btnErRef}    className="ct-tbtn ct-tbtn-wide" title="Erase (E)" onClick={() => api.current.setTool?.('erase')}>Erase</div>
             </div>
             <div className="ct-sb-ttl">Brush Size</div>
             <div className="ct-brush-row">
