@@ -4096,7 +4096,10 @@ export default function Canvas() {
     // bare Storage paths (see resolveStorageUrl) — crossOrigin is a no-op
     // for data: URLs and required for reading storage URLs back into a
     // canvas without tainting it.
-    async function loadCanvasFromDataUrl(dataUrl, targetW, targetH) {
+    // preResolvedUrl lets a caller that already batch-resolved several of
+    // these in parallel (see loadSessionsFromSupabase) skip a redundant
+    // signing round trip here — ignored for data: URLs either way.
+    async function loadCanvasFromDataUrl(dataUrl, targetW, targetH, preResolvedUrl) {
       if (!dataUrl) return null
       // A "Paint More" edit re-uploads to the SAME Storage path every time
       // (see uploadCanvasToStorage — the path is keyed by session id, not a
@@ -4110,7 +4113,7 @@ export default function Canvas() {
       // signature anyway. Irrelevant either way for legacy `data:` URLs,
       // which resolveStorageUrl passes through unchanged.
       const isDataUrl = dataUrl.startsWith('data:')
-      const fetchUrl = isDataUrl ? dataUrl : await resolveStorageUrl(dataUrl)
+      const fetchUrl = isDataUrl ? dataUrl : (preResolvedUrl !== undefined ? preResolvedUrl : await resolveStorageUrl(dataUrl))
       if (!fetchUrl) return null
       // Cross-device sessions: a source saved on desktop (uncapped flat-image
       // resolution) can be far bigger than this device needs. Decoding it at
@@ -4187,13 +4190,28 @@ export default function Canvas() {
       if (!dbSessions?.length) { console.log('[Canvas] No sessions found'); return }
 
       console.log('[Canvas] Loading', dbSessions.length, 'sessions')
+      // Each session's hl/pen canvas needs its own signed URL now (the
+      // bucket is private) — signing is a network round trip, and doing it
+      // one session at a time inside the loop below (as loadCanvasFromDataUrl
+      // did on its own) serialized every one of those round trips, visibly
+      // slowing down a page with many sessions. Resolving them all up front,
+      // in parallel, cuts that down to one batch wait instead of N.
+      const storagePaths = new Set()
+      for (const dbSess of dbSessions) {
+        if (dbSess.highlight_data && !dbSess.highlight_data.startsWith('data:')) storagePaths.add(dbSess.highlight_data)
+        if (dbSess.pen_data && !dbSess.pen_data.startsWith('data:')) storagePaths.add(dbSess.pen_data)
+      }
+      const resolvedUrls = new Map(
+        await Promise.all([...storagePaths].map(async p => [p, await resolveStorageUrl(p)]))
+      )
+
       for (const dbSess of dbSessions) {
         if (deletedSessionIds.has(dbSess.id)) continue
         let hlCanvas = null, penCanvas = null
 
         if (dbSess.highlight_data) {
           console.log('[Canvas] Loading session markup from:', dbSess.highlight_data.substring(0, 50))
-          hlCanvas = await loadCanvasFromDataUrl(dbSess.highlight_data, activePage.image.width, activePage.image.height)
+          hlCanvas = await loadCanvasFromDataUrl(dbSess.highlight_data, activePage.image.width, activePage.image.height, resolvedUrls.get(dbSess.highlight_data))
           console.log('[Canvas] hlCanvas result:', hlCanvas?.width, 'x', hlCanvas?.height,
             'activePage image:', activePage.image?.width, 'x', activePage.image?.height)
           // Legacy sessions stored highlight_data as a base64 data: URL (new
@@ -4234,7 +4252,7 @@ export default function Canvas() {
           }
         }
         if (dbSess.pen_data) {
-          penCanvas = await loadCanvasFromDataUrl(dbSess.pen_data, activePage.image.width, activePage.image.height)
+          penCanvas = await loadCanvasFromDataUrl(dbSess.pen_data, activePage.image.width, activePage.image.height, resolvedUrls.get(dbSess.pen_data))
         }
 
         console.log('[Canvas] Loaded session', dbSess.id, 'hlCanvas:', hlCanvas?.width, 'x', hlCanvas?.height)
