@@ -270,6 +270,70 @@ function TeamCard({ people }) {
   )
 }
 
+// Autodesk Construction Cloud connection — Phase 1 of the APS integration.
+// The actual tokens never pass through this component: connect() asks
+// api/autodesk/auth for a ready-made auth URL (sending the user's own
+// Supabase session so the server knows who's connecting) and just
+// navigates there; status is a plain connected/not-connected flag from
+// api/autodesk/status, never the tokens themselves (see
+// supabase-migration-aps-connections.sql for why).
+function IntegrationsCard() {
+  const [status, setStatus] = useState(null) // null = still checking
+  const [connecting, setConnecting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function authedFetch(url) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) throw new Error('Not signed in.')
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.message || data.error || 'Request failed.')
+    return data
+  }
+
+  useEffect(() => {
+    authedFetch('/api/autodesk/status').then(setStatus).catch(() => setStatus({ connected: false }))
+    // Coming back from Autodesk's consent screen — surface any error, then
+    // drop the query params so refreshing the page doesn't replay them.
+    const params = new URLSearchParams(window.location.search)
+    if (params.has('aps_connected') || params.has('aps_error')) {
+      if (params.get('aps_error')) setError('Autodesk connection failed: ' + params.get('aps_error'))
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function connect() {
+    setConnecting(true)
+    setError('')
+    try {
+      const { authUrl } = await authedFetch('/api/autodesk/auth')
+      window.location.href = authUrl
+    } catch (err) {
+      setError(err.message)
+      setConnecting(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Integrations</h2>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-gray-900 dark:text-white">Autodesk Construction Cloud</p>
+          <p className="text-sm text-muted">
+            {status === null ? 'Checking connection…' : status.connected ? 'Connected — sheets can be imported from ACC.' : 'Not connected.'}
+          </p>
+        </div>
+        <button type="button" onClick={connect} disabled={connecting || status?.connected} className="btn-secondary shrink-0">
+          {status?.connected ? 'Connected' : connecting ? 'Connecting…' : 'Connect Autodesk Account'}
+        </button>
+      </div>
+      {error && <div className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
+    </div>
+  )
+}
+
 function PlanUsageCard({ people, usage }) {
   return (
     <div className="card">
@@ -361,6 +425,7 @@ export default function CompanyHub() {
             <CompanyProfileCard org={org} onSaved={updated => setOrg(o => ({ ...o, ...updated }))} />
             <SettingsCard org={org} onSaved={updated => setOrg(o => ({ ...o, ...updated }))} />
             <TeamCard people={people} />
+            <IntegrationsCard />
             <PlanUsageCard people={people} usage={usage} />
           </div>
         )}
