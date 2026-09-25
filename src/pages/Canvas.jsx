@@ -3807,7 +3807,7 @@ export default function Canvas() {
             <div class="ct-rep-desc">${data.sheetName}</div>
             <div class="ct-rep-sub">Production Tracking Report &nbsp;•&nbsp; ${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
           </div>
-          ${data.logoUrl ? `<img src="${data.logoUrl}" alt="Company logo" style="max-height:56px;max-width:160px;object-fit:contain;flex-shrink:0;" />` : ''}
+          ${data.logoUrl ? `<img src="${data.logoUrl}" alt="Company logo" style="max-height:120px;max-width:120px;object-fit:contain;flex-shrink:0;" />` : ''}
         </div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
@@ -3915,14 +3915,16 @@ export default function Canvas() {
         // report. Positioned independently of `y` (which only tracks the
         // left-side title/table flow below) since it sits in its own
         // corner, not the document's normal top-to-bottom flow.
+        let logoBottomY = margin
         if (data.logoUrl) {
           try {
             const logoDataUrl = await urlToDataURL(data.logoUrl)
             const props = doc.getImageProperties(logoDataUrl)
-            const maxW = 1.3, maxH = 0.55
+            const maxW = 1.25, maxH = 1.25
             let w = maxW, h = w * props.height / props.width
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             doc.addImage(logoDataUrl, imageFormatFromDataUrl(logoDataUrl), pageWidth - margin - w, margin, w, h)
+            logoBottomY = margin + h
           } catch (e) {
             console.warn('[Canvas] Sheet Report: logo embed failed:', e)
           }
@@ -3950,6 +3952,12 @@ export default function Canvas() {
         doc.setFontSize(9)
         doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
+
+        // A logo up to 1.25in tall can now run past the (typically
+        // shorter) title block above — the snapshot spans the full page
+        // width, so without this it could get drawn right over the
+        // logo's bottom corner since it's added after it below.
+        y = Math.max(y, logoBottomY + 0.15)
 
         // Snapshot — its own wider 0.75in side margins rather than the
         // page's tighter 0.4in text/table margin, so it reads as the
