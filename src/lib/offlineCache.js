@@ -321,7 +321,7 @@ async function cachePage(pg, projectId, onProgress) {
       id: dbSess.id, name: dbSess.name, color: dbSess.color,
       sf: dbSess.sf, lf: dbSess.lf, work_date: dbSess.work_date, created_at: dbSess.created_at,
       crew_size: dbSess.crew_size, hours_worked: dbSess.hours_worked,
-      count_data: dbSess.count_data, lf_data: dbSess.lf_data, photoBlobs,
+      count_data: dbSess.count_data, lf_data: dbSess.lf_data, text_data: dbSess.text_data, photoBlobs,
       profiles: dbSess.profiles, hlBlob, penBlob,
     })
   }

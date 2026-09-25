@@ -39,6 +39,11 @@ import './Canvas.css'
 // photos is an array of public Storage URLs (uploaded to the floor-plans
 // bucket next to the session's hl/pen canvas snapshots — see
 // uploadPhotosToStorage), not inlined image data.
+//
+// NOTE: Run this migration to enable the Text tool:
+// ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS text_data jsonb DEFAULT '[]';
+// text_data holds {w, h, labels: [{id, x, y, text, color, fontSize}, ...]} —
+// same cross-device rescaling shape as count_data/lf_data.
 
 const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
@@ -71,6 +76,7 @@ export default function Canvas() {
   const drawRef          = useRef(null)
   const osdContainerRef  = useRef(null)   // OpenSeadragon deep-zoom viewer (tiled pages only)
   const cursorRingRef    = useRef(null)
+  const textInputRef     = useRef(null)
   const calibStatusRef   = useRef(null)
   const zoomBarRef       = useRef(null)
   const uploadZoneRef    = useRef(null)
@@ -99,6 +105,7 @@ export default function Canvas() {
   const btnRectRef       = useRef(null)   // rectangle tool button
   const btnPolyRef       = useRef(null)   // polygon tool button
   const btnLFRef         = useRef(null)   // linear footage tool button
+  const btnTextRef       = useRef(null)   // text tool button
   const brushRangeRef    = useRef(null)
   const brushValRef      = useRef(null)
   const colorGridRef     = useRef(null)
@@ -253,6 +260,10 @@ export default function Canvas() {
     let liveCountMarkers = []   // {id, x, y, num, color} in image coords
     let hoveredMarkerId  = null
     let countSymbol = 'num'     // 'num' | 'check' | 'x'
+
+    // Text tool — see "── TEXT TOOL ──" below for placement/editing.
+    let liveTextLabels = []     // {id, x, y, text, color, fontSize} in image coords
+    let textEditId = null       // id of the label currently open in textInputRef, or null for a brand-new one
 
     // Rectangle tool — an active rect stays a live, adjustable shape (drag
     // corner handles to expand/collapse, drag inside to move) rather than
@@ -736,6 +747,34 @@ export default function Canvas() {
         countCtx.fillText(label, mid.x, mid.y - 12)
         countCtx.restore()
       })
+
+      // Text labels — same split as everything else here: committed labels
+      // from saved sessions plus this session's own liveTextLabels. Whichever
+      // label textEditId points at is skipped since the live <textarea> is
+      // sitting on top of it already.
+      const allLabels = []
+      if (!soloSession) {
+        activePage.sessions.forEach(s => {
+          if (!s._hidden && s.textLabels) s.textLabels.forEach(t => allLabels.push(t))
+        })
+        liveTextLabels.forEach(t => allLabels.push(t))
+      } else if (soloSession.textLabels) {
+        soloSession.textLabels.forEach(t => allLabels.push(t))
+      }
+      allLabels.forEach(t => {
+        if (t.id === textEditId) return
+        const sx = t.x * z + p.x
+        const sy = t.y * z + p.y
+        const fontPx = Math.max(8, (t.fontSize || 24) * z)
+        countCtx.save()
+        countCtx.font = `bold ${fontPx}px system-ui,sans-serif`
+        countCtx.textAlign = 'left'
+        countCtx.textBaseline = 'top'
+        countCtx.fillStyle = t.color || '#000000'
+        const lines = String(t.text).split('\n')
+        lines.forEach((line, i) => countCtx.fillText(line, sx, sy + i * fontPx * 1.15))
+        countCtx.restore()
+      })
     }
 
     function placeCountMarker(sx, sy) {
@@ -749,6 +788,84 @@ export default function Canvas() {
       })
       drawMarkersLayer()
       updateUnsaved(true)
+    }
+
+    // ── TEXT TOOL ────────────────────────────────────────────────────────────
+    // Tracked as data (like count markers/LF lines), not rasterized, so it
+    // stays editable and reads crisply at any zoom level instead of
+    // becoming a fixed-resolution raster of whatever size it was typed at.
+    // Placing/editing uses a real <textarea> (textInputRef) positioned over
+    // the click point rather than a canvas-only interaction, since typing
+    // needs an actual text input; drawMarkersLayer() skips whichever label
+    // textEditId currently points at so it isn't drawn twice while live.
+    function hitTextLabel(sx, sy) {
+      if (!activePage) return null
+      const z = activePage.zoom, p = activePage.pan
+      // Walk in reverse so an overlapping later label wins the hit test,
+      // matching the visual stacking order (later labels draw on top).
+      for (let i = liveTextLabels.length - 1; i >= 0; i--) {
+        const t = liveTextLabels[i]
+        const sxScreen = t.x * z + p.x, syScreen = t.y * z + p.y
+        const fontPx = Math.max(8, (t.fontSize || 24) * z)
+        countCtx.font = `bold ${fontPx}px system-ui,sans-serif`
+        const lines = String(t.text).split('\n')
+        const w = Math.max(...lines.map(line => countCtx.measureText(line).width))
+        const h = lines.length * fontPx * 1.15
+        if (sx >= sxScreen - 4 && sx <= sxScreen + w + 4 && sy >= syScreen - 4 && sy <= syScreen + h + 4) return t
+      }
+      return null
+    }
+
+    // screenPos is where the input box appears (drawEl-local px) — for a
+    // new label that's the click point; for editing an existing one it's
+    // that label's own current on-screen position, so the box lands right
+    // on top of the text being edited rather than wherever was clicked to
+    // hit-test it.
+    function openTextEditor(existing, screenPos) {
+      if (!activePage) return
+      if (soloSession) { soloSession = null; renderSessions() }
+      const input = textInputRef.current
+      if (!input) return
+      textEditId = existing ? existing.id : null
+      const fontPx = Math.max(8, (existing?.fontSize || 24) * activePage.zoom)
+      input.value = existing ? existing.text : ''
+      input.style.color = existing ? (existing.color || '#000000') : activeColor
+      input.style.fontSize = fontPx + 'px'
+      input.style.left = screenPos.x + 'px'
+      input.style.top = screenPos.y + 'px'
+      input.style.height = Math.round(fontPx * 1.3) + 'px'
+      input.style.display = 'block'
+      drawMarkersLayer() // hide the existing label being edited (see textEditId check there)
+      input.focus()
+      if (existing) input.select()
+    }
+
+    function commitTextLabel() {
+      const input = textInputRef.current
+      if (!input || input.style.display === 'none') return
+      const text = input.value.trim()
+      const screenX = parseFloat(input.style.left), screenY = parseFloat(input.style.top)
+      const editId = textEditId
+      input.style.display = 'none'; input.blur()
+      textEditId = null
+      if (editId) {
+        const label = liveTextLabels.find(t => t.id === editId)
+        if (label) {
+          if (!text) liveTextLabels = liveTextLabels.filter(t => t.id !== editId)
+          else label.text = text
+        }
+      } else if (text && activePage) {
+        const pt = s2i(screenX, screenY)
+        liveTextLabels.push({ id: Date.now(), x: pt.x, y: pt.y, text, color: activeColor, fontSize: 24 })
+      }
+      drawMarkersLayer(); updateUnsaved(checkHasLiveContent())
+    }
+
+    function cancelTextLabel() {
+      const input = textInputRef.current
+      if (input) { input.style.display = 'none'; input.blur() }
+      textEditId = null
+      drawMarkersLayer()
     }
 
     // ── RECTANGLE TOOL ────────────────────────────────────────────────────────
@@ -859,6 +976,7 @@ export default function Canvas() {
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
         lf:  snapshotLFLines(),
+        txt: [...liveTextLabels],
       })
       if (undoStack.length > MAX_UNDO) undoStack.shift()
       liveHlCtx.save()
@@ -984,6 +1102,7 @@ export default function Canvas() {
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
         lf:  snapshotLFLines(),
+        txt: [...liveTextLabels],
       })
       if (undoStack.length > MAX_UNDO) undoStack.shift()
       liveHlCtx.save()
@@ -1150,6 +1269,7 @@ export default function Canvas() {
       if (activeRect && (activeRect.maxX - activeRect.minX) >= 2 && (activeRect.maxY - activeRect.minY) >= 2) return true
       if (activePoly && activePoly.points.length > 0) return true
       if (liveLFLines.length > 0 || (activeLFLine && activeLFLine.points.length > 0)) return true
+      if (liveTextLabels.length > 0) return true
       const hd = liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height).data
       for (let i = 3; i < hd.length; i += 4) if (hd[i] > 10) return true
       return false
@@ -1328,12 +1448,24 @@ export default function Canvas() {
           }
           placeCountMarker(pos.x, pos.y); return
         }
+        if (tool === 'text') {
+          const hit = hitTextLabel(pos.x, pos.y)
+          if (hit) {
+            const sx = hit.x * activePage.zoom + activePage.pan.x
+            const sy = hit.y * activePage.zoom + activePage.pan.y
+            openTextEditor(hit, {x: sx, y: sy})
+          } else {
+            openTextEditor(null, pos)
+          }
+          return
+        }
         isPainting = true; lastPenPt = null
         undoStack.push({
           hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
           pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
           cnt: [...liveCountMarkers],
           lf:  snapshotLFLines(),
+          txt: [...liveTextLabels],
         })
         if (undoStack.length > MAX_UNDO) undoStack.shift()
         const pt = s2i(pos.x, pos.y)
@@ -2115,12 +2247,24 @@ export default function Canvas() {
         }
         placeCountMarker(pos.x, pos.y); touchJustPlacedMarker = true; return
       }
+      if (tool === 'text') {
+        const hit = hitTextLabel(pos.x, pos.y)
+        if (hit) {
+          const sx = hit.x * activePage.zoom + activePage.pan.x
+          const sy = hit.y * activePage.zoom + activePage.pan.y
+          openTextEditor(hit, {x: sx, y: sy})
+        } else {
+          openTextEditor(null, pos)
+        }
+        return
+      }
       touchPainting = true; lastTouchPt = null
       undoStack.push({
         hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
         lf:  snapshotLFLines(),
+        txt: [...liveTextLabels],
       })
       if (undoStack.length > MAX_UNDO) undoStack.shift()
       const pt = s2i(pos.x, pos.y)
@@ -2387,8 +2531,14 @@ export default function Canvas() {
       if (tool === 'rect' && t !== 'rect' && activeRect) bakeActiveRect()
       if (tool === 'poly' && t !== 'poly' && activePoly) bakePolygon()
       if (tool === 'lf' && t !== 'lf' && activeLFLine) commitLFLine()
+      // Same reasoning — a text edit box left open while switching tools
+      // would lose whatever was typed instead of committing it.
+      if (tool === 'text' && t !== 'text') commitTextLabel()
       if (tool !== 'erase' && t !== 'erase' && t !== 'count') prevTool = t
       tool = t
+      // Text's whole point per the request is that it defaults to black
+      // every time it's selected, not just the first time.
+      if (t === 'text') activeColor = '#000000'
       if (btnHlRef.current)    btnHlRef.current.className    = 'ct-tbtn' + (t === 'highlight' ? ' t-hl' : '')
       if (btnPenRef.current)   btnPenRef.current.className   = 'ct-tbtn' + (t === 'pen'       ? ' t-pen' : '')
       if (btnErRef.current)    btnErRef.current.className    = 'ct-tbtn' + (t === 'erase'     ? ' t-er' : '')
@@ -2396,6 +2546,7 @@ export default function Canvas() {
       if (btnRectRef.current)  btnRectRef.current.className  = 'ct-tbtn' + (t === 'rect'      ? ' t-rect' : '')
       if (btnPolyRef.current)  btnPolyRef.current.className  = 'ct-tbtn' + (t === 'poly'      ? ' t-poly' : '')
       if (btnLFRef.current)    btnLFRef.current.className    = 'ct-tbtn' + (t === 'lf'        ? ' t-lf' : '')
+      if (btnTextRef.current)  btnTextRef.current.className  = 'ct-tbtn' + (t === 'text'      ? ' t-text' : '')
       if (t !== 'rect' && t !== 'poly' && t !== 'lf') drawCtx.clearRect(0, 0, cW, cH)
     }
 
@@ -2435,6 +2586,15 @@ export default function Canvas() {
         updateUnsaved(checkHasLiveContent())
         return
       }
+      // Text tool: same reasoning again — pop the last label (whether it
+      // was just placed or just edited; a full per-edit history is more
+      // than this needs).
+      if (tool === 'text' && liveTextLabels.length > 0) {
+        liveTextLabels.pop()
+        drawMarkersLayer()
+        updateUnsaved(checkHasLiveContent())
+        return
+      }
       if (!undoStack.length) return
       const snap = undoStack.pop()
       liveHlCtx.putImageData(snap.hl, 0, 0)
@@ -2444,6 +2604,7 @@ export default function Canvas() {
       // vector data the pixel-based eraser never touched on its own —
       // restore it too, so undoing an erase stroke fully reverts it.
       if (snap.lf) liveLFLines = snap.lf
+      if (snap.txt) liveTextLabels = snap.txt
       redrawAll(); updateSF()
       updateUnsaved(checkHasLiveContent())
     }
@@ -2622,6 +2783,7 @@ export default function Canvas() {
 
       const snapCount = [...liveCountMarkers]
       const snapLFLines = liveLFLines.map(l => ({...l, points: l.points.map(p => ({...p}))}))
+      const snapText = liveTextLabels.map(t => ({...t}))
 
       const session = {
         id: sessionCounter++, name: sessionName,
@@ -2632,6 +2794,7 @@ export default function Canvas() {
         hlCanvas: snapHL, penCanvas: snapPen,
         countMarkers: snapCount,
         lfLines: snapLFLines,
+        textLabels: snapText,
         crewSize, hoursWorked, totalHours,
         pageId: activePage.id, pageName: activePage.name,
         photos: [],
@@ -2646,6 +2809,7 @@ export default function Canvas() {
       livePenCtx.clearRect(0, 0, livePenCanvas.width, livePenCanvas.height)
       liveCountMarkers = []
       liveLFLines = []
+      liveTextLabels = []
       undoStack = []
       if (hdrSessionRef.current) hdrSessionRef.current.textContent = '0'
 
@@ -2816,6 +2980,9 @@ export default function Canvas() {
         lf_data: session.lfLines?.length > 0
           ? { w: activePage.image.width, h: activePage.image.height, lines: session.lfLines }
           : null,
+        text_data: session.textLabels?.length > 0
+          ? { w: activePage.image.width, h: activePage.image.height, labels: session.textLabels }
+          : null,
       }
       try {
         const [highlight_data, pen_data, photoResult] = await Promise.all([
@@ -2855,6 +3022,9 @@ export default function Canvas() {
           // they were captured against so another device can rescale them.
           lf_data:        session.lfLines?.length > 0
             ? { w: activePage.image.width, h: activePage.image.height, lines: session.lfLines }
+            : null,
+          text_data:      session.textLabels?.length > 0
+            ? { w: activePage.image.width, h: activePage.image.height, labels: session.textLabels }
             : null,
           photos,
           updated_at:     new Date().toISOString(),
@@ -2904,6 +3074,15 @@ export default function Canvas() {
           ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
           if (!error && session.photos?.length) {
             alert('Session saved, but Photos were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (photos ALTER TABLE) in the Supabase SQL editor, then re-add them via the session\'s edit (pencil) button.')
+          }
+        }
+        if (error && /text_data/.test(error.message)) {
+          // Same idea, for the newer text_data column.
+          console.warn('[Canvas] text_data column missing on insert, retrying without it.')
+          const { text_data, ...rest } = insertPayload
+          ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
+          if (!error && session.textLabels?.length) {
+            alert('Session saved, but Text labels were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (text_data ALTER TABLE) in the Supabase SQL editor, then re-add them via Paint More.')
           }
         }
         if (error) throw error
@@ -3295,11 +3474,13 @@ export default function Canvas() {
       if (s.penCanvas) livePenCtx.drawImage(s.penCanvas, 0, 0)
       liveCountMarkers = s.countMarkers ? [...s.countMarkers] : []
       liveLFLines = s.lfLines ? s.lfLines.map(l => ({...l, points: l.points.map(p => ({...p}))})) : []
+      liveTextLabels = s.textLabels ? s.textLabels.map(t => ({...t})) : []
       undoStack = [{
         hl:  liveHlCtx.getImageData(0, 0, liveHlCanvas.width, liveHlCanvas.height),
         pen: livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height),
         cnt: [...liveCountMarkers],
         lf:  snapshotLFLines(),
+        txt: [...liveTextLabels],
       }]
       // Resume with the same color the session was painted in, so new
       // strokes look consistent with the existing markup while editing
@@ -3353,7 +3534,7 @@ export default function Canvas() {
       ensureLive()
       liveHlCtx.clearRect(0, 0, liveHlCanvas.width, liveHlCanvas.height)
       livePenCtx.clearRect(0, 0, livePenCanvas.width, livePenCanvas.height)
-      liveCountMarkers = []; liveLFLines = []; undoStack = []; invalidateSessions()
+      liveCountMarkers = []; liveLFLines = []; liveTextLabels = []; undoStack = []; invalidateSessions()
       if (editBannerRef.current) editBannerRef.current.classList.remove('show')
       restoreFooter(); redrawAll(); updateSF(); renderSessions()
     }
@@ -3376,6 +3557,7 @@ export default function Canvas() {
       s.countMarkers = [...liveCountMarkers]; s.count = liveCountMarkers.length
       s.lfLines = liveLFLines.map(l => ({...l, points: l.points.map(p => ({...p}))}))
       s.lf = liveLFLines.reduce((a, l) => a + toLF(lineLengthPx(l.points)), 0)
+      s.textLabels = liveTextLabels.map(t => ({...t}))
       s._hidden = false
       // Recalculate SF from updated highlight canvas
       const hlCtx2 = newHL.width > 0 && newHL.height > 0 ? newHL.getContext('2d') : null
@@ -3384,7 +3566,7 @@ export default function Canvas() {
       s.sf = activePage?.ppf ? px / (activePage.ppf * activePage.ppf) : s.sf
       liveHlCtx.clearRect(0, 0, liveHlCanvas.width, liveHlCanvas.height)
       livePenCtx.clearRect(0, 0, livePenCanvas.width, livePenCanvas.height)
-      liveCountMarkers = []; liveLFLines = []; undoStack = []; editingSession = false; editTarget = null
+      liveCountMarkers = []; liveLFLines = []; liveTextLabels = []; undoStack = []; editingSession = false; editTarget = null
       invalidateSessions(); if (editBannerRef.current) editBannerRef.current.classList.remove('show')
       restoreFooter(); redrawAll(); renderSessions(); updateSF()
       // Persist updated session to Supabase (fire-and-forget, uploads canvases
@@ -3398,6 +3580,9 @@ export default function Canvas() {
           lf: s.lf || null,
           lf_data: s.lfLines?.length > 0
             ? { w: activePage.image.width, h: activePage.image.height, lines: s.lfLines }
+            : null,
+          text_data: s.textLabels?.length > 0
+            ? { w: activePage.image.width, h: activePage.image.height, labels: s.textLabels }
             : null,
         }
         ;(async () => {
@@ -3432,6 +3617,14 @@ export default function Canvas() {
               ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
               if (!error && s.lf) {
                 alert('Session saved, but Linear Footage was NOT saved — the database is missing those columns. Run the migration noted at the top of Canvas.jsx (lf/lf_data ALTER TABLE) in the Supabase SQL editor.')
+              }
+            }
+            if (error && /text_data/.test(error.message)) {
+              console.warn('[Canvas] text_data column missing on update, retrying without it.')
+              const { text_data: _textData, ...rest } = updatePayload
+              ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+              if (!error && s.textLabels?.length) {
+                alert('Session saved, but Text labels were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (text_data ALTER TABLE) in the Supabase SQL editor.')
               }
             }
             if (error) throw error
@@ -3485,7 +3678,7 @@ export default function Canvas() {
       footerRef.current.querySelector('#ct-clear-btn').addEventListener('click', () => {
         liveHlCtx.clearRect(0, 0, liveHlCanvas.width, liveHlCanvas.height)
         livePenCtx.clearRect(0, 0, livePenCanvas.width, livePenCanvas.height)
-        liveCountMarkers = []; liveLFLines = []; undoStack = []
+        liveCountMarkers = []; liveLFLines = []; liveTextLabels = []; undoStack = []
         redrawAll(); updateSF(); updateUnsaved(false)
         try { localStorage.removeItem(`draft_${pageId}`) } catch {}
       })
@@ -4497,6 +4690,18 @@ export default function Canvas() {
           }
         } catch {}
 
+        let textLabels = []
+        try {
+          const raw = dbSess.text_data
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+          if (parsed?.labels) {
+            // Same cross-device rescaling as count markers/LF lines above.
+            const sx = parsed.w ? img.width / parsed.w : 1
+            const sy = parsed.h ? img.height / parsed.h : 1
+            textLabels = parsed.labels.map(t => ({...t, x: t.x * sx, y: t.y * sy}))
+          }
+        } catch {}
+
         const date = dbSess.work_date || getCurrentDate()
 
         activePage.sessions.push({
@@ -4508,7 +4713,7 @@ export default function Canvas() {
           sf:           parseFloat(dbSess.sf) || 0,
           count:        countMarkers.length || 0,
           lf:           parseFloat(dbSess.lf) || 0,
-          hlCanvas, penCanvas, countMarkers, lfLines,
+          hlCanvas, penCanvas, countMarkers, lfLines, textLabels,
           pageId:       activePage.id,
           pageName:     activePage.name,
           date,
@@ -4778,6 +4983,14 @@ export default function Canvas() {
             lfLines = parsed.lines.map(l => ({ ...l, points: l.points.map(pt => ({ ...pt, x: pt.x * sx, y: pt.y * sy })) }))
           }
         } catch {}
+        let textLabels = []
+        try {
+          const parsed = cs.text_data
+          if (parsed?.labels) {
+            const sx = parsed.w ? activePage.image.width / parsed.w : 1, sy = parsed.h ? activePage.image.height / parsed.h : 1
+            textLabels = parsed.labels.map(t => ({ ...t, x: t.x * sx, y: t.y * sy }))
+          }
+        } catch {}
 
         activePage.sessions.push({
           id: sessionCounter++,
@@ -4788,7 +5001,7 @@ export default function Canvas() {
           sf: parseFloat(cs.sf) || 0,
           count: countMarkers.length || 0,
           lf: parseFloat(cs.lf) || 0,
-          hlCanvas, penCanvas, countMarkers, lfLines,
+          hlCanvas, penCanvas, countMarkers, lfLines, textLabels,
           pageId: activePage.id,
           pageName: activePage.name,
           date: cs.work_date || getCurrentDate(),
@@ -5155,6 +5368,18 @@ export default function Canvas() {
     brushRangeRef.current.addEventListener('input', updateBrush)
     ctxBrushRef.current.addEventListener('input', e => ctxBrushChange(e.target.value))
 
+    textInputRef.current.addEventListener('blur', commitTextLabel)
+    textInputRef.current.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitTextLabel() }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelTextLabel() }
+      e.stopPropagation()
+    })
+    textInputRef.current.addEventListener('input', e => {
+      // Auto-grow height as the user types multi-line text.
+      e.target.style.height = 'auto'
+      e.target.style.height = e.target.scrollHeight + 'px'
+    })
+
     drawEl.addEventListener('mousedown', onDown)
     drawEl.addEventListener('mousemove', onMove)
     drawEl.addEventListener('mouseleave', onLeave)
@@ -5233,6 +5458,7 @@ export default function Canvas() {
         case 'b': setTool('pen'); break
         case 'l': setTool('lf'); break
         case 'e': setTool('erase'); break
+        case 't': setTool('text'); break
       }
     })
     window.addEventListener('resize', onResize)
@@ -5407,6 +5633,7 @@ export default function Canvas() {
           <canvas ref={drawRef}  className="ct-canvas ct-draw-canvas" />
 
           <div ref={cursorRingRef} className="ct-cursor-ring" />
+          <textarea ref={textInputRef} className="ct-text-input" rows={1} spellCheck={false} />
 
           <div ref={zoomBarRef} className="ct-zoom-bar">
             <button className="ct-z-btn" onClick={() => api.current.doZoom?.(1.18)}>+</button>
@@ -5432,11 +5659,12 @@ export default function Canvas() {
             </div>
             <div className="ct-tool-row">
               <div ref={btnCountRef} className="ct-tbtn" title="Count (C)" onClick={() => api.current.setTool?.('count')}>Count</div>
-              <div ref={btnPenRef}   className="ct-tbtn" title="Pen (B)" onClick={() => api.current.setTool?.('pen')}>Pen</div>
+              <div ref={btnTextRef}  className="ct-tbtn" title="Text (T)" onClick={() => api.current.setTool?.('text')}>Text</div>
               <div ref={btnLFRef}    className="ct-tbtn" title="Linear Ft (L) — hold Shift to snap 45°/90°" onClick={() => api.current.setTool?.('lf')}>Linear Ft</div>
             </div>
             <div className="ct-tool-row">
-              <div ref={btnErRef}    className="ct-tbtn ct-tbtn-wide" title="Erase (E)" onClick={() => api.current.setTool?.('erase')}>Erase</div>
+              <div ref={btnPenRef}   className="ct-tbtn" title="Pen (B)" onClick={() => api.current.setTool?.('pen')}>Pen</div>
+              <div ref={btnErRef}    className="ct-tbtn" title="Erase (E)" onClick={() => api.current.setTool?.('erase')}>Erase</div>
             </div>
             <div className="ct-sb-ttl">Brush Size</div>
             <div className="ct-brush-row">

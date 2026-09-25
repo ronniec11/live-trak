@@ -73,6 +73,7 @@ const OPTIONAL_COLUMN_GROUPS = [
   { test: /\btotal_hours\b/, keys: ['total_hours'] },
   { test: /\blf\b|lf_data/, keys: ['lf', 'lf_data'] },
   { test: /\bphotos\b/, keys: ['photos'] },
+  { test: /text_data/, keys: ['text_data'] },
 ]
 
 async function withMissingColumnFallback(basePayload, run) {
