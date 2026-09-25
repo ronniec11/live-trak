@@ -3916,14 +3916,13 @@ export default function Canvas() {
         }
 
         // Company logo — top-right corner, same spot as the on-screen
-        // report, fixed at the page margin (0.5in). Capped to 0.75in tall
-        // so its bottom edge lands exactly at the 1.25in header-zone line
-        // (see below) — measured from the page's top edge, not the margin.
+        // report, fixed at the page margin (0.5in, unchanged). Capped so
+        // its bottom edge lands at 1.0625in from the page's top edge.
         if (data.logoUrl) {
           try {
             const logoDataUrl = await urlToDataURL(data.logoUrl)
             const props = doc.getImageProperties(logoDataUrl)
-            const maxW = 1.25, maxH = 1.25 - margin
+            const maxW = 1.25, maxH = 1.0625 - margin
             let w = maxW, h = w * props.height / props.width
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             doc.addImage(logoDataUrl, imageFormatFromDataUrl(logoDataUrl), pageWidth - margin - w, margin, w, h)
