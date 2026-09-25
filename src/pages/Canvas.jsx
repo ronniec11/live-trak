@@ -280,6 +280,7 @@ export default function Canvas() {
     let textDownScreenPos = null // screen-space point at mousedown, to tell a real drag from pointer jitter
     let textResizeBoxId = null   // id of an existing box whose corner handle was grabbed
     let textResizeFixed = null   // the OPPOSITE corner (image coords) — stays put while resizing, like Rectangle
+    let hoveredTextBoxId = null  // which box's dashed outline/handles are currently shown — see onMove and drawMarkersLayer
     let textResizeOrig = null    // {minX, minY, maxX, maxY, fontSize} at mousedown, for computing the new font size from the height ratio
 
     // Rectangle tool — an active rect stays a live, adjustable shape (drag
@@ -804,15 +805,19 @@ export default function Canvas() {
         countCtx.restore()
       })
 
-      // Corner resize handles — only on this session's own live boxes (same
-      // as Rectangle/Polygon/LF only ever letting you adjust your own
-      // in-progress shape, never another session's already-saved one), and
-      // only while the Text tool is active so they don't clutter the plan
-      // when it's not in use. The box currently open for editing is skipped
-      // too — its <textarea> sits on top of it, nothing to grab there.
+      // Corner resize handles — shown for ONE box at a time: whichever one
+      // is actively being dragged/resized, or else whichever the pointer is
+      // currently over. Drawing them on every committed box permanently
+      // (the first cut of this) meant the box you'd just finished typing
+      // into kept showing its dashed outline and handles forever afterward
+      // — nothing ever visually confirmed it was done and committed, and it
+      // looked like clicking away hadn't worked. Hover-only fixes that: move
+      // off the box and its handles disappear, same as Rectangle only ever
+      // showing handles on the one shape that's actually live.
       if (tool === 'text' && !soloSession) {
-        liveTextLabels.forEach(t => {
-          if (t.id === textEditId) return
+        const hoverId = textResizeBoxId || textDragBoxId || hoveredTextBoxId
+        const t = hoverId != null && hoverId !== textEditId ? liveTextLabels.find(x => x.id === hoverId) : null
+        if (t) {
           const sx1 = t.minX * z + p.x, sy1 = t.minY * z + p.y
           const sx2 = t.maxX * z + p.x, sy2 = t.maxY * z + p.y
           countCtx.save()
@@ -830,7 +835,7 @@ export default function Canvas() {
             countCtx.strokeRect(hx - HR, hy - HR, HR * 2, HR * 2)
           })
           countCtx.restore()
-        })
+        }
       }
     }
 
@@ -1779,11 +1784,17 @@ export default function Canvas() {
         ring.style.display = 'none'
         if (activePage && !creatingTextBox && !textDragBoxId && !textResizeBoxId) {
           const handleHover = hitTextBoxHandle(pos.x, pos.y)
+          const bodyHover = handleHover ? null : hitTextBox(pos.x, pos.y)
           if (handleHover) {
             drawEl.style.cursor = (handleHover.handle === 'nw' || handleHover.handle === 'se') ? 'nwse-resize' : 'nesw-resize'
           } else {
-            drawEl.style.cursor = hitTextBox(pos.x, pos.y) ? 'pointer' : 'crosshair'
+            drawEl.style.cursor = bodyHover ? 'pointer' : 'crosshair'
           }
+          // Redraw only on an actual change — the dashed outline/handles
+          // are hover-only (see drawMarkersLayer) so they clear the moment
+          // the pointer leaves a box instead of sticking around forever.
+          const nowHoverId = (handleHover ? handleHover.box.id : bodyHover?.id) ?? null
+          if (nowHoverId !== hoveredTextBoxId) { hoveredTextBoxId = nowHoverId; drawMarkersLayer() }
         }
       } else {
         ring.style.width  = brushSize * 2 + 'px'
@@ -1922,6 +1933,10 @@ export default function Canvas() {
       // the sidebar.
       if (activeRect) drawActiveRectPreview()
       if (creatingTextBox) drawActiveTextBoxPreview()
+      // The pointer left the canvas entirely — nothing left to hover.
+      if (hoveredTextBoxId != null && !textResizeBoxId && !textDragBoxId) {
+        hoveredTextBoxId = null; drawMarkersLayer()
+      }
       // On iPad, Apple Pencil hover fires this exact mouseleave event
       // whenever the pencil lifts out of hover range (~1 inch) while still
       // positioned over the canvas in x/y — it's not a reliable "user is
@@ -2868,6 +2883,7 @@ export default function Canvas() {
         if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
         textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
         textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
+        hoveredTextBoxId = null
       }
       if (tool !== 'erase' && t !== 'erase' && t !== 'count') prevTool = t
       tool = t
