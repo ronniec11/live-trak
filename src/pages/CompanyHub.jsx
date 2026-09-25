@@ -45,6 +45,14 @@ function ToggleGroup({ options, value, onChange }) {
   )
 }
 
+// org-logos is a public bucket (see supabase-migration-org-logo.sql) — a
+// logo is meant to be printed on reports handed to clients/GCs, so there's
+// nothing to gate behind a signed URL the way floor plans/photos are.
+function orgLogoPublicUrl(path) {
+  if (!path) return null
+  return supabase.storage.from('org-logos').getPublicUrl(path).data?.publicUrl || null
+}
+
 function CompanyProfileCard({ org, onSaved }) {
   const [name, setName] = useState(org.name || '')
   const [address, setAddress] = useState(org.address || '')
@@ -53,6 +61,52 @@ function CompanyProfileCard({ org, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [logoBusy, setLogoBusy] = useState(false)
+  const [logoError, setLogoError] = useState('')
+
+  async function handleLogoChange(e) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // lets the same file be re-picked later if needed
+    if (!file) return
+    setLogoBusy(true)
+    setLogoError('')
+    try {
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase()
+      const path = `${org.id}/logo.${ext}`
+      // A previous logo at a different extension (e.g. replacing a .png
+      // with a .jpg) would otherwise be left behind as an orphaned file —
+      // upsert only overwrites an exact path match.
+      if (org.logo_url && org.logo_url !== path) {
+        await supabase.storage.from('org-logos').remove([org.logo_url])
+      }
+      const { error: upErr } = await supabase.storage.from('org-logos').upload(path, file, { upsert: true, contentType: file.type })
+      if (upErr) throw upErr
+      const { data, error: sErr } = await supabase.from('organizations').update({ logo_url: path }).eq('id', org.id).select().single()
+      if (sErr) throw sErr
+      if (!data) throw new Error("Nothing was saved — you may not have permission to edit the company profile.")
+      onSaved(data)
+    } catch (err) {
+      setLogoError(err.message)
+    } finally {
+      setLogoBusy(false)
+    }
+  }
+
+  async function handleRemoveLogo() {
+    if (!org.logo_url) return
+    setLogoBusy(true)
+    setLogoError('')
+    try {
+      await supabase.storage.from('org-logos').remove([org.logo_url])
+      const { data, error: sErr } = await supabase.from('organizations').update({ logo_url: null }).eq('id', org.id).select().single()
+      if (sErr) throw sErr
+      onSaved(data)
+    } catch (err) {
+      setLogoError(err.message)
+    } finally {
+      setLogoBusy(false)
+    }
+  }
 
   async function handleSave(e) {
     e.preventDefault()
@@ -91,6 +145,34 @@ function CompanyProfileCard({ org, onSaved }) {
     <div className="card">
       <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Company Profile</h2>
       <form onSubmit={handleSave} className="space-y-4">
+        <div>
+          <label className="label">Company Logo</label>
+          <p className="text-xs text-muted mb-2">Shown in the top-right corner of Sheet Reports.</p>
+          <div className="flex items-center gap-4">
+            <div className="w-20 h-20 rounded-lg border border-border bg-surface-2 flex items-center justify-center overflow-hidden shrink-0">
+              {org.logo_url ? (
+                <img src={orgLogoPublicUrl(org.logo_url)} alt="Company logo" className="w-full h-full object-contain" />
+              ) : (
+                <span className="text-xs text-muted">No logo</span>
+              )}
+            </div>
+            <div className="flex flex-col items-start gap-1.5">
+              <label className={`btn-secondary text-sm ${logoBusy ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+                {logoBusy ? 'Working…' : org.logo_url ? 'Replace Logo' : 'Upload Logo'}
+                <input
+                  type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                  onChange={handleLogoChange} disabled={logoBusy}
+                />
+              </label>
+              {org.logo_url && (
+                <button type="button" onClick={handleRemoveLogo} disabled={logoBusy} className="text-xs text-red-500 hover:text-red-600">
+                  Remove Logo
+                </button>
+              )}
+            </div>
+          </div>
+          {logoError && <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{logoError}</div>}
+        </div>
         <div>
           <label className="label">Company Name *</label>
           <input className="input" value={name} onChange={e => setName(e.target.value)} required />
@@ -337,14 +419,14 @@ function IntegrationsCard() {
   )
 }
 
-function PlanUsageCard({ people, usage }) {
+function PlanUsageCard({ org, people, usage }) {
   return (
     <div className="card">
       <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Plan & Usage</h2>
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm text-muted shrink-0">Current Plan</span>
-          <span className="text-sm font-medium text-gray-900 dark:text-white text-right">Enterprise Pilot — Calderon Technologies</span>
+          <span className="text-sm font-medium text-gray-900 dark:text-white text-right">Enterprise Pilot — {org.name}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm text-muted shrink-0">Storage Used</span>
@@ -434,7 +516,7 @@ export default function CompanyHub() {
             <SettingsCard org={org} onSaved={updated => setOrg(o => ({ ...o, ...updated }))} />
             <TeamCard people={people} />
             <IntegrationsCard />
-            <PlanUsageCard people={people} usage={usage} />
+            <PlanUsageCard org={org} people={people} usage={usage} />
           </div>
         )}
       </div>

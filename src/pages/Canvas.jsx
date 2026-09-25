@@ -369,6 +369,7 @@ export default function Canvas() {
     let projectDescription = ''  // e.g. "Final Clean" — the scope's own name/description
     let jobName             = ''  // the scope's parent project (job) — the Sheet Report's real "Project name"
     let lunchBreakMinutes   = 0   // per-crew-member deduction applied to man-hours in the Sheet Report (see Scope Settings)
+    let orgLogoUrl          = null // company logo (Company Hub) — shown top-right on the Sheet Report
     let calYear         = 0
     let calMonth        = 0
     let calSelectedDate = null
@@ -3731,16 +3732,19 @@ export default function Canvas() {
         range,
         generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
         snapshot,
+        logoUrl: orgLogoUrl,
         rows: included.map(s => ({
           date: formatReportDate(s.date), name: s.name, color: s.color,
           sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
           manHours: sessionManHours(s),
         })),
         lunchBreakMinutes,
-        // Flattened across all included sessions — each photo keeps its own
-        // session's color so it's still clear which session it came from
-        // once they're all shown together.
-        photos: included.flatMap(s => (s.photos || []).map(url => ({ url, color: s.color || '#4ade80', name: s.name }))),
+        // Already resolved to signed URLs above — this was previously
+        // re-derived here from the raw (unresolved) Storage paths instead
+        // of referencing that result, silently shadowing it and leaving
+        // every report photo pointing at a bare path instead of a usable
+        // URL.
+        photos,
         totalSF:    included.reduce((a, s) => a + s.sf, 0),
         totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
         totalManHours,
@@ -3797,9 +3801,14 @@ export default function Canvas() {
       if (!data) return
       const rows = reportRowsHtml(data, 'ct-rep-num')
       const html = `
-        <div class="ct-rep-title">${data.label} — <span class="ct-rep-title-scope">${data.scopeLabel}</span></div>
-        <div class="ct-rep-desc">${data.sheetName}</div>
-        <div class="ct-rep-sub">Production Tracking Report &nbsp;•&nbsp; ${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+          <div>
+            <div class="ct-rep-title">${data.label} — <span class="ct-rep-title-scope">${data.scopeLabel}</span></div>
+            <div class="ct-rep-desc">${data.sheetName}</div>
+            <div class="ct-rep-sub">Production Tracking Report &nbsp;•&nbsp; ${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
+          </div>
+          ${data.logoUrl ? `<img src="${data.logoUrl}" alt="Company logo" style="max-height:56px;max-width:160px;object-fit:contain;flex-shrink:0;" />` : ''}
+        </div>
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
           <colgroup>
@@ -3900,6 +3909,23 @@ export default function Canvas() {
 
         function ensureRoom(h) {
           if (y + h > pageHeight - margin) { doc.addPage(); y = margin }
+        }
+
+        // Company logo — top-right corner, same spot as the on-screen
+        // report. Positioned independently of `y` (which only tracks the
+        // left-side title/table flow below) since it sits in its own
+        // corner, not the document's normal top-to-bottom flow.
+        if (data.logoUrl) {
+          try {
+            const logoDataUrl = await urlToDataURL(data.logoUrl)
+            const props = doc.getImageProperties(logoDataUrl)
+            const maxW = 1.3, maxH = 0.55
+            let w = maxW, h = w * props.height / props.width
+            if (h > maxH) { h = maxH; w = h * props.width / props.height }
+            doc.addImage(logoDataUrl, imageFormatFromDataUrl(logoDataUrl), pageWidth - margin - w, margin, w, h)
+          } catch (e) {
+            console.warn('[Canvas] Sheet Report: logo embed failed:', e)
+          }
         }
 
         // Title — project name in black, scope name in green, same as the
@@ -4640,11 +4666,19 @@ export default function Canvas() {
       // src/lib/offlineCache.js) when one exists.
       let pg, project
       try {
-        // Fetch user profile for session default name
-        const { data: prof, error: profErr } = await supabase.from('profiles').select('full_name, avatar_color, role').eq('id', user.id).single()
+        // Fetch user profile for session default name — organizations(logo_url)
+        // rides along on the same query (profiles.organization_id -> organizations.id)
+        // rather than a separate round trip, same embed pattern Projects.jsx
+        // already uses for organizations(name).
+        const { data: prof, error: profErr } = await supabase.from('profiles').select('full_name, avatar_color, role, organizations(logo_url)').eq('id', user.id).single()
         if (profErr) throw profErr
         userProfile = prof
         setCanvasProfile(prof)
+        // org-logos is a public bucket (see supabase-migration-org-logo.sql) —
+        // a plain public URL, no signing needed, same as tileGenerator.js's bucket.
+        if (prof.organizations?.logo_url) {
+          orgLogoUrl = supabase.storage.from('org-logos').getPublicUrl(prof.organizations.logo_url).data?.publicUrl || null
+        }
 
         const { data: pgData, error: pgErr } = await supabase.from('pages').select('*').eq('id', pageId).single()
         if (pgErr || !pgData) throw pgErr || new Error('Page not found')
