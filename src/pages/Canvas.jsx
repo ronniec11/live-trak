@@ -3918,6 +3918,14 @@ export default function Canvas() {
         // Company logo — top-right corner, same spot as the on-screen
         // report, fixed at the page margin regardless of the extra
         // headroom given to the title/table flow below (`y`, above).
+        // logoBottomY feeds into the fixed header-to-plan gap below: a
+        // portrait-shaped logo (tall relative to its width, common for an
+        // icon-stacked-over-wordmark lockup) uses its full 1.25in height
+        // here, which runs past that fixed gap — without tracking this,
+        // the floor plan snapshot (drawn after the logo, right on top of
+        // it) would get painted right over the bottom of a logo shaped
+        // like that, which is exactly what was cutting "Outsourcing" off.
+        let logoBottomY = margin
         if (data.logoUrl) {
           try {
             const logoDataUrl = await urlToDataURL(data.logoUrl)
@@ -3926,6 +3934,7 @@ export default function Canvas() {
             let w = maxW, h = w * props.height / props.width
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             doc.addImage(logoDataUrl, imageFormatFromDataUrl(logoDataUrl), pageWidth - margin - w, margin, w, h)
+            logoBottomY = margin + h
           } catch (e) {
             console.warn('[Canvas] Sheet Report: logo embed failed:', e)
           }
@@ -3957,8 +3966,11 @@ export default function Canvas() {
         // Gap between the header text and the floor plan/table below it —
         // keeps the plan at the same position it was at when the header
         // itself started 0.5in lower than the margin, now that the header
-        // starts right at the margin instead.
-        y += 0.5
+        // starts right at the margin instead. Math.max against the logo's
+        // actual bottom edge (plus a small buffer) guarantees the plan
+        // never starts above it, whatever the logo's own aspect ratio —
+        // a fixed gap alone only worked for a logo shorter than it.
+        y = Math.max(y + 0.5, logoBottomY + 0.15)
 
         // Snapshot — its own wider 0.75in side margins rather than the
         // page's tighter 0.4in text/table margin, so it reads as the
