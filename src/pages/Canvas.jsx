@@ -1334,6 +1334,7 @@ export default function Canvas() {
     function onMove(e) {
       const pos = getOffset(e)
       const ring = cursorRingRef.current
+      trackEdgePan(pos, e.shiftKey)
 
       if (calibrating) {
         calibMousePos = {x: pos.x, y: pos.y}; drawCalibLine()
@@ -1493,6 +1494,10 @@ export default function Canvas() {
       rectHandle = null
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
+      // Harmless if a poly/LF line is still mid-placement (not closed/
+      // finished) — the very next mousemove immediately restarts it via
+      // trackEdgePan(), since edgePanEligible() still covers that case.
+      stopEdgePan()
       if (isPainting) {
         isPainting = false; lastPenPt = null
         cancelAnimationFrame(rafId); rafId = 0
@@ -1651,6 +1656,140 @@ export default function Canvas() {
       activePage.pan.x += dx
       activePage.pan.y += dy
       scheduleRedraw()
+    }
+
+    // ── EDGE AUTO-PAN ────────────────────────────────────────────────────────
+    // While actively dragging a rectangle/polygon/LF-line handle, or still
+    // placing a polygon/LF line's next point (mouse only — touch has no
+    // hover state to speak of), the point actually needed next can be past
+    // the edge of the visible canvas, especially zoomed into a large sheet.
+    // Releasing the tool, panning manually, and resuming isn't an option
+    // for a drag, and is clumsy for polygon/LF's click-to-place model — so
+    // instead the view auto-pans while the pointer/pencil sits near an
+    // edge, continuing whichever shape is active, until it's finalized or
+    // the pointer moves back inside. Works the same for mouse and
+    // touch/pencil, both driving it through trackEdgePan()/edgePanTick().
+    const EDGE_PAN_ZONE = 50        // px from the canvas edge that starts panning
+    const EDGE_PAN_MAX_SPEED = 16   // px/frame at the very edge
+
+    let edgePanRafId = 0
+    let edgePanPos = null        // last known {x, y}, drawEl-local screen space
+    let edgePanShiftKey = false
+
+    function edgePanEligible() {
+      return (tool === 'rect' && !!rectHandle) ||
+             (tool === 'poly' && (!!polyDragMode || (activePoly && !activePoly.closed))) ||
+             (tool === 'lf' && (!!lfDragMode || (activeLFLine && !activeLFLine.finished)))
+    }
+
+    // Re-applies whichever shape is currently active at the given (screen-
+    // space) position — the same branches onMove/onTouchMove already run
+    // for a real pointer event, intentionally duplicated here (rather than
+    // shared) so this tick loop can never change how an ordinary,
+    // non-edge-panning drag behaves.
+    function edgePanContinueShape(pos, shiftKey) {
+      if (tool === 'rect' && rectHandle) {
+        const pt = s2iSnapped(pos.x, pos.y)
+        if (rectHandle === 'move') {
+          const dx = pt.x - rectMoveStart.x, dy = pt.y - rectMoveStart.y
+          activeRect.minX = rectMoveOrig.minX + dx; activeRect.maxX = rectMoveOrig.maxX + dx
+          activeRect.minY = rectMoveOrig.minY + dy; activeRect.maxY = rectMoveOrig.maxY + dy
+        } else if (shiftKey) {
+          const dx = pt.x - rectFixed.x, dy = pt.y - rectFixed.y
+          const side = Math.max(Math.abs(dx), Math.abs(dy))
+          const ex = rectFixed.x + (dx < 0 ? -side : side)
+          const ey = rectFixed.y + (dy < 0 ? -side : side)
+          activeRect.minX = Math.min(rectFixed.x, ex); activeRect.maxX = Math.max(rectFixed.x, ex)
+          activeRect.minY = Math.min(rectFixed.y, ey); activeRect.maxY = Math.max(rectFixed.y, ey)
+        } else {
+          activeRect.minX = Math.min(rectFixed.x, pt.x); activeRect.maxX = Math.max(rectFixed.x, pt.x)
+          activeRect.minY = Math.min(rectFixed.y, pt.y); activeRect.maxY = Math.max(rectFixed.y, pt.y)
+        }
+        drawActiveRectPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
+        return
+      }
+      if (tool === 'poly' && polyDragMode) {
+        const pt = s2i(pos.x, pos.y)
+        if (polyDragMode === 'move') {
+          const dx = pt.x - polyMoveStart.x, dy = pt.y - polyMoveStart.y
+          activePoly.points = polyMoveOrig.map(p => ({x: p.x + dx, y: p.y + dy}))
+        } else {
+          activePoly.points[polyVertexIdx] = pt
+        }
+        drawActivePolyPreview(); updateSFDisplay(); updateUnsaved(checkHasLiveContent())
+        return
+      }
+      if (tool === 'poly' && activePoly && !activePoly.closed) {
+        let previewPos = pos
+        if (shiftKey && activePoly.points.length > 0) {
+          const last = activePoly.points[activePoly.points.length - 1]
+          const z = activePage.zoom, p = activePage.pan
+          previewPos = snapToAngle({x: last.x * z + p.x, y: last.y * z + p.y}, pos)
+        }
+        drawActivePolyPreview(previewPos)
+        return
+      }
+      if (tool === 'lf' && lfDragMode) {
+        const pt = s2i(pos.x, pos.y)
+        if (lfDragMode === 'move') {
+          const dx = pt.x - lfMoveStart.x, dy = pt.y - lfMoveStart.y
+          activeLFLine.points = lfMoveOrig.map(p => ({x: p.x + dx, y: p.y + dy}))
+        } else {
+          activeLFLine.points[lfVertexIdx] = pt
+        }
+        drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
+        return
+      }
+      if (tool === 'lf' && activeLFLine && !activeLFLine.finished) {
+        let previewPos = pos
+        if (shiftKey && activeLFLine.points.length > 0) {
+          const last = activeLFLine.points[activeLFLine.points.length - 1]
+          const z = activePage.zoom, p = activePage.pan
+          previewPos = snapToAngle({x: last.x * z + p.x, y: last.y * z + p.y}, pos)
+        }
+        drawActiveLFPreview(previewPos)
+      }
+    }
+
+    // 0 in the dead zone (away from edges), ramping up to EDGE_PAN_MAX_SPEED
+    // exactly at the edge itself. Near the near edge (small px), the
+    // content needs to shift TOWARD that edge — e.g. near the left edge,
+    // pan.x increases (see panByScreenDelta: activePage.pan.x += dx),
+    // sliding the image right on screen so whatever was further left in
+    // image-space scrolls into view — so this returns positive there, and
+    // negative near the far edge (large px), the mirror case.
+    function edgePanVelocityFor(px, dim) {
+      if (px < EDGE_PAN_ZONE) return EDGE_PAN_MAX_SPEED * (1 - Math.max(0, px) / EDGE_PAN_ZONE)
+      if (px > dim - EDGE_PAN_ZONE) return -EDGE_PAN_MAX_SPEED * (1 - Math.max(0, dim - px) / EDGE_PAN_ZONE)
+      return 0
+    }
+
+    function edgePanTick() {
+      if (!edgePanPos || !edgePanEligible()) { edgePanRafId = 0; return }
+      const vx = edgePanVelocityFor(edgePanPos.x, cW)
+      const vy = edgePanVelocityFor(edgePanPos.y, cH)
+      if (vx || vy) {
+        panByScreenDelta(vx, vy)
+        edgePanContinueShape(edgePanPos, edgePanShiftKey)
+      }
+      edgePanRafId = requestAnimationFrame(edgePanTick)
+    }
+
+    // Called from onMove/onTouchMove on every real pointer position update —
+    // starts the tick loop the first time it's eligible, and keeps it fed
+    // with the latest position (the pointer itself may sit still right at
+    // the edge for a while, but the loop still needs to know where "still"
+    // is) for as long as it keeps running.
+    function trackEdgePan(pos, shiftKey) {
+      if (!edgePanEligible()) { stopEdgePan(); return }
+      edgePanPos = pos
+      edgePanShiftKey = shiftKey
+      if (!edgePanRafId) edgePanRafId = requestAnimationFrame(edgePanTick)
+    }
+
+    function stopEdgePan() {
+      if (edgePanRafId) { cancelAnimationFrame(edgePanRafId); edgePanRafId = 0 }
+      edgePanPos = null
     }
 
     function onWheel(e) {
@@ -2000,6 +2139,7 @@ export default function Canvas() {
       }
       if (tool === 'rect' && rectHandle) {
         const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
         const pt = s2iSnapped(pos.x, pos.y)
         if (rectHandle === 'move') {
           const dx = pt.x - rectMoveStart.x, dy = pt.y - rectMoveStart.y
@@ -2028,6 +2168,7 @@ export default function Canvas() {
       }
       if (tool === 'poly' && polyDragMode) {
         const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
         const pt = s2i(pos.x, pos.y)
         if (polyDragMode === 'move') {
           const dx = pt.x - polyMoveStart.x, dy = pt.y - polyMoveStart.y
@@ -2040,6 +2181,7 @@ export default function Canvas() {
       }
       if (tool === 'lf' && lfDragMode) {
         const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
         const pt = s2i(pos.x, pos.y)
         if (lfDragMode === 'move') {
           const dx = pt.x - lfMoveStart.x, dy = pt.y - lfMoveStart.y
@@ -2088,6 +2230,7 @@ export default function Canvas() {
       rectHandle = null
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
+      stopEdgePan()
       if (wasPainting) {
         cancelAnimationFrame(rafId); rafId = 0
         clipLiveHLAgainstSessions()
@@ -2227,6 +2370,7 @@ export default function Canvas() {
 
     // ── TOOLS ─────────────────────────────────────────────────────────────────
     function setTool(t) {
+      stopEdgePan()
       // Leaving the rect/poly tool (or switching to a different one while a
       // shape is still active) bakes it into the highlight layer so it isn't lost.
       if (tool === 'rect' && t !== 'rect' && activeRect) bakeActiveRect()
@@ -5017,6 +5161,7 @@ export default function Canvas() {
     window.addEventListener('mouseup', onUp)
     window.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
+        stopEdgePan()
         if (calibrating) { cancelCalib(); return }
         if (tool === 'rect' && activeRect) {
           activeRect = null; rectHandle = null
@@ -5116,6 +5261,7 @@ export default function Canvas() {
 
     return () => {
       cancelAnimationFrame(rafId)
+      cancelAnimationFrame(edgePanRafId)
       clearInterval(draftInterval)
       clearInterval(offlineSyncInterval)
       window.removeEventListener('online', runOfflineSync)
