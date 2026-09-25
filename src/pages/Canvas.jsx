@@ -1556,6 +1556,15 @@ export default function Canvas() {
           placeCountMarker(pos.x, pos.y); return
         }
         if (tool === 'text') {
+          // An editor is already open — the textarea sits on top of drawEl
+          // over its own box, so reaching this handler at all means the
+          // click landed OUTSIDE it. Same "click outside just finalizes,
+          // doesn't start a new one" rule as Rectangle/Polygon/LF: commit
+          // and stop, rather than committing AND also starting a brand new
+          // box right under the same click (which used to also silently
+          // lose whatever was just typed — openTextEditor had nothing that
+          // committed the box it was stealing focus from).
+          if (textEditId != null) { commitTextLabel(); return }
           const hit = hitTextBox(pos.x, pos.y)
           if (hit) {
             // Don't decide edit-vs-move yet — see onMove/onUp: a plain
@@ -2403,6 +2412,9 @@ export default function Canvas() {
         placeCountMarker(pos.x, pos.y); touchJustPlacedMarker = true; return
       }
       if (tool === 'text') {
+        // See onDown — a click outside the currently-open editor commits it
+        // instead of also starting a new box under the same tap.
+        if (textEditId != null) { commitTextLabel(); return }
         const hit = hitTextBox(pos.x, pos.y)
         if (hit) {
           textDragBoxId = hit.id
