@@ -3951,19 +3951,23 @@ export default function Canvas() {
         doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
 
-        // Snapshot — capped by height, not just width, same as before:
-        // an unconstrained height let a wide/landscape sheet image scale
-        // to the full page width and run tall enough to push the table
-        // onto extra pages even for a small report.
+        // Snapshot — its own wider 0.75in side margins rather than the
+        // page's tighter 0.4in text/table margin, so it reads as the
+        // report's centerpiece. Still capped by height (a portrait/square
+        // sheet would otherwise run tall enough to push the table onto
+        // extra pages even for a small report), just a much taller cap
+        // than before — 4.5in was squeezing anything but a very wide
+        // landscape sheet down well short of the width it had room for.
         if (data.snapshot) {
           try {
             const props = doc.getImageProperties(data.snapshot)
-            let w = contentWidth
+            const imgMargin = 0.75
+            let w = pageWidth - imgMargin * 2
             let h = w * props.height / props.width
-            const maxH = 4.5
+            const maxH = 7.0
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             ensureRoom(h)
-            doc.addImage(data.snapshot, 'PNG', margin + (contentWidth - w) / 2, y, w, h)
+            doc.addImage(data.snapshot, 'PNG', (pageWidth - w) / 2, y, w, h)
             y += h + 0.18
           } catch (e) {
             console.warn('[Canvas] Sheet Report: snapshot embed failed:', e)
