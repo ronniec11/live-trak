@@ -51,6 +51,7 @@ const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
   '#ef4444','#06b6d4','#84cc16','#f59e0b','#ffffff','#64748b',
   '#14b8a6','#6366f1','#fb7185','#d946ef',
+  '#000000','#ff0000',
 ]
 const SCALES = {
   '1:1':{n:1,d:1/12},'1:32':{n:1/32,d:1},'3:64':{n:3/64,d:1},
@@ -5700,6 +5701,7 @@ export default function Canvas() {
       d.className = 'ct-cc' + (col === activeColor ? ' sel' : '')
       d.style.background = col; d.dataset.c = col
       if (col === '#ffffff') d.style.borderColor = '#555'
+      if (col === '#000000') d.style.borderColor = '#888' // visible against the dark theme's near-black sidebar too
       // Without this, clicking a swatch while a text box is open for
       // editing would shift focus off the <textarea> first — triggering
       // its blur handler (commitTextLabel) and closing the editor — before
@@ -5717,6 +5719,7 @@ export default function Canvas() {
       d.className = 'ct-ctx-cc' + (col === activeColor ? ' sel' : '')
       d.style.background = col
       if (col === '#ffffff') d.style.borderColor = '#555'
+      if (col === '#000000') d.style.borderColor = '#888' // visible against the dark theme's near-black sidebar too
       d.addEventListener('click', () => {
         activeColor = col; pickColor(col)
         ccEl.querySelectorAll('.ct-ctx-cc').forEach(c => c.classList.remove('sel'))
@@ -5731,6 +5734,7 @@ export default function Canvas() {
       const d = document.createElement('div')
       d.className = 'ct-modal-cc'; d.style.background = col; d.dataset.c = col
       if (col === '#ffffff') d.style.borderColor = '#555'
+      if (col === '#000000') d.style.borderColor = '#888' // visible against the dark theme's near-black sidebar too
       d.addEventListener('click', () => { ecEl.querySelectorAll('.ct-modal-cc').forEach(x => x.classList.remove('sel')); d.classList.add('sel') })
       ecEl.appendChild(d)
     })
