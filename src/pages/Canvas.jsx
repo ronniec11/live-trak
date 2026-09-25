@@ -51,7 +51,7 @@ const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
   '#ef4444','#06b6d4','#84cc16','#f59e0b','#ffffff','#64748b',
   '#14b8a6','#6366f1','#fb7185','#d946ef',
-  '#000000','#ff0000',
+  '#000000','#ff0000','#7f1d1d','#1e3a8a','#166534','#a16207','#6b21a8','#db2777',
 ]
 const SCALES = {
   '1:1':{n:1,d:1/12},'1:32':{n:1/32,d:1},'3:64':{n:3/64,d:1},
@@ -6037,8 +6037,8 @@ export default function Canvas() {
               <div ref={btnLFRef}    className="ct-tbtn" title="Linear Ft (L) — hold Shift to snap 45°/90°" onClick={() => api.current.setTool?.('lf')}>Linear Ft</div>
             </div>
             <div className="ct-tool-row">
-              <div ref={btnPenRef}   className="ct-tbtn" title="Pen (B)" onClick={() => api.current.setTool?.('pen')}>Pen</div>
               <div ref={btnErRef}    className="ct-tbtn" title="Erase (E)" onClick={() => api.current.setTool?.('erase')}>Erase</div>
+              <div ref={btnPenRef}   className="ct-tbtn" title="Pen (B)" onClick={() => api.current.setTool?.('pen')}>Pen</div>
             </div>
             <div className="ct-sb-ttl">Brush Size</div>
             <div className="ct-brush-row">
