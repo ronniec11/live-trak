@@ -44,19 +44,36 @@ function withTimeout(promise, ms, label) {
   ])
 }
 
-// Runs `tasks` (array of functions returning promises) with bounded parallelism.
+// Runs `tasks` (array of functions returning promises) with bounded
+// parallelism. A single failed task (a render timeout, a flaky upload) no
+// longer aborts every other task queued behind it — it's logged and
+// skipped instead, returned in `errors` for the caller to decide what a
+// failure count actually means (a handful of missing tiles at one zoom
+// level is a minor, OSD-tolerated gap; every task failing is a real,
+// nothing-usable-produced failure). This one queue previously being
+// all-or-nothing is exactly what turned one unusually slow chunk (an
+// especially complex source PDF — see generatePdfTiles) into a fully
+// wasted run with zero usable tiles, instead of a mostly-complete pyramid
+// with one thin zoom level.
 async function runPool(tasks, concurrency, onEach) {
   let next = 0
   let completed = 0
+  const errors = []
   async function worker() {
     while (next < tasks.length) {
       const i = next++
-      await tasks[i]()
+      try {
+        await tasks[i]()
+      } catch (e) {
+        console.warn('[tileGenerator] Task failed, skipping:', e)
+        errors.push(e)
+      }
       completed++
       onEach?.(completed, tasks.length)
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker))
+  return errors
 }
 
 async function uploadTile(pathPrefix, level, col, row, blob, format) {
@@ -191,11 +208,19 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   // combination reliably. One render at a time removes the race entirely;
   // it's slower but each chunk render is fast on its own (seconds, not the
   // page-complexity-dependent slowness the old per-final-tile design had).
-  await runPool(jobs, 1, () => {
+  const errors = await runPool(jobs, 1, () => {
     done++
     console.log('[tileGenerator] Rendered chunk', done, '/', chunkCount)
     onProgress?.(done, chunkCount)
   })
+  // Every chunk failing means nothing usable got produced at all — a real
+  // failure, not the partial-pyramid case below. A handful of chunks
+  // failing (this PDF's own worst case: an especially slow first-render
+  // parse timing out at one small level) still leaves a mostly-complete
+  // pyramid; OSD falls back to the nearest available level for the few
+  // gaps rather than failing to display the sheet at all.
+  if (errors.length === chunkCount) throw errors[0]
+  if (errors.length) console.warn('[tileGenerator]', errors.length, '/', chunkCount, 'chunk(s) failed — pyramid has some gaps but is otherwise usable.')
 
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(pathPrefix)
   console.log('[tileGenerator] PDF tiling complete:', data.publicUrl)
@@ -245,7 +270,9 @@ export async function generateRasterTiles(imageUrl, { projectId, pageId, format 
   console.log('[tileGenerator] Slicing', jobs.length, 'tile(s)')
 
   let done = 0
-  await runPool(jobs, 6, () => { done++; onProgress?.(done, jobs.length) })
+  const errors = await runPool(jobs, 6, () => { done++; onProgress?.(done, jobs.length) })
+  if (errors.length === jobs.length) throw errors[0]
+  if (errors.length) console.warn('[tileGenerator]', errors.length, '/', jobs.length, 'tile(s) failed — pyramid has some gaps but is otherwise usable.')
 
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(pathPrefix)
   console.log('[tileGenerator] Raster tiling complete:', data.publicUrl)
