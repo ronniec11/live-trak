@@ -4670,19 +4670,11 @@ export default function Canvas() {
       // src/lib/offlineCache.js) when one exists.
       let pg, project
       try {
-        // Fetch user profile for session default name — organizations(logo_url)
-        // rides along on the same query (profiles.organization_id -> organizations.id)
-        // rather than a separate round trip, same embed pattern Projects.jsx
-        // already uses for organizations(name).
-        const { data: prof, error: profErr } = await supabase.from('profiles').select('full_name, avatar_color, role, organizations(logo_url)').eq('id', user.id).single()
+        // Fetch user profile for session default name
+        const { data: prof, error: profErr } = await supabase.from('profiles').select('full_name, avatar_color, role, organization_id').eq('id', user.id).single()
         if (profErr) throw profErr
         userProfile = prof
         setCanvasProfile(prof)
-        // org-logos is a public bucket (see supabase-migration-org-logo.sql) —
-        // a plain public URL, no signing needed, same as tileGenerator.js's bucket.
-        if (prof.organizations?.logo_url) {
-          orgLogoUrl = supabase.storage.from('org-logos').getPublicUrl(prof.organizations.logo_url).data?.publicUrl || null
-        }
 
         const { data: pgData, error: pgErr } = await supabase.from('pages').select('*').eq('id', pageId).single()
         if (pgErr || !pgData) throw pgErr || new Error('Page not found')
@@ -4734,6 +4726,22 @@ export default function Canvas() {
           jobName = jobData?.name || ''
         } catch (err) {
           console.warn('[Canvas] Could not load parent job name for Sheet Report:', err)
+        }
+      }
+      // Best-effort, same reasoning — a plain, unembedded query (rather
+      // than piggybacking organizations(logo_url) onto the profile fetch
+      // above) so this can never take the whole page load down with it;
+      // the Sheet Report just shows no logo if this fails. org-logos is a
+      // public bucket (see supabase-migration-org-logo.sql), so this is a
+      // plain public URL — no signing needed.
+      if (userProfile?.organization_id) {
+        try {
+          const { data: orgData } = await supabase.from('organizations').select('logo_url').eq('id', userProfile.organization_id).single()
+          if (orgData?.logo_url) {
+            orgLogoUrl = supabase.storage.from('org-logos').getPublicUrl(orgData.logo_url).data?.publicUrl || null
+          }
+        } catch (err) {
+          console.warn('[Canvas] Could not load company logo for Sheet Report:', err)
         }
       }
 
