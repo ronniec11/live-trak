@@ -238,6 +238,9 @@ export default function Canvas() {
     let lastPenPt   = null
 
     let cW = 0, cH = 0
+    // Last real mouse position over the canvas (drawEl-local screen space),
+    // updated on every onMove — see redrawAll()'s use of it below.
+    let lastMouseScreenPos = null
 
     // Offscreen stroke canvases — full opacity; composited at 30% to screen
     let liveHlCanvas  = document.createElement('canvas')
@@ -596,10 +599,17 @@ export default function Canvas() {
       // An active (not-yet-baked) rectangle/polygon stays adjustable across
       // pan/zoom (mouse wheel, pinch, or the OSD viewport on tiled iPad
       // pages), so its preview needs to track the same transform as
-      // everything else here.
+      // everything else here. Passing lastMouseScreenPos (rather than
+      // nothing) matters specifically for a poly/LF line with exactly one
+      // point placed so far — drawActivePolyPreview/drawActiveLFPreview
+      // both treat "one point, no live cursor position" as "nothing real
+      // to show yet" and render blank, which used to only ever matter for
+      // a static redraw (no mouse involved) but now also fires mid-drag
+      // from edge auto-pan — without this, panning while only one point is
+      // down would wipe the line from view instead of continuing it.
       if (activeRect) drawActiveRectPreview()
-      if (activePoly) drawActivePolyPreview()
-      if (activeLFLine) drawActiveLFPreview()
+      if (activePoly) drawActivePolyPreview(lastMouseScreenPos)
+      if (activeLFLine) drawActiveLFPreview(lastMouseScreenPos)
     }
 
     function redrawHL() {
@@ -1334,6 +1344,7 @@ export default function Canvas() {
     function onMove(e) {
       const pos = getOffset(e)
       const ring = cursorRingRef.current
+      lastMouseScreenPos = pos
       trackEdgePan(pos, e.shiftKey)
 
       if (calibrating) {
