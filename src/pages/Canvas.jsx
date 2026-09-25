@@ -885,6 +885,18 @@ export default function Canvas() {
       })
     }
 
+    // Removes a box whole — the only other way to get rid of one used to be
+    // opening it and deleting all the text by hand, which is a strange
+    // amount of typing just to throw something away. Bound to Delete/
+    // Backspace while hovering a box (see the keydown handler) rather than
+    // needing a click at all.
+    function deleteTextBox(id) {
+      liveTextLabels = liveTextLabels.filter(t => t.id !== id)
+      if (hoveredTextBoxId === id) hoveredTextBoxId = null
+      drawMarkersLayer()
+      updateUnsaved(checkHasLiveContent())
+    }
+
     const TEXT_MIN_FONT = 6
     const TEXT_MAX_FONT = 400
 
@@ -5817,6 +5829,14 @@ export default function Canvas() {
         if (k === 's') { e.preventDefault(); saveSession(); return }
         if (k === 'h') { e.preventDefault(); openHistory(); return }
         return
+      }
+
+      // Delete a whole text box without opening it — only reachable while
+      // hovering one (textEditId is null here since isTyping already
+      // guarded out a focused <textarea> above, so this never fights with
+      // deleting a character while actually typing).
+      if ((e.key === 'Delete' || e.key === 'Backspace') && tool === 'text' && hoveredTextBoxId != null) {
+        e.preventDefault(); deleteTextBox(hoveredTextBoxId); return
       }
 
       // Bare-letter tool shortcuts — no modifier, so only reachable when
