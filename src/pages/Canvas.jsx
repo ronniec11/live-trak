@@ -3916,14 +3916,14 @@ export default function Canvas() {
         }
 
         // Company logo — top-right corner, same spot as the on-screen
-        // report, fixed at the page margin. Capped to the same 1.25in as
-        // the header zone below (see `y = margin + 1.25` after the header
-        // text) so it can never run past where the floor plan starts.
+        // report, fixed at the page margin (0.5in). Capped to 0.75in tall
+        // so its bottom edge lands exactly at the 1.25in header-zone line
+        // (see below) — measured from the page's top edge, not the margin.
         if (data.logoUrl) {
           try {
             const logoDataUrl = await urlToDataURL(data.logoUrl)
             const props = doc.getImageProperties(logoDataUrl)
-            const maxW = 1.25, maxH = 1.25
+            const maxW = 1.25, maxH = 1.25 - margin
             let w = maxW, h = w * props.height / props.width
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             doc.addImage(logoDataUrl, imageFormatFromDataUrl(logoDataUrl), pageWidth - margin - w, margin, w, h)
@@ -3955,13 +3955,12 @@ export default function Canvas() {
         doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
 
-        // Header zone is a fixed 1.25in tall, measured from the margin —
-        // both the title/sheet-name/production-line text AND the logo
-        // (capped to fit within that same 1.25in below) live inside it.
-        // Everything else starts right at its bottom edge, full stop —
-        // simpler and more predictable than computing a gap from either
-        // one's actual rendered height.
-        y = margin + 1.25
+        // Header zone bottom is at 1.25in from the page's top edge (both
+        // the header text and the logo live above this line) — then a
+        // further 0.25in gap before the floor plan/table actually starts,
+        // at 1.5in from the top. Both measured from the page edge, not
+        // the margin, to match the reference lines this was drawn against.
+        y = 1.5
 
         // Snapshot — its own wider 0.75in side margins rather than the
         // page's tighter 0.4in text/table margin, so it reads as the
