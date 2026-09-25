@@ -264,8 +264,8 @@ function SettingsCard({ org, onSaved }) {
             value={measurementDisplay}
             onChange={setMeasurementDisplay}
             options={[
-              { value: 'decimal', label: 'Decimal (0.125")' },
               { value: 'fraction', label: 'Fraction (1/8")' },
+              { value: 'decimal', label: 'Decimal (0.125")' },
             ]}
           />
         </div>
