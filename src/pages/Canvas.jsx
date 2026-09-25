@@ -3905,17 +3905,19 @@ export default function Canvas() {
         const pageHeight = doc.internal.pageSize.getHeight()
         const contentWidth = pageWidth - margin * 2
         const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
-        let y = margin
+        // Title/sheet-name/snapshot/table all start 0.25in lower than the
+        // page margin itself — the logo stays put at the margin (below,
+        // unaffected by `y`), so this is what actually gives it room to be
+        // as big as it is without the title text starting right alongside it.
+        let y = margin + 0.25
 
         function ensureRoom(h) {
           if (y + h > pageHeight - margin) { doc.addPage(); y = margin }
         }
 
         // Company logo — top-right corner, same spot as the on-screen
-        // report. Positioned independently of `y` (which only tracks the
-        // left-side title/table flow below) since it sits in its own
-        // corner, not the document's normal top-to-bottom flow.
-        let logoBottomY = margin
+        // report, fixed at the page margin regardless of the extra
+        // headroom given to the title/table flow below (`y`, above).
         if (data.logoUrl) {
           try {
             const logoDataUrl = await urlToDataURL(data.logoUrl)
@@ -3924,7 +3926,6 @@ export default function Canvas() {
             let w = maxW, h = w * props.height / props.width
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             doc.addImage(logoDataUrl, imageFormatFromDataUrl(logoDataUrl), pageWidth - margin - w, margin, w, h)
-            logoBottomY = margin + h
           } catch (e) {
             console.warn('[Canvas] Sheet Report: logo embed failed:', e)
           }
@@ -3952,14 +3953,6 @@ export default function Canvas() {
         doc.setFontSize(9)
         doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
-
-        // A logo up to 1.75in tall runs well past the (typically shorter)
-        // title block above — the snapshot spans the full page width, so
-        // without this it could get drawn right over the logo's bottom
-        // corner since it's added after it below. A generous 0.5in gap
-        // (rather than just touching) keeps the logo from ever feeling
-        // crowded by the floor plan starting right underneath it.
-        y = Math.max(y, logoBottomY + 0.5)
 
         // Snapshot — its own wider 0.75in side margins rather than the
         // page's tighter 0.4in text/table margin, so it reads as the
