@@ -3900,16 +3900,16 @@ export default function Canvas() {
 
       try {
         const doc = new jsPDF({ unit: 'in', format: 'letter' })
-        const margin = 0.4
+        const margin = 0.5
         const pageWidth = doc.internal.pageSize.getWidth()
         const pageHeight = doc.internal.pageSize.getHeight()
         const contentWidth = pageWidth - margin * 2
         const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
-        // Title/sheet-name/snapshot/table all start 0.25in lower than the
+        // Title/sheet-name/snapshot/table all start 0.5in lower than the
         // page margin itself — the logo stays put at the margin (below,
         // unaffected by `y`), so this is what actually gives it room to be
         // as big as it is without the title text starting right alongside it.
-        let y = margin + 0.25
+        let y = margin + 0.5
 
         function ensureRoom(h) {
           if (y + h > pageHeight - margin) { doc.addPage(); y = margin }
