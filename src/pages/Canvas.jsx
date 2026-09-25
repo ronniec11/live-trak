@@ -283,6 +283,7 @@ export default function Canvas() {
     let textResizeFixed = null   // the OPPOSITE corner (image coords) — stays put while resizing, like Rectangle
     let hoveredTextBoxId = null  // which box's dashed outline/handles are currently shown — see onMove and drawMarkersLayer
     let textResizeOrig = null    // {minX, minY, maxX, maxY, fontSize} at mousedown, for computing the new font size from the height ratio
+    let textLongPressTimer = null // touch-only: pending "delete this box" timer — see onTouchStart/onTouchMove/onTouchEnd
 
     // Rectangle tool — an active rect stays a live, adjustable shape (drag
     // corner handles to expand/collapse, drag inside to move) rather than
@@ -2405,6 +2406,7 @@ export default function Canvas() {
         // it isn't a box yet), and a real existing box mid-move is dropped
         // back in place rather than left drifting into the pinch.
         if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
+        if (textLongPressTimer) { clearTimeout(textLongPressTimer); textLongPressTimer = null }
         if (textDragBoxId) { textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null }
         if (textResizeBoxId) { textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null }
         touchPainting = false; lastTouchPt = null; rectHandle = null
@@ -2563,6 +2565,19 @@ export default function Canvas() {
           textDragStart = s2i(pos.x, pos.y)
           textDragOrig = {minX: hit.minX, minY: hit.minY, maxX: hit.maxX, maxY: hit.maxY}
           textDownScreenPos = {x: pos.x, y: pos.y}
+          // Touch has no hover, so there's no Delete-key equivalent — a
+          // held-still press on the box does the same job instead. Guarded
+          // against firing on what turns out to be a drag (onTouchMove
+          // cancels it) or an ordinary tap (onTouchEnd cancels it too), so
+          // it only ever fires for a genuine press-and-hold.
+          const boxId = hit.id
+          if (textLongPressTimer) clearTimeout(textLongPressTimer)
+          textLongPressTimer = setTimeout(() => {
+            textLongPressTimer = null
+            if (textDragBoxId !== boxId || textDragMoved) return
+            textDragBoxId = null; textDragStart = null; textDragOrig = null; textDownScreenPos = null
+            if (confirm('Delete this text box?')) deleteTextBox(boxId)
+          }, 600)
           return
         }
         const pt = s2i(pos.x, pos.y)
@@ -2683,7 +2698,12 @@ export default function Canvas() {
         const pos = getTouchPos(e)
         trackEdgePan(pos, false)
         if (liveTextLabels.some(t => t.id === textDragBoxId)) {
-          if (!textDragMoved && Math.hypot(pos.x - textDownScreenPos.x, pos.y - textDownScreenPos.y) > 8) textDragMoved = true
+          if (!textDragMoved && Math.hypot(pos.x - textDownScreenPos.x, pos.y - textDownScreenPos.y) > 8) {
+            textDragMoved = true
+            // A real drag, not a held-still press — the long-press delete
+            // below isn't what this touch is doing.
+            if (textLongPressTimer) { clearTimeout(textLongPressTimer); textLongPressTimer = null }
+          }
           if (textDragMoved) {
             const pt = s2i(pos.x, pos.y)
             moveTextBox(textDragBoxId, textDragOrig, pt.x - textDragStart.x, pt.y - textDragStart.y)
@@ -2736,6 +2756,10 @@ export default function Canvas() {
         textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
       }
       if (textDragBoxId) {
+        // The finger lifted before the long-press fired — this is an
+        // ordinary tap (or a drag that already applied live in
+        // onTouchMove), not a delete.
+        if (textLongPressTimer) { clearTimeout(textLongPressTimer); textLongPressTimer = null }
         const box = liveTextLabels.find(t => t.id === textDragBoxId)
         if (box && !textDragMoved) openTextEditor(box, false)
         else if (box) updateUnsaved(checkHasLiveContent())
@@ -2894,6 +2918,7 @@ export default function Canvas() {
       if (tool === 'text' && t !== 'text') {
         commitTextLabel()
         if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
+        if (textLongPressTimer) { clearTimeout(textLongPressTimer); textLongPressTimer = null }
         textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
         textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
         hoveredTextBoxId = null
@@ -5893,6 +5918,7 @@ export default function Canvas() {
     return () => {
       cancelAnimationFrame(rafId)
       cancelAnimationFrame(edgePanRafId)
+      if (textLongPressTimer) clearTimeout(textLongPressTimer)
       clearInterval(draftInterval)
       clearInterval(offlineSyncInterval)
       window.removeEventListener('online', runOfflineSync)
