@@ -3905,11 +3905,11 @@ export default function Canvas() {
         const pageHeight = doc.internal.pageSize.getHeight()
         const contentWidth = pageWidth - margin * 2
         const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
-        // Title starts right at the margin, level with the logo — the
-        // extra room the logo needed comes from the fixed gap added after
-        // the header text instead (below), so the snapshot/table position
-        // stays put regardless of where the header itself starts.
-        let y = margin
+        // Title starts 1/8in below the margin — the logo (drawn at the
+        // margin, independent of `y`) and the floor plan/table (its own
+        // fixed 1.25in-from-top position, below) are both unaffected by
+        // this and stay exactly where they are.
+        let y = margin + 1 / 8
 
         function ensureRoom(h) {
           if (y + h > pageHeight - margin) { doc.addPage(); y = margin }
