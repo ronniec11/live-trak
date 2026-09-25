@@ -42,8 +42,9 @@ import './Canvas.css'
 //
 // NOTE: Run this migration to enable the Text tool:
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS text_data jsonb DEFAULT '[]';
-// text_data holds {w, h, labels: [{id, x, y, text, color, fontSize}, ...]} —
-// same cross-device rescaling shape as count_data/lf_data.
+// text_data holds {w, h, labels: [{id, minX, minY, maxX, maxY, text, color}, ...]} —
+// same cross-device rescaling shape as count_data/lf_data (each label is a
+// drag-sized box, like Rectangle, not a bare point).
 
 const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
@@ -262,8 +263,20 @@ export default function Canvas() {
     let countSymbol = 'num'     // 'num' | 'check' | 'x'
 
     // Text tool — see "── TEXT TOOL ──" below for placement/editing.
-    let liveTextLabels = []     // {id, x, y, text, color, fontSize} in image coords
-    let textEditId = null       // id of the label currently open in textInputRef, or null for a brand-new one
+    // {id, minX, minY, maxX, maxY, text, color} in image coords — a
+    // drag-sized box (like Rectangle), not a bare point, so its on-screen
+    // size only ever changes because zoom changed it (proportionally, same
+    // as everything else), never because of a stale point+fontSize combo.
+    let liveTextLabels = []
+    let textEditId = null        // id of the label currently open in textInputRef, or null when the editor is closed
+    let textEditOrigText = null  // text.value when the editor opened — null means "brand new box" (Escape deletes it), otherwise Escape reverts to this
+    let creatingTextBox = null   // {minX, minY, maxX, maxY} — in-progress drag-to-create box, not yet in liveTextLabels
+    let textCreateFixed = null   // anchor corner (image coords) for the creation drag
+    let textDragBoxId = null     // id of an existing box whose body was pressed — see onDown/onMove/onUp
+    let textDragMoved = false    // did the press above turn into an actual drag (move) rather than a plain click (edit)?
+    let textDragStart = null     // image-space point at mousedown, for computing the move delta
+    let textDragOrig = null      // the box's bounds at mousedown, translated by the move delta
+    let textDownScreenPos = null // screen-space point at mousedown, to tell a real drag from pointer jitter
 
     // Rectangle tool — an active rect stays a live, adjustable shape (drag
     // corner handles to expand/collapse, drag inside to move) rather than
@@ -621,6 +634,13 @@ export default function Canvas() {
       if (activeRect) drawActiveRectPreview()
       if (activePoly) drawActivePolyPreview(lastMouseScreenPos)
       if (activeLFLine) drawActiveLFPreview(lastMouseScreenPos)
+      if (creatingTextBox) drawActiveTextBoxPreview()
+      // Keeps the live-editing <textarea> pinned to its box through zoom/pan
+      // instead of only positioning it once at open time — see syncTextEditorPosition.
+      if (textEditId != null) {
+        const editing = liveTextLabels.find(t => t.id === textEditId)
+        if (editing) syncTextEditorPosition(editing)
+      }
     }
 
     function redrawHL() {
@@ -763,16 +783,20 @@ export default function Canvas() {
       }
       allLabels.forEach(t => {
         if (t.id === textEditId) return
-        const sx = t.x * z + p.x
-        const sy = t.y * z + p.y
-        const fontPx = Math.max(8, (t.fontSize || 24) * z)
+        const sx = t.minX * z + p.x, sy = t.minY * z + p.y
+        const boxW = (t.maxX - t.minX) * z, boxH = (t.maxY - t.minY) * z
+        const fontPx = Math.max(8, 24 * z)
         countCtx.save()
         countCtx.font = `bold ${fontPx}px system-ui,sans-serif`
         countCtx.textAlign = 'left'
         countCtx.textBaseline = 'top'
         countCtx.fillStyle = t.color || '#000000'
-        const lines = String(t.text).split('\n')
-        lines.forEach((line, i) => countCtx.fillText(line, sx, sy + i * fontPx * 1.15))
+        const lines = wrapTextLines(countCtx, t.text, Math.max(10, boxW))
+        const lineH = fontPx * 1.2
+        lines.forEach((line, i) => {
+          if (i * lineH > boxH) return // clip to the box's height — the rest scrolled out in the editor too
+          countCtx.fillText(line, sx, sy + i * lineH)
+        })
         countCtx.restore()
       })
     }
@@ -794,77 +818,160 @@ export default function Canvas() {
     // Tracked as data (like count markers/LF lines), not rasterized, so it
     // stays editable and reads crisply at any zoom level instead of
     // becoming a fixed-resolution raster of whatever size it was typed at.
-    // Placing/editing uses a real <textarea> (textInputRef) positioned over
-    // the click point rather than a canvas-only interaction, since typing
-    // needs an actual text input; drawMarkersLayer() skips whichever label
-    // textEditId currently points at so it isn't drawn twice while live.
-    function hitTextLabel(sx, sy) {
+    // A box, not a bare point (like Rectangle) — drag out a size, then type
+    // into it. Its screen rect is always recomputed from image-space bounds
+    // * zoom, same as every other tool here, which is what keeps it glued to
+    // the same spot and the same relative size while zooming instead of
+    // drifting (a bare point + a fixed px fontSize, the old shape, didn't
+    // have that guarantee for the live-editing <textarea> — this does).
+    const TEXT_FONT_SIZE = 24          // image-space px, scales with zoom like everything else
+    const TEXT_DEFAULT_W = 220         // screen px — used when a "drag" was really just a click
+    const TEXT_DEFAULT_H = 60
+
+    // Replaces the box with a NEW object at its shifted position rather
+    // than mutating the existing one in place — liveTextLabels entries can
+    // be captured by reference in an undo snapshot (txt: [...liveTextLabels]
+    // is only a shallow copy), so mutating one in place would silently
+    // rewrite history: undoing an unrelated paint stroke from before this
+    // move would "restore" a snapshot whose text box had, by then, already
+    // been dragged to its new spot right along with it.
+    // dx/dy are the TOTAL offset from where the drag started (not a
+    // per-frame delta) — orig is that starting box, captured once at
+    // mousedown (textDragOrig), so every frame recomputes an absolute
+    // position instead of compounding small deltas onto whatever the box
+    // already was.
+    function moveTextBox(id, orig, dx, dy) {
+      liveTextLabels = liveTextLabels.map(t => t.id !== id ? t : {
+        ...t, minX: orig.minX + dx, minY: orig.minY + dy, maxX: orig.maxX + dx, maxY: orig.maxY + dy,
+      })
+    }
+
+    // Walk in reverse so an overlapping later box wins the hit test,
+    // matching the visual stacking order (later boxes draw on top).
+    function hitTextBox(sx, sy) {
       if (!activePage) return null
       const z = activePage.zoom, p = activePage.pan
-      // Walk in reverse so an overlapping later label wins the hit test,
-      // matching the visual stacking order (later labels draw on top).
       for (let i = liveTextLabels.length - 1; i >= 0; i--) {
         const t = liveTextLabels[i]
-        const sxScreen = t.x * z + p.x, syScreen = t.y * z + p.y
-        const fontPx = Math.max(8, (t.fontSize || 24) * z)
-        countCtx.font = `bold ${fontPx}px system-ui,sans-serif`
-        const lines = String(t.text).split('\n')
-        const w = Math.max(...lines.map(line => countCtx.measureText(line).width))
-        const h = lines.length * fontPx * 1.15
-        if (sx >= sxScreen - 4 && sx <= sxScreen + w + 4 && sy >= syScreen - 4 && sy <= syScreen + h + 4) return t
+        const sx1 = t.minX * z + p.x, sy1 = t.minY * z + p.y
+        const sx2 = t.maxX * z + p.x, sy2 = t.maxY * z + p.y
+        if (sx >= sx1 - 4 && sx <= sx2 + 4 && sy >= sy1 - 4 && sy <= sy2 + 4) return t
       }
       return null
     }
 
-    // screenPos is where the input box appears (drawEl-local px) — for a
-    // new label that's the click point; for editing an existing one it's
-    // that label's own current on-screen position, so the box lands right
-    // on top of the text being edited rather than wherever was clicked to
-    // hit-test it.
-    function openTextEditor(existing, screenPos) {
+    // Splits on explicit newlines first, then word-wraps each paragraph to
+    // fit maxWidth (screen px, matching whatever font ctx is currently set
+    // to) — used both to render committed boxes and to hit-test/size them.
+    function wrapTextLines(ctx, text, maxWidth) {
+      const out = []
+      String(text).split('\n').forEach(para => {
+        const words = para.split(' ')
+        let line = ''
+        words.forEach(word => {
+          const test = line ? line + ' ' + word : word
+          if (line && ctx.measureText(test).width > maxWidth) { out.push(line); line = word }
+          else line = test
+        })
+        out.push(line)
+      })
+      return out
+    }
+
+    function drawActiveTextBoxPreview() {
+      drawCtx.clearRect(0, 0, cW, cH)
+      if (!creatingTextBox || !activePage) return
+      const z = activePage.zoom, p = activePage.pan
+      const sx1 = creatingTextBox.minX * z + p.x, sy1 = creatingTextBox.minY * z + p.y
+      const sx2 = creatingTextBox.maxX * z + p.x, sy2 = creatingTextBox.maxY * z + p.y
+      drawCtx.save()
+      drawCtx.strokeStyle = activeColor
+      drawCtx.lineWidth = 2
+      drawCtx.setLineDash([6, 4])
+      drawCtx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
+      drawCtx.restore()
+    }
+
+    // Keeps the live-editing <textarea> glued to its box's current screen
+    // rect — called from redrawAll() too (not just when the box is first
+    // opened), so it tracks zoom/pan instead of going stale mid-edit.
+    function syncTextEditorPosition(box) {
+      const input = textInputRef.current
+      if (!input || !activePage || !box) return
+      const z = activePage.zoom, p = activePage.pan
+      const sx1 = box.minX * z + p.x, sy1 = box.minY * z + p.y
+      const sx2 = box.maxX * z + p.x, sy2 = box.maxY * z + p.y
+      input.style.left   = sx1 + 'px'
+      input.style.top    = sy1 + 'px'
+      input.style.width  = Math.max(40, sx2 - sx1) + 'px'
+      input.style.height = Math.max(24, sy2 - sy1) + 'px'
+      input.style.fontSize = Math.max(8, TEXT_FONT_SIZE * z) + 'px'
+    }
+
+    // On mouseup/touchend after dragging out a new box — a drag too small to
+    // register as deliberate sizing (i.e. this was really just a click)
+    // gets a sensible default size anchored at the click point instead of a
+    // sliver nobody could type into.
+    function finalizeTextBoxCreation() {
+      const box = creatingTextBox
+      creatingTextBox = null; textCreateFixed = null
+      drawCtx.clearRect(0, 0, cW, cH)
+      if (!box || !activePage) return
+      const z = activePage.zoom
+      let {minX, minY, maxX, maxY} = box
+      if ((maxX - minX) * z < 24 && (maxY - minY) * z < 24) {
+        maxX = minX + TEXT_DEFAULT_W / z
+        maxY = minY + TEXT_DEFAULT_H / z
+      }
+      const entry = { id: Date.now(), minX, minY, maxX, maxY, text: '', color: activeColor }
+      liveTextLabels.push(entry)
+      openTextEditor(entry, true)
+    }
+
+    // isNew: true for a box just created (empty text) — Escape on it
+    // discards the box entirely rather than "reverting" to blank.
+    function openTextEditor(entry, isNew = false) {
       if (!activePage) return
       if (soloSession) { soloSession = null; renderSessions() }
       const input = textInputRef.current
       if (!input) return
-      textEditId = existing ? existing.id : null
-      const fontPx = Math.max(8, (existing?.fontSize || 24) * activePage.zoom)
-      input.value = existing ? existing.text : ''
-      input.style.color = existing ? (existing.color || '#000000') : activeColor
-      input.style.fontSize = fontPx + 'px'
-      input.style.left = screenPos.x + 'px'
-      input.style.top = screenPos.y + 'px'
-      input.style.height = Math.round(fontPx * 1.3) + 'px'
+      textEditId = entry.id
+      textEditOrigText = isNew ? null : entry.text
+      input.value = entry.text || ''
+      input.style.color = entry.color || '#000000'
+      syncTextEditorPosition(entry)
       input.style.display = 'block'
-      drawMarkersLayer() // hide the existing label being edited (see textEditId check there)
+      drawMarkersLayer() // hide the box being edited (see textEditId check there)
       input.focus()
-      if (existing) input.select()
+      if (!isNew) input.select()
     }
 
     function commitTextLabel() {
       const input = textInputRef.current
       if (!input || input.style.display === 'none') return
       const text = input.value.trim()
-      const screenX = parseFloat(input.style.left), screenY = parseFloat(input.style.top)
       const editId = textEditId
       input.style.display = 'none'; input.blur()
-      textEditId = null
+      textEditId = null; textEditOrigText = null
       if (editId) {
-        const label = liveTextLabels.find(t => t.id === editId)
-        if (label) {
-          if (!text) liveTextLabels = liveTextLabels.filter(t => t.id !== editId)
-          else label.text = text
-        }
-      } else if (text && activePage) {
-        const pt = s2i(screenX, screenY)
-        liveTextLabels.push({ id: Date.now(), x: pt.x, y: pt.y, text, color: activeColor, fontSize: 24 })
+        // Replaces (rather than mutates) the array element for the same
+        // reason moveTextBox does — see its comment.
+        if (!text) liveTextLabels = liveTextLabels.filter(t => t.id !== editId)
+        else liveTextLabels = liveTextLabels.map(t => t.id === editId ? {...t, text} : t)
       }
       drawMarkersLayer(); updateUnsaved(checkHasLiveContent())
     }
 
     function cancelTextLabel() {
       const input = textInputRef.current
+      const editId = textEditId
+      const origText = textEditOrigText
       if (input) { input.style.display = 'none'; input.blur() }
-      textEditId = null
+      if (editId) {
+        if (origText == null) liveTextLabels = liveTextLabels.filter(t => t.id !== editId)
+        else liveTextLabels = liveTextLabels.map(t => t.id === editId ? {...t, text: origText} : t)
+      }
+      textEditId = null; textEditOrigText = null
       drawMarkersLayer()
     }
 
@@ -1449,14 +1556,22 @@ export default function Canvas() {
           placeCountMarker(pos.x, pos.y); return
         }
         if (tool === 'text') {
-          const hit = hitTextLabel(pos.x, pos.y)
+          const hit = hitTextBox(pos.x, pos.y)
           if (hit) {
-            const sx = hit.x * activePage.zoom + activePage.pan.x
-            const sy = hit.y * activePage.zoom + activePage.pan.y
-            openTextEditor(hit, {x: sx, y: sy})
-          } else {
-            openTextEditor(null, pos)
+            // Don't decide edit-vs-move yet — see onMove/onUp: a plain
+            // click (no movement before mouseup) opens the text editor,
+            // an actual drag moves the box instead.
+            textDragBoxId = hit.id
+            textDragMoved = false
+            textDragStart = s2i(pos.x, pos.y)
+            textDragOrig = {minX: hit.minX, minY: hit.minY, maxX: hit.maxX, maxY: hit.maxY}
+            textDownScreenPos = {x: pos.x, y: pos.y}
+            return
           }
+          const pt = s2i(pos.x, pos.y)
+          creatingTextBox = {minX: pt.x, minY: pt.y, maxX: pt.x, maxY: pt.y}
+          textCreateFixed = pt
+          drawActiveTextBoxPreview()
           return
         }
         isPainting = true; lastPenPt = null
@@ -1563,6 +1678,11 @@ export default function Canvas() {
             }
           }
         }
+      } else if (tool === 'text') {
+        ring.style.display = 'none'
+        if (activePage && !creatingTextBox && !textDragBoxId) {
+          drawEl.style.cursor = hitTextBox(pos.x, pos.y) ? 'pointer' : 'crosshair'
+        }
       } else {
         ring.style.width  = brushSize * 2 + 'px'
         ring.style.height = brushSize * 2 + 'px'
@@ -1627,6 +1747,27 @@ export default function Canvas() {
         drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
         return
       }
+      if (tool === 'text' && creatingTextBox) {
+        const pt = s2i(pos.x, pos.y)
+        creatingTextBox.minX = Math.min(textCreateFixed.x, pt.x); creatingTextBox.maxX = Math.max(textCreateFixed.x, pt.x)
+        creatingTextBox.minY = Math.min(textCreateFixed.y, pt.y); creatingTextBox.maxY = Math.max(textCreateFixed.y, pt.y)
+        drawActiveTextBoxPreview()
+        return
+      }
+      if (tool === 'text' && textDragBoxId) {
+        if (liveTextLabels.some(t => t.id === textDragBoxId)) {
+          // A plain click (mouseup with no real movement) is meant to open
+          // the editor, not nudge the box a pixel — only start actually
+          // moving it once the pointer has cleared a small jitter threshold.
+          if (!textDragMoved && Math.hypot(pos.x - textDownScreenPos.x, pos.y - textDownScreenPos.y) > 5) textDragMoved = true
+          if (textDragMoved) {
+            const pt = s2i(pos.x, pos.y)
+            moveTextBox(textDragBoxId, textDragOrig, pt.x - textDragStart.x, pt.y - textDragStart.y)
+            drawMarkersLayer()
+          }
+        }
+        return
+      }
       if (isPainting) {
         const pt = s2i(pos.x, pos.y)
         doPaint(pt.x, pt.y, lastPenPt); lastPenPt = pt
@@ -1637,6 +1778,13 @@ export default function Canvas() {
       rectHandle = null
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
+      if (creatingTextBox) finalizeTextBoxCreation()
+      if (textDragBoxId) {
+        const box = liveTextLabels.find(t => t.id === textDragBoxId)
+        if (box && !textDragMoved) openTextEditor(box, false)
+        else if (box) updateUnsaved(checkHasLiveContent())
+        textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
+      }
       // Harmless if a poly/LF line is still mid-placement (not closed/
       // finished) — the very next mousemove immediately restarts it via
       // trackEdgePan(), since edgePanEligible() still covers that case.
@@ -1659,6 +1807,7 @@ export default function Canvas() {
       // redrawing here also picks up any color change made while hovering
       // the sidebar.
       if (activeRect) drawActiveRectPreview()
+      if (creatingTextBox) drawActiveTextBoxPreview()
       // On iPad, Apple Pencil hover fires this exact mouseleave event
       // whenever the pencil lifts out of hover range (~1 inch) while still
       // positioned over the canvas in x/y — it's not a reliable "user is
@@ -2109,6 +2258,12 @@ export default function Canvas() {
         } else if (activePoly && polyDragMode) {
           bakePolygon()
         }
+        // Same race as above for the Text tool's own two live-drag states —
+        // a stray in-progress creation drag is discarded (nothing to keep,
+        // it isn't a box yet), and a real existing box mid-move is dropped
+        // back in place rather than left drifting into the pinch.
+        if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
+        if (textDragBoxId) { textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null }
         touchPainting = false; lastTouchPt = null; rectHandle = null
         polyDragMode = null; polyVertexIdx = null
         lfDragMode = null; lfVertexIdx = null
@@ -2248,14 +2403,19 @@ export default function Canvas() {
         placeCountMarker(pos.x, pos.y); touchJustPlacedMarker = true; return
       }
       if (tool === 'text') {
-        const hit = hitTextLabel(pos.x, pos.y)
+        const hit = hitTextBox(pos.x, pos.y)
         if (hit) {
-          const sx = hit.x * activePage.zoom + activePage.pan.x
-          const sy = hit.y * activePage.zoom + activePage.pan.y
-          openTextEditor(hit, {x: sx, y: sy})
-        } else {
-          openTextEditor(null, pos)
+          textDragBoxId = hit.id
+          textDragMoved = false
+          textDragStart = s2i(pos.x, pos.y)
+          textDragOrig = {minX: hit.minX, minY: hit.minY, maxX: hit.maxX, maxY: hit.maxY}
+          textDownScreenPos = {x: pos.x, y: pos.y}
+          return
         }
+        const pt = s2i(pos.x, pos.y)
+        creatingTextBox = {minX: pt.x, minY: pt.y, maxX: pt.x, maxY: pt.y}
+        textCreateFixed = pt
+        drawActiveTextBoxPreview()
         return
       }
       touchPainting = true; lastTouchPt = null
@@ -2347,6 +2507,28 @@ export default function Canvas() {
         drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
         return
       }
+      if (tool === 'text' && creatingTextBox) {
+        const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
+        const pt = s2i(pos.x, pos.y)
+        creatingTextBox.minX = Math.min(textCreateFixed.x, pt.x); creatingTextBox.maxX = Math.max(textCreateFixed.x, pt.x)
+        creatingTextBox.minY = Math.min(textCreateFixed.y, pt.y); creatingTextBox.maxY = Math.max(textCreateFixed.y, pt.y)
+        drawActiveTextBoxPreview()
+        return
+      }
+      if (tool === 'text' && textDragBoxId) {
+        const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
+        if (liveTextLabels.some(t => t.id === textDragBoxId)) {
+          if (!textDragMoved && Math.hypot(pos.x - textDownScreenPos.x, pos.y - textDownScreenPos.y) > 8) textDragMoved = true
+          if (textDragMoved) {
+            const pt = s2i(pos.x, pos.y)
+            moveTextBox(textDragBoxId, textDragOrig, pt.x - textDragStart.x, pt.y - textDragStart.y)
+            drawMarkersLayer()
+          }
+        }
+        return
+      }
       if (!touchPainting) return
       const pos = getTouchPos(e)
       const pt = s2i(pos.x, pos.y)
@@ -2385,6 +2567,13 @@ export default function Canvas() {
       rectHandle = null
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
+      if (creatingTextBox) finalizeTextBoxCreation()
+      if (textDragBoxId) {
+        const box = liveTextLabels.find(t => t.id === textDragBoxId)
+        if (box && !textDragMoved) openTextEditor(box, false)
+        else if (box) updateUnsaved(checkHasLiveContent())
+        textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
+      }
       stopEdgePan()
       if (wasPainting) {
         cancelAnimationFrame(rafId); rafId = 0
@@ -2532,8 +2721,14 @@ export default function Canvas() {
       if (tool === 'poly' && t !== 'poly' && activePoly) bakePolygon()
       if (tool === 'lf' && t !== 'lf' && activeLFLine) commitLFLine()
       // Same reasoning — a text edit box left open while switching tools
-      // would lose whatever was typed instead of committing it.
-      if (tool === 'text' && t !== 'text') commitTextLabel()
+      // would lose whatever was typed instead of committing it. A stray
+      // in-progress create-drag (never became a real box) or an in-flight
+      // move just gets dropped — nothing to lose either way.
+      if (tool === 'text' && t !== 'text') {
+        commitTextLabel()
+        if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
+        textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
+      }
       if (tool !== 'erase' && t !== 'erase' && t !== 'count') prevTool = t
       tool = t
       // Text's whole point per the request is that it defaults to black
@@ -4695,10 +4890,14 @@ export default function Canvas() {
           const raw = dbSess.text_data
           const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
           if (parsed?.labels) {
-            // Same cross-device rescaling as count markers/LF lines above.
+            // Same cross-device rescaling as count markers/LF lines above —
+            // each label is a box now, so all four bounds need it, not just
+            // one point.
             const sx = parsed.w ? img.width / parsed.w : 1
             const sy = parsed.h ? img.height / parsed.h : 1
-            textLabels = parsed.labels.map(t => ({...t, x: t.x * sx, y: t.y * sy}))
+            textLabels = parsed.labels.map(t => ({
+              ...t, minX: t.minX * sx, minY: t.minY * sy, maxX: t.maxX * sx, maxY: t.maxY * sy,
+            }))
           }
         } catch {}
 
@@ -4988,7 +5187,9 @@ export default function Canvas() {
           const parsed = cs.text_data
           if (parsed?.labels) {
             const sx = parsed.w ? activePage.image.width / parsed.w : 1, sy = parsed.h ? activePage.image.height / parsed.h : 1
-            textLabels = parsed.labels.map(t => ({ ...t, x: t.x * sx, y: t.y * sy }))
+            textLabels = parsed.labels.map(t => ({
+              ...t, minX: t.minX * sx, minY: t.minY * sy, maxX: t.maxX * sx, maxY: t.maxY * sy,
+            }))
           }
         } catch {}
 
@@ -5373,11 +5574,6 @@ export default function Canvas() {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitTextLabel() }
       else if (e.key === 'Escape') { e.preventDefault(); cancelTextLabel() }
       e.stopPropagation()
-    })
-    textInputRef.current.addEventListener('input', e => {
-      // Auto-grow height as the user types multi-line text.
-      e.target.style.height = 'auto'
-      e.target.style.height = e.target.scrollHeight + 'px'
     })
 
     drawEl.addEventListener('mousedown', onDown)
