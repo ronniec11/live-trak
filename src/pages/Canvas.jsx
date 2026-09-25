@@ -2917,6 +2917,14 @@ export default function Canvas() {
       if (activeRect) drawActiveRectPreview()
       if (activePoly) drawActivePolyPreview()
       if (activeLFLine) drawActiveLFPreview()
+      // A text box currently open for editing recolors immediately too —
+      // updates the live box (so it's already right whenever the editor
+      // closes) and the <textarea> itself (so typed/selected text visibly
+      // changes color right away instead of only after committing).
+      if (textEditId != null) {
+        liveTextLabels = liveTextLabels.map(t => t.id === textEditId ? {...t, color: hex} : t)
+        if (textInputRef.current) textInputRef.current.style.color = hex
+      }
     }
 
     // ── UNDO ─────────────────────────────────────────────────────────────────
@@ -5692,6 +5700,14 @@ export default function Canvas() {
       d.className = 'ct-cc' + (col === activeColor ? ' sel' : '')
       d.style.background = col; d.dataset.c = col
       if (col === '#ffffff') d.style.borderColor = '#555'
+      // Without this, clicking a swatch while a text box is open for
+      // editing would shift focus off the <textarea> first — triggering
+      // its blur handler (commitTextLabel) and closing the editor — before
+      // the click itself ever reached pickColor. Blocking mousedown's
+      // default focus change keeps the textarea (and its selection) intact
+      // through the click, so recoloring the text you're typing doesn't
+      // boot you out of it.
+      d.addEventListener('mousedown', e => e.preventDefault())
       d.addEventListener('click', () => pickColor(col))
       cgEl.appendChild(d)
     })
