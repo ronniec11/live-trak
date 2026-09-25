@@ -3956,9 +3956,10 @@ export default function Canvas() {
         y += 0.18
 
         // Header zone bottom is at 1.25in from the page's top edge (both
-        // the header text and the logo live above this line) — the floor
-        // plan/table starts right at that same line now, no extra gap.
-        y = 1.25
+        // the header text and the logo live above this line) — floor
+        // plan/table starts 1/16in below that, a small buffer so it
+        // doesn't crowd right up against the logo's bottom edge.
+        y = 1.25 + 1 / 16
 
         // Snapshot — its own wider 0.75in side margins rather than the
         // page's tighter 0.4in text/table margin, so it reads as the
