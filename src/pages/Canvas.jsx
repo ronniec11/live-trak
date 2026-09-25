@@ -42,9 +42,10 @@ import './Canvas.css'
 //
 // NOTE: Run this migration to enable the Text tool:
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS text_data jsonb DEFAULT '[]';
-// text_data holds {w, h, labels: [{id, minX, minY, maxX, maxY, text, color}, ...]} —
+// text_data holds {w, h, labels: [{id, minX, minY, maxX, maxY, text, color, fontSize}, ...]} —
 // same cross-device rescaling shape as count_data/lf_data (each label is a
-// drag-sized box, like Rectangle, not a bare point).
+// drag-sized box, like Rectangle, not a bare point) — fontSize is in the
+// same image-space px as the bounds, so it rescales right along with them.
 
 const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
@@ -263,8 +264,8 @@ export default function Canvas() {
     let countSymbol = 'num'     // 'num' | 'check' | 'x'
 
     // Text tool — see "── TEXT TOOL ──" below for placement/editing.
-    // {id, minX, minY, maxX, maxY, text, color} in image coords — a
-    // drag-sized box (like Rectangle), not a bare point, so its on-screen
+    // {id, minX, minY, maxX, maxY, text, color, fontSize} in image coords —
+    // a drag-sized box (like Rectangle), not a bare point, so its on-screen
     // size only ever changes because zoom changed it (proportionally, same
     // as everything else), never because of a stale point+fontSize combo.
     let liveTextLabels = []
@@ -277,6 +278,9 @@ export default function Canvas() {
     let textDragStart = null     // image-space point at mousedown, for computing the move delta
     let textDragOrig = null      // the box's bounds at mousedown, translated by the move delta
     let textDownScreenPos = null // screen-space point at mousedown, to tell a real drag from pointer jitter
+    let textResizeBoxId = null   // id of an existing box whose corner handle was grabbed
+    let textResizeFixed = null   // the OPPOSITE corner (image coords) — stays put while resizing, like Rectangle
+    let textResizeOrig = null    // {minX, minY, maxX, maxY, fontSize} at mousedown, for computing the new font size from the height ratio
 
     // Rectangle tool — an active rect stays a live, adjustable shape (drag
     // corner handles to expand/collapse, drag inside to move) rather than
@@ -785,7 +789,7 @@ export default function Canvas() {
         if (t.id === textEditId) return
         const sx = t.minX * z + p.x, sy = t.minY * z + p.y
         const boxW = (t.maxX - t.minX) * z, boxH = (t.maxY - t.minY) * z
-        const fontPx = Math.max(8, 24 * z)
+        const fontPx = Math.max(8, (t.fontSize || 24) * z)
         countCtx.save()
         countCtx.font = `bold ${fontPx}px system-ui,sans-serif`
         countCtx.textAlign = 'left'
@@ -799,6 +803,35 @@ export default function Canvas() {
         })
         countCtx.restore()
       })
+
+      // Corner resize handles — only on this session's own live boxes (same
+      // as Rectangle/Polygon/LF only ever letting you adjust your own
+      // in-progress shape, never another session's already-saved one), and
+      // only while the Text tool is active so they don't clutter the plan
+      // when it's not in use. The box currently open for editing is skipped
+      // too — its <textarea> sits on top of it, nothing to grab there.
+      if (tool === 'text' && !soloSession) {
+        liveTextLabels.forEach(t => {
+          if (t.id === textEditId) return
+          const sx1 = t.minX * z + p.x, sy1 = t.minY * z + p.y
+          const sx2 = t.maxX * z + p.x, sy2 = t.maxY * z + p.y
+          countCtx.save()
+          countCtx.strokeStyle = t.color || '#000000'
+          countCtx.lineWidth = 1
+          countCtx.setLineDash([4, 3])
+          countCtx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
+          countCtx.setLineDash([])
+          const HR = 5
+          ;[[sx1, sy1], [sx2, sy1], [sx1, sy2], [sx2, sy2]].forEach(([hx, hy]) => {
+            countCtx.fillStyle = 'rgba(255,255,255,0.6)'
+            countCtx.fillRect(hx - HR, hy - HR, HR * 2, HR * 2)
+            countCtx.strokeStyle = t.color || '#000000'
+            countCtx.lineWidth = 1.5
+            countCtx.strokeRect(hx - HR, hy - HR, HR * 2, HR * 2)
+          })
+          countCtx.restore()
+        })
+      }
     }
 
     function placeCountMarker(sx, sy) {
@@ -846,6 +879,25 @@ export default function Canvas() {
       })
     }
 
+    const TEXT_MIN_FONT = 6
+    const TEXT_MAX_FONT = 400
+
+    // fixed is the corner OPPOSITE the one being dragged (stays put, like
+    // Rectangle) and pt is where the dragged corner currently is — the new
+    // bounds are just those two points' min/max, same as Rectangle's own
+    // resize. Font size scales by the box's HEIGHT ratio (font size is a
+    // vertical measure) rather than staying fixed, per the request that
+    // dragging a corner should resize the text itself, not just re-wrap it
+    // inside a differently-shaped box.
+    function resizeTextBox(id, orig, fixed, pt) {
+      const minX = Math.min(fixed.x, pt.x), maxX = Math.max(fixed.x, pt.x)
+      const minY = Math.min(fixed.y, pt.y), maxY = Math.max(fixed.y, pt.y)
+      const origH = Math.max(1, orig.maxY - orig.minY)
+      const ratio = (maxY - minY) / origH
+      const fontSize = Math.min(TEXT_MAX_FONT, Math.max(TEXT_MIN_FONT, (orig.fontSize || TEXT_FONT_SIZE) * ratio))
+      liveTextLabels = liveTextLabels.map(t => t.id !== id ? t : { ...t, minX, minY, maxX, maxY, fontSize })
+    }
+
     // Walk in reverse so an overlapping later box wins the hit test,
     // matching the visual stacking order (later boxes draw on top).
     function hitTextBox(sx, sy) {
@@ -858,6 +910,35 @@ export default function Canvas() {
         if (sx >= sx1 - 4 && sx <= sx2 + 4 && sy >= sy1 - 4 && sy <= sy2 + 4) return t
       }
       return null
+    }
+
+    // Corner-resize handles, checked across every existing box (not just
+    // one "active" shape — Rectangle only ever has one live shape at a
+    // time, but committed text boxes all sit there as data simultaneously,
+    // so any of them needs to be grabbable). Walked in the same reverse
+    // stacking order as hitTextBox for the same reason.
+    function hitTextBoxHandle(sx, sy, radius = 14) {
+      if (!activePage) return null
+      const z = activePage.zoom, p = activePage.pan
+      for (let i = liveTextLabels.length - 1; i >= 0; i--) {
+        const t = liveTextLabels[i]
+        const corners = {
+          nw: {x: t.minX, y: t.minY}, ne: {x: t.maxX, y: t.minY},
+          sw: {x: t.minX, y: t.maxY}, se: {x: t.maxX, y: t.maxY},
+        }
+        for (const name in corners) {
+          const hx = corners[name].x * z + p.x, hy = corners[name].y * z + p.y
+          if (Math.hypot(sx - hx, sy - hy) < radius) return {box: t, handle: name}
+        }
+      }
+      return null
+    }
+
+    function textResizeAnchor(box, handle) {
+      if (handle === 'nw') return {x: box.maxX, y: box.maxY}
+      if (handle === 'ne') return {x: box.minX, y: box.maxY}
+      if (handle === 'sw') return {x: box.maxX, y: box.minY}
+      return {x: box.minX, y: box.minY}  // 'se'
     }
 
     // Splits on explicit newlines first, then word-wraps each paragraph to
@@ -905,7 +986,7 @@ export default function Canvas() {
       input.style.top    = sy1 + 'px'
       input.style.width  = Math.max(40, sx2 - sx1) + 'px'
       input.style.height = Math.max(24, sy2 - sy1) + 'px'
-      input.style.fontSize = Math.max(8, TEXT_FONT_SIZE * z) + 'px'
+      input.style.fontSize = Math.max(8, (box.fontSize || TEXT_FONT_SIZE) * z) + 'px'
     }
 
     // On mouseup/touchend after dragging out a new box — a drag too small to
@@ -923,7 +1004,7 @@ export default function Canvas() {
         maxX = minX + TEXT_DEFAULT_W / z
         maxY = minY + TEXT_DEFAULT_H / z
       }
-      const entry = { id: Date.now(), minX, minY, maxX, maxY, text: '', color: activeColor }
+      const entry = { id: Date.now(), minX, minY, maxX, maxY, text: '', color: activeColor, fontSize: TEXT_FONT_SIZE }
       liveTextLabels.push(entry)
       openTextEditor(entry, true)
     }
@@ -1565,6 +1646,13 @@ export default function Canvas() {
           // lose whatever was just typed — openTextEditor had nothing that
           // committed the box it was stealing focus from).
           if (textEditId != null) { commitTextLabel(); return }
+          const handleHit = hitTextBoxHandle(pos.x, pos.y)
+          if (handleHit) {
+            textResizeBoxId = handleHit.box.id
+            textResizeOrig = {minX: handleHit.box.minX, minY: handleHit.box.minY, maxX: handleHit.box.maxX, maxY: handleHit.box.maxY, fontSize: handleHit.box.fontSize}
+            textResizeFixed = textResizeAnchor(handleHit.box, handleHit.handle)
+            return
+          }
           const hit = hitTextBox(pos.x, pos.y)
           if (hit) {
             // Don't decide edit-vs-move yet — see onMove/onUp: a plain
@@ -1689,8 +1777,13 @@ export default function Canvas() {
         }
       } else if (tool === 'text') {
         ring.style.display = 'none'
-        if (activePage && !creatingTextBox && !textDragBoxId) {
-          drawEl.style.cursor = hitTextBox(pos.x, pos.y) ? 'pointer' : 'crosshair'
+        if (activePage && !creatingTextBox && !textDragBoxId && !textResizeBoxId) {
+          const handleHover = hitTextBoxHandle(pos.x, pos.y)
+          if (handleHover) {
+            drawEl.style.cursor = (handleHover.handle === 'nw' || handleHover.handle === 'se') ? 'nwse-resize' : 'nesw-resize'
+          } else {
+            drawEl.style.cursor = hitTextBox(pos.x, pos.y) ? 'pointer' : 'crosshair'
+          }
         }
       } else {
         ring.style.width  = brushSize * 2 + 'px'
@@ -1763,6 +1856,14 @@ export default function Canvas() {
         drawActiveTextBoxPreview()
         return
       }
+      if (tool === 'text' && textResizeBoxId) {
+        if (liveTextLabels.some(t => t.id === textResizeBoxId)) {
+          const pt = s2i(pos.x, pos.y)
+          resizeTextBox(textResizeBoxId, textResizeOrig, textResizeFixed, pt)
+          drawMarkersLayer()
+        }
+        return
+      }
       if (tool === 'text' && textDragBoxId) {
         if (liveTextLabels.some(t => t.id === textDragBoxId)) {
           // A plain click (mouseup with no real movement) is meant to open
@@ -1788,6 +1889,10 @@ export default function Canvas() {
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
       if (creatingTextBox) finalizeTextBoxCreation()
+      if (textResizeBoxId) {
+        updateUnsaved(checkHasLiveContent())
+        textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
+      }
       if (textDragBoxId) {
         const box = liveTextLabels.find(t => t.id === textDragBoxId)
         if (box && !textDragMoved) openTextEditor(box, false)
@@ -2273,6 +2378,7 @@ export default function Canvas() {
         // back in place rather than left drifting into the pinch.
         if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
         if (textDragBoxId) { textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null }
+        if (textResizeBoxId) { textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null }
         touchPainting = false; lastTouchPt = null; rectHandle = null
         polyDragMode = null; polyVertexIdx = null
         lfDragMode = null; lfVertexIdx = null
@@ -2415,6 +2521,13 @@ export default function Canvas() {
         // See onDown — a click outside the currently-open editor commits it
         // instead of also starting a new box under the same tap.
         if (textEditId != null) { commitTextLabel(); return }
+        const handleHit = hitTextBoxHandle(pos.x, pos.y, 20) // bigger touch target
+        if (handleHit) {
+          textResizeBoxId = handleHit.box.id
+          textResizeOrig = {minX: handleHit.box.minX, minY: handleHit.box.minY, maxX: handleHit.box.maxX, maxY: handleHit.box.maxY, fontSize: handleHit.box.fontSize}
+          textResizeFixed = textResizeAnchor(handleHit.box, handleHit.handle)
+          return
+        }
         const hit = hitTextBox(pos.x, pos.y)
         if (hit) {
           textDragBoxId = hit.id
@@ -2528,6 +2641,16 @@ export default function Canvas() {
         drawActiveTextBoxPreview()
         return
       }
+      if (tool === 'text' && textResizeBoxId) {
+        const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
+        if (liveTextLabels.some(t => t.id === textResizeBoxId)) {
+          const pt = s2i(pos.x, pos.y)
+          resizeTextBox(textResizeBoxId, textResizeOrig, textResizeFixed, pt)
+          drawMarkersLayer()
+        }
+        return
+      }
       if (tool === 'text' && textDragBoxId) {
         const pos = getTouchPos(e)
         trackEdgePan(pos, false)
@@ -2580,6 +2703,10 @@ export default function Canvas() {
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
       if (creatingTextBox) finalizeTextBoxCreation()
+      if (textResizeBoxId) {
+        updateUnsaved(checkHasLiveContent())
+        textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
+      }
       if (textDragBoxId) {
         const box = liveTextLabels.find(t => t.id === textDragBoxId)
         if (box && !textDragMoved) openTextEditor(box, false)
@@ -2740,6 +2867,7 @@ export default function Canvas() {
         commitTextLabel()
         if (creatingTextBox) { creatingTextBox = null; textCreateFixed = null; drawCtx.clearRect(0, 0, cW, cH) }
         textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
+        textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
       }
       if (tool !== 'erase' && t !== 'erase' && t !== 'count') prevTool = t
       tool = t
@@ -4909,6 +5037,7 @@ export default function Canvas() {
             const sy = parsed.h ? img.height / parsed.h : 1
             textLabels = parsed.labels.map(t => ({
               ...t, minX: t.minX * sx, minY: t.minY * sy, maxX: t.maxX * sx, maxY: t.maxY * sy,
+              fontSize: (t.fontSize || 24) * ((sx + sy) / 2),
             }))
           }
         } catch {}
@@ -5201,6 +5330,7 @@ export default function Canvas() {
             const sx = parsed.w ? activePage.image.width / parsed.w : 1, sy = parsed.h ? activePage.image.height / parsed.h : 1
             textLabels = parsed.labels.map(t => ({
               ...t, minX: t.minX * sx, minY: t.minY * sy, maxX: t.maxX * sx, maxY: t.maxY * sy,
+              fontSize: (t.fontSize || 24) * ((sx + sy) / 2),
             }))
           }
         } catch {}
