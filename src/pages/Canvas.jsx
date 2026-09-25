@@ -3905,11 +3905,11 @@ export default function Canvas() {
         const pageHeight = doc.internal.pageSize.getHeight()
         const contentWidth = pageWidth - margin * 2
         const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
-        // Title/sheet-name/snapshot/table all start 0.5in lower than the
-        // page margin itself — the logo stays put at the margin (below,
-        // unaffected by `y`), so this is what actually gives it room to be
-        // as big as it is without the title text starting right alongside it.
-        let y = margin + 0.5
+        // Title starts right at the margin, level with the logo — the
+        // extra room the logo needed comes from the fixed gap added after
+        // the header text instead (below), so the snapshot/table position
+        // stays put regardless of where the header itself starts.
+        let y = margin
 
         function ensureRoom(h) {
           if (y + h > pageHeight - margin) { doc.addPage(); y = margin }
@@ -3953,6 +3953,12 @@ export default function Canvas() {
         doc.setFontSize(9)
         doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
+
+        // Gap between the header text and the floor plan/table below it —
+        // keeps the plan at the same position it was at when the header
+        // itself started 0.5in lower than the margin, now that the header
+        // starts right at the margin instead.
+        y += 0.5
 
         // Snapshot — its own wider 0.75in side margins rather than the
         // page's tighter 0.4in text/table margin, so it reads as the
