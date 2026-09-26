@@ -68,7 +68,7 @@ export default function Navbar() {
                 location.pathname.startsWith('/super-admin') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
               }`}
             >
-              ⚙ Admin
+              Super Admin
             </Link>
           )}
         </nav>
