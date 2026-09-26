@@ -30,6 +30,17 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString()
 }
 
+// "Forever" isn't a real NULL — organizations.unlimited_until being NULL
+// already means "not granted" (see orgIsUnlimited), so a permanent grant
+// is stored as a far-future date instead (see grantUnlimited). Anything
+// more than 20 years out only ever comes from that "Forever" button, so
+// it's a safe way to tell the two apart for display without a separate
+// column.
+function isForeverGrant(iso) {
+  if (!iso) return false
+  return new Date(iso).getFullYear() - new Date().getFullYear() > 20
+}
+
 function fmtDateTime(iso) {
   if (!iso) return 'Never'
   return new Date(iso).toLocaleString()
@@ -81,7 +92,9 @@ function CompanyViewModal({ org, users, jobs, sfByOrg, onClose, onGrantUnlimited
           <p className="text-sm font-medium text-gray-900 dark:text-white">Unlimited Access</p>
           <p className="text-xs text-muted">
             {orgIsUnlimited(org)
-              ? `Active until ${new Date(org.unlimited_until).toLocaleDateString()} — every plan limit is exempted.`
+              ? (isForeverGrant(org.unlimited_until)
+                  ? 'Active — no expiration. Every plan limit is exempted.'
+                  : `Active until ${new Date(org.unlimited_until).toLocaleDateString()} — every plan limit is exempted.`)
               : "Not granted — this company is subject to its plan's limits."}
           </p>
         </div>
@@ -92,6 +105,7 @@ function CompanyViewModal({ org, users, jobs, sfByOrg, onClose, onGrantUnlimited
             <>
               <button onClick={() => onGrantUnlimited(org, 30)} className="btn-ghost py-1 px-2 text-xs">+30d</button>
               <button onClick={() => onGrantUnlimited(org, 90)} className="btn-ghost py-1 px-2 text-xs">+90d</button>
+              <button onClick={() => onGrantUnlimited(org, 'forever')} className="btn-ghost py-1 px-2 text-xs">Forever</button>
             </>
           )}
         </div>
@@ -340,13 +354,20 @@ export default function SuperAdmin() {
   }
 
   async function grantUnlimited(org, days) {
-    const until = days == null ? null : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+    // 'forever' stores a far-future date rather than NULL — NULL already
+    // means "not granted" (see orgIsUnlimited) — and isForeverGrant's
+    // display check is what tells the two apart again afterward.
+    const until = days == null ? null
+      : days === 'forever' ? new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString()
+      : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
     const { data, error } = await supabase.from('organizations').update({ unlimited_until: until }).eq('id', org.id).select().single()
     if (error) { showToast(error.message); return }
     if (!data) { showToast('Nothing changed — check the organizations_update_super_admin RLS policy.'); return }
     showToast(days == null
       ? `Cleared unlimited access for ${org.name}.`
-      : `${org.name} now has unlimited access until ${new Date(until).toLocaleDateString()}.`)
+      : days === 'forever'
+        ? `${org.name} now has unlimited access with no expiration.`
+        : `${org.name} now has unlimited access until ${new Date(until).toLocaleDateString()}.`)
     loadAll()
   }
 
