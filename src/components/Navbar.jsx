@@ -55,6 +55,18 @@ export default function Navbar() {
               Company Hub
             </Link>
           )}
+          {/* Nobody but a hand-flagged is_super_admin account ever sees this —
+              see supabase-migration-super-admin.sql. */}
+          {profile?.is_super_admin === true && (
+            <Link
+              to="/super-admin"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                location.pathname.startsWith('/super-admin') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
+              }`}
+            >
+              ⚙ Admin
+            </Link>
+          )}
         </nav>
       )}
 
