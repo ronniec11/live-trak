@@ -50,6 +50,16 @@ function fmtSF(n) {
   return Math.round(n || 0).toLocaleString()
 }
 
+function fmtBytes(n) {
+  const bytes = Number(n) || 0
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let val = bytes / 1024
+  let i = 0
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++ }
+  return `${val.toFixed(val < 10 ? 2 : 1)} ${units[i]}`
+}
+
 function CloseIcon() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -73,16 +83,25 @@ function ModalShell({ title, onClose, children, wide = false }) {
 }
 
 // ── View company ──────────────────────────────────────────────────────────
-function CompanyViewModal({ org, users, jobs, sfByOrg, onClose, onGrantUnlimited }) {
+function CompanyViewModal({ org, users, jobs, sfByOrg, storageByOrg, onClose, onGrantUnlimited }) {
   const orgUsers = users.filter(u => u.organization_id === org.id)
   const orgJobs = jobs.filter(j => j.organization_id === org.id)
+  const storage = storageByOrg[org.id]
   return (
     <ModalShell title={org.name} onClose={onClose} wide>
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-4 gap-3 mb-5">
         <div><p className="label">Users</p><p className="text-lg font-semibold text-gray-900 dark:text-white">{orgUsers.length}</p></div>
         <div><p className="label">Jobs</p><p className="text-lg font-semibold text-gray-900 dark:text-white">{orgJobs.length}</p></div>
         <div><p className="label">SF Tracked</p><p className="text-lg font-semibold text-gray-900 dark:text-white">{fmtSF(sfByOrg[org.id])}</p></div>
+        <div><p className="label">Storage</p><p className="text-lg font-semibold text-gray-900 dark:text-white">{fmtBytes(storage?.total_bytes)}</p></div>
       </div>
+      {storage && storage.total_bytes > 0 && (
+        <div className="flex items-center gap-4 text-xs text-muted mb-5 -mt-2">
+          <span>Floor plans: {fmtBytes(storage.floor_plans_bytes)}</span>
+          <span>Tiles: {fmtBytes(storage.floor_plan_tiles_bytes)}</span>
+          <span>Logo: {fmtBytes(storage.org_logos_bytes)}</span>
+        </div>
+      )}
 
       {/* Exempts the WHOLE company from every plan limit (users, projects,
           scopes/session per project — see src/lib/planLimits.js) for the
@@ -275,6 +294,8 @@ export default function SuperAdmin() {
   const [jobs, setJobs] = useState([])
   const [sfByOrg, setSfByOrg] = useState({})
   const [totalSF, setTotalSF] = useState(0)
+  const [storageByOrg, setStorageByOrg] = useState({})
+  const [totalStorageBytes, setTotalStorageBytes] = useState(0)
   const [toast, setToast] = useState('')
 
   const [viewOrg, setViewOrg] = useState(null)
@@ -300,6 +321,7 @@ export default function SuperAdmin() {
       { data: projectsData, error: projectsErr },
       { data: pagesData, error: pagesErr },
       { data: sessionsData, error: sessionsErr },
+      { data: storageData, error: storageErr },
     ] = await Promise.all([
       supabase.from('organizations').select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('*').order('full_name'),
@@ -307,6 +329,9 @@ export default function SuperAdmin() {
       supabase.from('projects').select('id, job_id'),
       supabase.from('pages').select('id, project_id'),
       supabase.from('sessions').select('id, sf, page_id'),
+      // See supabase-migration-storage-stats.sql — needs to have been run,
+      // same as every other cross-company read on this page.
+      supabase.rpc('storage_usage_by_org'),
     ])
     if (orgsErr) console.error('[SuperAdmin] organizations load error:', orgsErr)
     if (usersErr) console.error('[SuperAdmin] profiles load error:', usersErr)
@@ -314,6 +339,7 @@ export default function SuperAdmin() {
     if (projectsErr) console.error('[SuperAdmin] projects load error:', projectsErr)
     if (pagesErr) console.error('[SuperAdmin] pages load error:', pagesErr)
     if (sessionsErr) console.error('[SuperAdmin] sessions load error:', sessionsErr)
+    if (storageErr) console.error('[SuperAdmin] storage_usage_by_org load error (run supabase-migration-storage-stats.sql?):', storageErr)
 
     setOrgs(orgsData || [])
     setUsers(usersData || [])
@@ -338,6 +364,16 @@ export default function SuperAdmin() {
     }
     setSfByOrg(sfMap)
     setTotalSF(total)
+
+    const storageMap = {}
+    let totalBytes = 0
+    for (const row of (storageData || [])) {
+      storageMap[row.organization_id] = row
+      totalBytes += Number(row.total_bytes) || 0
+    }
+    setStorageByOrg(storageMap)
+    setTotalStorageBytes(totalBytes)
+
     setLoading(false)
   }
 
@@ -407,7 +443,7 @@ export default function SuperAdmin() {
         ) : (
           <>
             {/* Overview */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
               <div className="card">
                 <p className="label">Total Companies</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{orgs.length}</p>
@@ -424,6 +460,10 @@ export default function SuperAdmin() {
                 <p className="label">Total SF Tracked</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{fmtSF(totalSF)}</p>
               </div>
+              <div className="card">
+                <p className="label">Total Storage Used</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">{fmtBytes(totalStorageBytes)}</p>
+              </div>
             </div>
 
             {/* Companies */}
@@ -439,6 +479,7 @@ export default function SuperAdmin() {
                     <th className="py-2 pr-4 text-right">Users</th>
                     <th className="py-2 pr-4 text-right">Jobs</th>
                     <th className="py-2 pr-4 text-right">SF Tracked</th>
+                    <th className="py-2 pr-4 text-right">Storage</th>
                     <th className="py-2 pr-4">Status</th>
                     <th className="py-2 pr-4">Created</th>
                     <th className="py-2 pr-4 text-right">Actions</th>
@@ -451,6 +492,7 @@ export default function SuperAdmin() {
                       <td className="py-2 pr-4 text-right">{usersByOrg.get(org.id) || 0}</td>
                       <td className="py-2 pr-4 text-right">{jobsByOrg.get(org.id) || 0}</td>
                       <td className="py-2 pr-4 text-right">{fmtSF(sfByOrg[org.id])}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{fmtBytes(storageByOrg[org.id]?.total_bytes)}</td>
                       <td className="py-2 pr-4">
                         <span className={`text-xs px-1.5 py-0.5 rounded-full capitalize ${org.status === 'suspended' ? 'bg-red-500/10 text-red-500' : 'bg-accent/10 text-accent'}`}>
                           {org.status || 'active'}
@@ -475,7 +517,7 @@ export default function SuperAdmin() {
                     </tr>
                   ))}
                   {orgs.length === 0 && (
-                    <tr><td colSpan={7} className="py-4 text-muted text-center">No companies yet.</td></tr>
+                    <tr><td colSpan={8} className="py-4 text-muted text-center">No companies yet.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -542,7 +584,7 @@ export default function SuperAdmin() {
 
       {viewOrg && (
         <CompanyViewModal
-          org={orgs.find(o => o.id === viewOrg)} users={users} jobs={jobs} sfByOrg={sfByOrg}
+          org={orgs.find(o => o.id === viewOrg)} users={users} jobs={jobs} sfByOrg={sfByOrg} storageByOrg={storageByOrg}
           onClose={() => setViewOrg(null)} onGrantUnlimited={grantUnlimited}
         />
       )}
