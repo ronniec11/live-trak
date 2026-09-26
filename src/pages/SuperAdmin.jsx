@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { jobIsUnlimited } from '../lib/planLimits'
+import { orgIsUnlimited } from '../lib/planLimits'
 
-// NOTE: Also run supabase-migration-plan-limits.sql — it adds
-// jobs.unlimited_until (this page's "Grant unlimited access" controls, in
-// the company View modal) and the jobs UPDATE policy that lets a super
-// admin actually set it.
+// NOTE: Also run supabase-migration-unlimited-access-org.sql — it adds
+// organizations.unlimited_until (this page's "Unlimited Access" controls,
+// in the company View modal) and the trigger that keeps only a super
+// admin able to set it.
 //
 // NOTE: Run supabase-migration-super-admin.sql before using this page — it
 // adds profiles.is_super_admin, organizations.status, and the additive RLS
@@ -72,6 +72,31 @@ function CompanyViewModal({ org, users, jobs, sfByOrg, onClose, onGrantUnlimited
         <div><p className="label">Jobs</p><p className="text-lg font-semibold text-gray-900 dark:text-white">{orgJobs.length}</p></div>
         <div><p className="label">SF Tracked</p><p className="text-lg font-semibold text-gray-900 dark:text-white">{fmtSF(sfByOrg[org.id])}</p></div>
       </div>
+
+      {/* Exempts the WHOLE company from every plan limit (users, projects,
+          scopes/session per project — see src/lib/planLimits.js) for the
+          period granted, not just one job. */}
+      <div className="flex items-center justify-between gap-3 mb-5 p-3 rounded-lg border border-border">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-900 dark:text-white">Unlimited Access</p>
+          <p className="text-xs text-muted">
+            {orgIsUnlimited(org)
+              ? `Active until ${new Date(org.unlimited_until).toLocaleDateString()} — every plan limit is exempted.`
+              : "Not granted — this company is subject to its plan's limits."}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {orgIsUnlimited(org) ? (
+            <button onClick={() => onGrantUnlimited(org, null)} className="btn-ghost py-1 px-2 text-xs text-red-500">Clear</button>
+          ) : (
+            <>
+              <button onClick={() => onGrantUnlimited(org, 30)} className="btn-ghost py-1 px-2 text-xs">+30d</button>
+              <button onClick={() => onGrantUnlimited(org, 90)} className="btn-ghost py-1 px-2 text-xs">+90d</button>
+            </>
+          )}
+        </div>
+      </div>
+
       <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Users</h3>
       <div className="space-y-1 mb-5">
         {orgUsers.map(u => (
@@ -84,35 +109,14 @@ function CompanyViewModal({ org, users, jobs, sfByOrg, onClose, onGrantUnlimited
       </div>
       <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Jobs</h3>
       <div className="space-y-1">
-        {orgJobs.map(j => {
-          const unlimited = jobIsUnlimited(j)
-          return (
-            <div key={j.id} className="flex items-center justify-between gap-2 text-sm py-1.5 border-b border-border/50 last:border-0">
-              <div className="min-w-0">
-                <p className="text-gray-800 dark:text-gray-200 truncate">{j.name}</p>
-                {unlimited && (
-                  <p className="text-xs text-accent">Unlimited access until {new Date(j.unlimited_until).toLocaleDateString()}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-xs text-muted capitalize">{j.status}</span>
-                {unlimited ? (
-                  <button onClick={() => onGrantUnlimited(j, null)} className="btn-ghost py-1 px-2 text-xs text-red-500">Clear</button>
-                ) : (
-                  <>
-                    <button onClick={() => onGrantUnlimited(j, 30)} className="btn-ghost py-1 px-2 text-xs">+30d</button>
-                    <button onClick={() => onGrantUnlimited(j, 90)} className="btn-ghost py-1 px-2 text-xs">+90d</button>
-                  </>
-                )}
-              </div>
-            </div>
-          )
-        })}
+        {orgJobs.map(j => (
+          <div key={j.id} className="flex items-center justify-between text-sm py-1">
+            <span className="text-gray-800 dark:text-gray-200 truncate">{j.name}</span>
+            <span className="text-xs text-muted capitalize shrink-0">{j.status}</span>
+          </div>
+        ))}
         {orgJobs.length === 0 && <p className="text-sm text-muted">No jobs yet.</p>}
       </div>
-      <p className="text-xs text-muted mt-2">
-        Unlimited access exempts this one job from its company's plan limits (scopes/sessions per project) for the period granted — the company's user/project caps are unaffected.
-      </p>
       <button onClick={onClose} className="btn-secondary w-full mt-5">Close</button>
     </ModalShell>
   )
@@ -335,14 +339,14 @@ export default function SuperAdmin() {
     loadAll()
   }
 
-  async function grantUnlimited(job, days) {
+  async function grantUnlimited(org, days) {
     const until = days == null ? null : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
-    const { data, error } = await supabase.from('jobs').update({ unlimited_until: until }).eq('id', job.id).select().single()
+    const { data, error } = await supabase.from('organizations').update({ unlimited_until: until }).eq('id', org.id).select().single()
     if (error) { showToast(error.message); return }
-    if (!data) { showToast('Nothing changed — check the jobs_update_super_admin RLS policy (see supabase-migration-plan-limits.sql).'); return }
+    if (!data) { showToast('Nothing changed — check the organizations_update_super_admin RLS policy.'); return }
     showToast(days == null
-      ? `Cleared unlimited access for ${job.name}.`
-      : `${job.name} now has unlimited access until ${new Date(until).toLocaleDateString()}.`)
+      ? `Cleared unlimited access for ${org.name}.`
+      : `${org.name} now has unlimited access until ${new Date(until).toLocaleDateString()}.`)
     loadAll()
   }
 
@@ -430,11 +434,14 @@ export default function SuperAdmin() {
                         <span className={`text-xs px-1.5 py-0.5 rounded-full capitalize ${org.status === 'suspended' ? 'bg-red-500/10 text-red-500' : 'bg-accent/10 text-accent'}`}>
                           {org.status || 'active'}
                         </span>
+                        {orgIsUnlimited(org) && (
+                          <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500">Unlimited</span>
+                        )}
                       </td>
                       <td className="py-2 pr-4 whitespace-nowrap">{fmtDate(org.created_at)}</td>
                       <td className="py-2 pr-4">
                         <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => setViewOrg(org)} className="btn-ghost py-1 px-2 text-xs">View</button>
+                          <button onClick={() => setViewOrg(org.id)} className="btn-ghost py-1 px-2 text-xs">View</button>
                           <button onClick={() => setAdminOrg(org)} className="btn-ghost py-1 px-2 text-xs">Edit Admin</button>
                           <button
                             onClick={() => toggleSuspend(org)}
@@ -513,7 +520,10 @@ export default function SuperAdmin() {
       </div>
 
       {viewOrg && (
-        <CompanyViewModal org={viewOrg} users={users} jobs={jobs} sfByOrg={sfByOrg} onClose={() => setViewOrg(null)} onGrantUnlimited={grantUnlimited} />
+        <CompanyViewModal
+          org={orgs.find(o => o.id === viewOrg)} users={users} jobs={jobs} sfByOrg={sfByOrg}
+          onClose={() => setViewOrg(null)} onGrantUnlimited={grantUnlimited}
+        />
       )}
       {adminOrg && (
         <ChangeAdminModal

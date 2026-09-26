@@ -37,7 +37,7 @@ const ROLE_OPTIONS = [
 
 const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map(r => [r.value, r.label]))
 
-function PersonModal({ person, currentUserId, currentUserOrgId, orgPlan, activeUserCount, onClose, onSaved }) {
+function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserCount, onClose, onSaved }) {
   const isEdit = !!person
   const isSelf = isEdit && person.id === currentUserId
   const [form, setForm] = useState({
@@ -88,7 +88,7 @@ function PersonModal({ person, currentUserId, currentUserOrgId, orgPlan, activeU
         if (existing) {
           throw new Error(`${existing.full_name || 'Someone'} is already in the directory with this email — use Resend Invite on their row instead of adding them again.`)
         }
-        const seatLimitMsg = limitError(orgPlan, 'maxUsers', activeUserCount)
+        const seatLimitMsg = limitError(org, 'maxUsers', activeUserCount)
         if (seatLimitMsg) throw new Error(seatLimitMsg)
         // Passwordless invite: creates the auth.users row (firing the
         // existing handle_new_user trigger) and emails them a sign-in link.
@@ -329,14 +329,14 @@ export default function Team() {
   const [resendingId, setResendingId] = useState(null)
   const [toast, setToast] = useState('')
   const [showRemoved, setShowRemoved] = useState(false)
-  const [orgPlan, setOrgPlan] = useState(null)
+  const [org, setOrg] = useState(null)
 
   const canAccessTeam = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
 
   useEffect(() => {
     if (!profile?.organization_id) return
-    supabase.from('organizations').select('plan').eq('id', profile.organization_id).single()
-      .then(({ data }) => setOrgPlan(data?.plan ?? 'free'))
+    supabase.from('organizations').select('plan, unlimited_until').eq('id', profile.organization_id).single()
+      .then(({ data }) => setOrg(data || { plan: 'free' }))
   }, [profile?.organization_id])
 
   useEffect(() => {
@@ -573,7 +573,7 @@ export default function Team() {
 
       {showAdd && (
         <PersonModal
-          currentUserOrgId={profile?.organization_id} orgPlan={orgPlan} activeUserCount={activePeople.length}
+          currentUserOrgId={profile?.organization_id} org={org} activeUserCount={activePeople.length}
           onClose={() => setShowAdd(false)} onSaved={loadPeople}
         />
       )}

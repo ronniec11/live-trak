@@ -3,6 +3,13 @@
 -- Run this in the Supabase SQL editor
 -- ============================================
 --
+-- SUPERSEDED: the unlimited-override half of this file (jobs.
+-- unlimited_until + its guard trigger) was replaced by
+-- supabase-migration-unlimited-access-org.sql, which moves the grant to
+-- organizations.unlimited_until instead (per-company, not per-job) — run
+-- that one too (or instead, if this file was never run). The free-plan
+-- limit numbers themselves (src/lib/planLimits.js) are unaffected.
+--
 -- Backs src/lib/planLimits.js's free-plan caps (1 user, 2 projects, 1
 -- scope per project, 5 sessions per project — enforced client-side, see
 -- that file's own header) plus one override: a specific job can be

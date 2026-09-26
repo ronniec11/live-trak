@@ -4,7 +4,7 @@ import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getCachedJobDetail } from '../lib/offlineCache'
-import { jobIsUnlimited, limitError } from '../lib/planLimits'
+import { limitError } from '../lib/planLimits'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 // A scope's default unit of measure — not every scope is measured in SF
@@ -353,13 +353,8 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    if (!jobIsUnlimited(job)) {
-      const scopeLimitMsg = limitError(job?.organizations?.plan, 'maxScopesPerJob', currentScopeCount)
-      if (scopeLimitMsg) {
-        setError(`${scopeLimitMsg} Or ask your company's Super Admin for unlimited access on this project.`)
-        return
-      }
-    }
+    const scopeLimitMsg = limitError(job?.organizations, 'maxScopesPerJob', currentScopeCount)
+    if (scopeLimitMsg) { setError(scopeLimitMsg); return }
     setLoading(true)
     try {
       // name and description end up holding the same text — the scope
@@ -976,7 +971,7 @@ export default function ProjectDetail() {
       // that modal opens — an org's directory doesn't change mid-visit, so
       // there's no reason to make "+ Add" wait on a fresh fetch every time.
       const [{ data: jobData, error: jobErr }, { data: scopesData, error: scopesErr }, { data: directoryData }] = await Promise.all([
-        supabase.from('jobs').select('*, organizations(name, plan)').eq('id', jobId).single(),
+        supabase.from('jobs').select('*, organizations(name, plan, unlimited_until)').eq('id', jobId).single(),
         supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').order('full_name'),
       ])

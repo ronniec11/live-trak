@@ -16,15 +16,16 @@ export function limitsForPlan(plan) {
   return PLAN_LIMITS[plan || 'free'] || null
 }
 
-// A job with jobs.unlimited_until in the future is exempt from its own
-// per-job limits (maxScopesPerJob/maxSessionsPerJob) regardless of the
-// org's plan — granted from the Super Admin panel (e.g. a timed trial on
-// one project) and enforced server-side too: see
-// supabase-migration-plan-limits.sql's trigger, which reverts any change
-// to this column from a non-super-admin caller. maxUsers/maxJobs are
-// org-wide, not per-job, so this never exempts those two.
-export function jobIsUnlimited(job) {
-  return !!job?.unlimited_until && new Date(job.unlimited_until) > new Date()
+// A company with organizations.unlimited_until in the future is exempt
+// from EVERY limit below (users, projects, scopes per project, sessions
+// per project) regardless of its plan — granted from the Super Admin
+// panel (e.g. a timed trial for the whole company) and enforced
+// server-side too: see supabase-migration-unlimited-access-org.sql's
+// trigger, which reverts any change to this column from a non-super-admin
+// caller. `org` here is whatever shape a call site already has on hand —
+// only .plan and .unlimited_until are read.
+export function orgIsUnlimited(org) {
+  return !!org?.unlimited_until && new Date(org.unlimited_until) > new Date()
 }
 
 const PLAN_NAME = { free: 'Free', starter: 'Starter', pro: 'Pro', business: 'Business', enterprise: 'Enterprise' }
@@ -37,15 +38,17 @@ const LIMIT_TEXT = {
 }
 
 // Returns an error message if adding ONE MORE of `kind` would exceed the
-// plan's limit, or null if it's fine to proceed. currentCount is whatever
-// already exists before the one being added — checked as currentCount >=
-// limit (not >), so hitting the cap blocks the next attempt rather than
-// letting one extra slip through first.
-export function limitError(plan, kind, currentCount) {
-  const limits = limitsForPlan(plan)
+// org's plan limit, or null if it's fine to proceed (including when the
+// org itself is unlimited — see orgIsUnlimited above). currentCount is
+// whatever already exists before the one being added — checked as
+// currentCount >= limit (not >), so hitting the cap blocks the next
+// attempt rather than letting one extra slip through first.
+export function limitError(org, kind, currentCount) {
+  if (orgIsUnlimited(org)) return null
+  const limits = limitsForPlan(org?.plan)
   if (!limits) return null
   const limit = limits[kind]
   if (limit == null || currentCount < limit) return null
-  const planName = PLAN_NAME[plan] || plan || 'Free'
-  return `Your ${planName} plan allows ${LIMIT_TEXT[kind](limit)}. Upgrade to add more.`
+  const planName = PLAN_NAME[org?.plan] || org?.plan || 'Free'
+  return `Your ${planName} plan allows ${LIMIT_TEXT[kind](limit)}. Upgrade to add more, or ask your Super Admin for unlimited access.`
 }

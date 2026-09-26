@@ -69,7 +69,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function CreateProjectModal({ organizationId, orgPlan, currentJobCount, onClose, onCreated }) {
+function CreateProjectModal({ organizationId, org, currentJobCount, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', gc_name: '', owner_name: '', address: '', status: 'active' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -79,7 +79,7 @@ function CreateProjectModal({ organizationId, orgPlan, currentJobCount, onClose,
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    const jobLimitMsg = limitError(orgPlan, 'maxJobs', currentJobCount)
+    const jobLimitMsg = limitError(org, 'maxJobs', currentJobCount)
     if (jobLimitMsg) { setError(jobLimitMsg); return }
     setLoading(true)
     try {
@@ -335,12 +335,12 @@ export default function Projects() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [showCreate, setShowCreate] = useState(false)
-  const [orgPlan, setOrgPlan] = useState(null)
+  const [org, setOrg] = useState(null)
 
   useEffect(() => {
     if (!profile?.organization_id) return
-    supabase.from('organizations').select('plan').eq('id', profile.organization_id).single()
-      .then(({ data }) => setOrgPlan(data?.plan ?? 'free'))
+    supabase.from('organizations').select('plan, unlimited_until').eq('id', profile.organization_id).single()
+      .then(({ data }) => setOrg(data || { plan: 'free' }))
   }, [profile?.organization_id])
   // Shared with each card's DownloadOfflineButton so a status/failure is
   // actually visible — alert() has been confirmed to silently do nothing on
@@ -721,7 +721,7 @@ export default function Projects() {
 
       {showCreate && (
         <CreateProjectModal
-          organizationId={profile?.organization_id} orgPlan={orgPlan} currentJobCount={jobs.length}
+          organizationId={profile?.organization_id} org={org} currentJobCount={jobs.length}
           onClose={() => setShowCreate(false)}
           onCreated={() => loadProjects()}
         />
