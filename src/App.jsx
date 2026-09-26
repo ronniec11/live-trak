@@ -13,6 +13,7 @@ import Reports from './pages/Reports'
 import Team from './pages/Team'
 import CompanyHub from './pages/CompanyHub'
 import SuperAdmin from './pages/SuperAdmin'
+import Pricing from './pages/Pricing'
 
 // A magic-link click can land on "/" or an unmatched path carrying the
 // session as a #access_token=... hash fragment (see supabase.js — implicit
@@ -43,6 +44,7 @@ export default function App() {
                 non-super-admins to /projects), same pattern as Team.jsx's own
                 role check — not a separate wrapper component. */}
             <Route path="/super-admin" element={<ProtectedRoute><SuperAdmin /></ProtectedRoute>} />
+            <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
             <Route path="/canvas/:pageId" element={<ProtectedRoute><Canvas /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
             <Route path="/" element={<RootRedirect />} />

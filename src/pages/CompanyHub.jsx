@@ -18,11 +18,15 @@ const CURRENCY_OPTIONS = ['USD', 'CAD', 'MXN']
 
 const ROLE_LABELS = { admin: 'Admin', pm: 'PM', superintendent: 'Superintendent', foreman: 'Foreman' }
 
-// Pilot-tier seat allowance — there's no billing/plan table behind this
-// yet, so it's a display-only constant matching the "Enterprise Pilot"
-// label below, not something enforced anywhere (adding a member past it
-// still works, same as every role today).
+// Display-only seat allowance, independent of the real Stripe plan now
+// backing organizations.plan/plan_status (see
+// supabase-migration-stripe-billing.sql) — none of the plans actually
+// enforce a member limit yet, so this stays a flat number rather than
+// varying per plan (adding a member past it still works today).
 const PLAN_MEMBER_LIMIT = 25
+
+const PLAN_LABELS = { free: 'Free', starter: 'Starter', pro: 'Pro', business: 'Business', enterprise: 'Enterprise' }
+const PLAN_STATUS_LABELS = { active: 'Active', cancelled: 'Cancelled', past_due: 'Past Due', trialing: 'Trialing' }
 
 function ToggleGroup({ options, value, onChange }) {
   return (
@@ -419,14 +423,53 @@ function IntegrationsCard() {
   )
 }
 
+// Subscribing (Pricing.jsx) and managing an existing subscription (the
+// Stripe customer portal) both need the caller's own org resolved
+// server-side — see api/stripe/_lib.js's getCallerProfile for why this
+// can't just trust a client-supplied id.
 function PlanUsageCard({ org, people, usage }) {
+  const navigate = useNavigate()
+  const [managing, setManaging] = useState(false)
+  const [error, setError] = useState('')
+
+  const planLabel = PLAN_LABELS[org.plan] || org.plan || 'Free'
+  const statusLabel = PLAN_STATUS_LABELS[org.plan_status] || org.plan_status || 'Active'
+  const statusClass = org.plan_status === 'active' || !org.plan_status
+    ? 'bg-accent/10 text-accent'
+    : org.plan_status === 'trialing'
+      ? 'bg-blue-500/10 text-blue-500'
+      : 'bg-red-500/10 text-red-500'
+
+  async function manageBilling() {
+    setManaging(true)
+    setError('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not signed in.')
+      const res = await fetch('/api/stripe/portal', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || data.error || 'Could not open the billing portal.')
+      window.location.href = data.url
+    } catch (err) {
+      setError(err.message)
+      setManaging(false)
+    }
+  }
+
   return (
     <div className="card">
-      <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Plan & Usage</h2>
-      <div className="space-y-3">
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Plan & Billing</h2>
+      <div className="space-y-3 mb-4">
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm text-muted shrink-0">Current Plan</span>
-          <span className="text-sm font-medium text-gray-900 dark:text-white text-right">Enterprise Pilot — {org.name}</span>
+          <span className="text-sm font-medium text-gray-900 dark:text-white text-right">{planLabel}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted shrink-0">Status</span>
+          <span className={`text-xs px-1.5 py-0.5 rounded-full ${statusClass}`}>{statusLabel}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm text-muted shrink-0">Storage Used</span>
@@ -440,6 +483,15 @@ function PlanUsageCard({ org, people, usage }) {
             {people.length} / {PLAN_MEMBER_LIMIT}
           </span>
         </div>
+      </div>
+      {error && <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
+      <div className="flex gap-2">
+        <button onClick={() => navigate('/pricing')} className="btn-secondary flex-1">Upgrade Plan</button>
+        {org.stripe_customer_id && (
+          <button onClick={manageBilling} disabled={managing} className="btn-primary flex-1">
+            {managing ? 'Opening...' : 'Manage Billing'}
+          </button>
+        )}
       </div>
     </div>
   )
