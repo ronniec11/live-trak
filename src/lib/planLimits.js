@@ -9,7 +9,7 @@
 // limitsForPlan returns null and limitError always passes — they're
 // unlimited until real per-plan limits are decided.
 export const PLAN_LIMITS = {
-  free: { maxUsers: 1, maxJobs: 2, maxScopesPerJob: 1, maxSessionsPerJob: 5 },
+  free: { maxUsers: 1, maxJobs: 2, maxScopesPerJob: 1, maxSessionsPerJob: 10 },
 }
 
 export function limitsForPlan(plan) {
