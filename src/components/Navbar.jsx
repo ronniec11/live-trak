@@ -8,7 +8,7 @@ export default function Navbar() {
   const isCanvas = location.pathname.includes('/canvas/')
 
   return (
-    <header className="h-14 bg-surface border-b border-border flex items-center px-4 gap-4 shrink-0 z-40">
+    <header className="h-14 bg-surface border-b border-border flex items-center px-2 sm:px-4 gap-2 sm:gap-4 shrink-0 z-40 overflow-x-auto">
       {/* The wordmark used to be baked into one combined icon+text SVG,
           loaded via <img> — an externally-referenced SVG image can't see
           fonts the page itself loaded (Google Fonts, here), so its text
@@ -16,17 +16,21 @@ export default function Navbar() {
           change instead of picking up the new one, unlike every other
           "Live-Trak" text in the app (plain HTML, e.g. Login.jsx's own
           title). Splitting the icon from the text fixes that at the root
-          — the text is now real HTML and always tracks the page font. */}
-      <Link to="/projects" className="flex items-center gap-2 group">
-        <img src="/live-trak-icon.svg?v=3" alt="" className="h-10 w-10 shrink-0" />
-        <span className="text-4xl font-extralight text-gray-900 dark:text-white tracking-tight">Live-Trak</span>
+          — the text is now real HTML and always tracks the page font.
+          text-4xl (unscaled) wrapped "Live-Trak" onto two lines on an
+          iPhone-width screen, blowing out the header's fixed h-14 —
+          whitespace-nowrap plus a smaller mobile size (scaling back up at
+          sm:) fixes both the wrap and the overflow at once. */}
+      <Link to="/projects" className="flex items-center gap-1.5 sm:gap-2 group shrink-0">
+        <img src="/live-trak-icon.svg?v=3" alt="" className="h-7 w-7 sm:h-10 sm:w-10 shrink-0" />
+        <span className="text-xl sm:text-4xl font-extralight text-gray-900 dark:text-white tracking-tight whitespace-nowrap">Live-Trak</span>
       </Link>
 
       {!isCanvas && (
-        <nav className="flex items-center gap-1 ml-2">
+        <nav className="flex items-center gap-0.5 sm:gap-1 ml-1 sm:ml-2 shrink-0">
           <Link
             to="/projects"
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
               location.pathname.startsWith('/projects') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
             }`}
           >
@@ -38,7 +42,7 @@ export default function Navbar() {
           {(profile?.role === 'pm' || profile?.role === 'superintendent') && (
             <Link
               to="/team"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
                 location.pathname.startsWith('/team') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
               }`}
             >
@@ -48,7 +52,7 @@ export default function Navbar() {
           {profile?.role === 'admin' && (
             <Link
               to="/hub"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
                 location.pathname.startsWith('/hub') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
               }`}
             >
@@ -60,7 +64,7 @@ export default function Navbar() {
           {profile?.is_super_admin === true && (
             <Link
               to="/super-admin"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
                 location.pathname.startsWith('/super-admin') ? 'text-accent bg-accent/10' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300 hover:bg-surface-2'
               }`}
             >
@@ -70,7 +74,7 @@ export default function Navbar() {
         </nav>
       )}
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-2 shrink-0">
         {profile && (
           <Link
             to="/profile"
