@@ -9,6 +9,7 @@ import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOpsForSession } from '../lib/offlineSync'
 import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource } from '../lib/offlineCache'
 import { resolveStorageUrl } from '../lib/storageUrls'
+import { jobIsUnlimited, limitError, limitsForPlan } from '../lib/planLimits'
 import './Canvas.css'
 
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
@@ -402,6 +403,9 @@ export default function Canvas() {
     let projectName        = ''
     let projectDescription = ''  // e.g. "Final Clean" — the scope's own name/description
     let jobName             = ''  // the scope's parent project (job) — the Sheet Report's real "Project name"
+    let jobId               = null // resolved alongside jobName below — used by the Save Session plan-limit check
+    let jobPlan             = null // this job's organization's plan — null (unlimited) until resolved
+    let jobUnlimitedUntil   = null // jobs.unlimited_until — a Super Admin-granted per-job limit bypass, see src/lib/planLimits.js
     let lunchBreakMinutes   = 0   // per-crew-member deduction applied to man-hours in the Sheet Report (see Scope Settings)
     let orgLogoUrl          = null // company logo (Company Hub) — shown top-right on the Sheet Report
     let calYear         = 0
@@ -3150,6 +3154,33 @@ export default function Canvas() {
     }
 
     async function confirmSaveSession() {
+      // Free-plan session cap is per JOB, summed across every scope/page
+      // under it — not something already tracked locally (activePage.
+      // sessions is just this one page's), so this is a fresh count each
+      // time, best-effort: a failure here (e.g. no connection) never blocks
+      // a genuine save, it just skips the check.
+      if (jobId && !jobIsUnlimited({ unlimited_until: jobUnlimitedUntil })) {
+        const limits = limitsForPlan(jobPlan)
+        if (limits) {
+          try {
+            const { data: scopeRows } = await supabase.from('projects').select('id').eq('job_id', jobId)
+            const scopeIds = (scopeRows || []).map(s => s.id)
+            let sessionCount = 0
+            if (scopeIds.length > 0) {
+              const { data: pageRows } = await supabase.from('pages').select('id').in('project_id', scopeIds)
+              const pageIds = (pageRows || []).map(p => p.id)
+              if (pageIds.length > 0) {
+                const { count } = await supabase.from('sessions').select('id', { count: 'exact', head: true }).in('page_id', pageIds)
+                sessionCount = count || 0
+              }
+            }
+            const msg = limitError(jobPlan, 'maxSessionsPerJob', sessionCount)
+            if (msg) { showToast(msg, true); return }
+          } catch (err) {
+            console.warn('[Canvas] Could not check session plan limit — allowing save:', err)
+          }
+        }
+      }
       const userName = userProfile?.full_name || user.email?.split('@')[0] || 'Session'
       const nameRaw = saveNameRef.current?.value?.trim()
       const sessionName = nameRaw || userName
@@ -5504,8 +5535,11 @@ export default function Canvas() {
       // own name (see lastReportData's `label` below) if this comes back empty.
       if (project?.job_id) {
         try {
-          const { data: jobData } = await supabase.from('jobs').select('name').eq('id', project.job_id).single()
+          const { data: jobData } = await supabase.from('jobs').select('name, unlimited_until, organizations(plan)').eq('id', project.job_id).single()
           jobName = jobData?.name || ''
+          jobId = project.job_id
+          jobUnlimitedUntil = jobData?.unlimited_until || null
+          jobPlan = jobData?.organizations?.plan || null
         } catch (err) {
           console.warn('[Canvas] Could not load parent job name for Sheet Report:', err)
         }

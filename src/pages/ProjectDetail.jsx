@@ -4,6 +4,7 @@ import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getCachedJobDetail } from '../lib/offlineCache'
+import { jobIsUnlimited, limitError } from '../lib/planLimits'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 // A scope's default unit of measure — not every scope is measured in SF
@@ -342,7 +343,7 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
   )
 }
 
-function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated }) {
+function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberIds, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', status: 'active', uom: 'SF', daily_sf_target: '', total_sf_target: '', cost: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -352,6 +353,13 @@ function AddScopeModal({ jobId, userId, existingMemberIds, onClose, onCreated })
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    if (!jobIsUnlimited(job)) {
+      const scopeLimitMsg = limitError(job?.organizations?.plan, 'maxScopesPerJob', currentScopeCount)
+      if (scopeLimitMsg) {
+        setError(`${scopeLimitMsg} Or ask your company's Super Admin for unlimited access on this project.`)
+        return
+      }
+    }
     setLoading(true)
     try {
       // name and description end up holding the same text — the scope
@@ -968,7 +976,7 @@ export default function ProjectDetail() {
       // that modal opens — an org's directory doesn't change mid-visit, so
       // there's no reason to make "+ Add" wait on a fresh fetch every time.
       const [{ data: jobData, error: jobErr }, { data: scopesData, error: scopesErr }, { data: directoryData }] = await Promise.all([
-        supabase.from('jobs').select('*, organizations(name)').eq('id', jobId).single(),
+        supabase.from('jobs').select('*, organizations(name, plan)').eq('id', jobId).single(),
         supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').order('full_name'),
       ])
@@ -1400,6 +1408,8 @@ export default function ProjectDetail() {
       {showAddScope && (
         <AddScopeModal
           jobId={jobId}
+          job={job}
+          currentScopeCount={scopes.length}
           userId={user.id}
           existingMemberIds={members.map(m => m.id)}
           onClose={() => setShowAddScope(false)}

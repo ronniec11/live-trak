@@ -5,6 +5,7 @@ import OfflineSyncButton from '../components/OfflineSyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { downloadJobForOffline, isJobCached, getCachedJobsList } from '../lib/offlineCache'
+import { limitError } from '../lib/planLimits'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 
@@ -68,7 +69,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function CreateProjectModal({ organizationId, onClose, onCreated }) {
+function CreateProjectModal({ organizationId, orgPlan, currentJobCount, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', gc_name: '', owner_name: '', address: '', status: 'active' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -78,6 +79,8 @@ function CreateProjectModal({ organizationId, onClose, onCreated }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    const jobLimitMsg = limitError(orgPlan, 'maxJobs', currentJobCount)
+    if (jobLimitMsg) { setError(jobLimitMsg); return }
     setLoading(true)
     try {
       const { data: job, error: jErr } = await supabase
@@ -332,6 +335,13 @@ export default function Projects() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [showCreate, setShowCreate] = useState(false)
+  const [orgPlan, setOrgPlan] = useState(null)
+
+  useEffect(() => {
+    if (!profile?.organization_id) return
+    supabase.from('organizations').select('plan').eq('id', profile.organization_id).single()
+      .then(({ data }) => setOrgPlan(data?.plan ?? 'free'))
+  }, [profile?.organization_id])
   // Shared with each card's DownloadOfflineButton so a status/failure is
   // actually visible — alert() has been confirmed to silently do nothing on
   // an iPad's home-screen (standalone) install (see Scopes.jsx, which this
@@ -711,7 +721,7 @@ export default function Projects() {
 
       {showCreate && (
         <CreateProjectModal
-          organizationId={profile?.organization_id}
+          organizationId={profile?.organization_id} orgPlan={orgPlan} currentJobCount={jobs.length}
           onClose={() => setShowCreate(false)}
           onCreated={() => loadProjects()}
         />

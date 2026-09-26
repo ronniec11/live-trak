@@ -3,7 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { jobIsUnlimited } from '../lib/planLimits'
 
+// NOTE: Also run supabase-migration-plan-limits.sql — it adds
+// jobs.unlimited_until (this page's "Grant unlimited access" controls, in
+// the company View modal) and the jobs UPDATE policy that lets a super
+// admin actually set it.
+//
 // NOTE: Run supabase-migration-super-admin.sql before using this page — it
 // adds profiles.is_super_admin, organizations.status, and the additive RLS
 // policies that let an is_super_admin account read/write across every
@@ -56,7 +62,7 @@ function ModalShell({ title, onClose, children, wide = false }) {
 }
 
 // ── View company ──────────────────────────────────────────────────────────
-function CompanyViewModal({ org, users, jobs, sfByOrg, onClose }) {
+function CompanyViewModal({ org, users, jobs, sfByOrg, onClose, onGrantUnlimited }) {
   const orgUsers = users.filter(u => u.organization_id === org.id)
   const orgJobs = jobs.filter(j => j.organization_id === org.id)
   return (
@@ -78,14 +84,35 @@ function CompanyViewModal({ org, users, jobs, sfByOrg, onClose }) {
       </div>
       <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Jobs</h3>
       <div className="space-y-1">
-        {orgJobs.map(j => (
-          <div key={j.id} className="flex items-center justify-between text-sm py-1">
-            <span className="text-gray-800 dark:text-gray-200 truncate">{j.name}</span>
-            <span className="text-xs text-muted capitalize shrink-0">{j.status}</span>
-          </div>
-        ))}
+        {orgJobs.map(j => {
+          const unlimited = jobIsUnlimited(j)
+          return (
+            <div key={j.id} className="flex items-center justify-between gap-2 text-sm py-1.5 border-b border-border/50 last:border-0">
+              <div className="min-w-0">
+                <p className="text-gray-800 dark:text-gray-200 truncate">{j.name}</p>
+                {unlimited && (
+                  <p className="text-xs text-accent">Unlimited access until {new Date(j.unlimited_until).toLocaleDateString()}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-xs text-muted capitalize">{j.status}</span>
+                {unlimited ? (
+                  <button onClick={() => onGrantUnlimited(j, null)} className="btn-ghost py-1 px-2 text-xs text-red-500">Clear</button>
+                ) : (
+                  <>
+                    <button onClick={() => onGrantUnlimited(j, 30)} className="btn-ghost py-1 px-2 text-xs">+30d</button>
+                    <button onClick={() => onGrantUnlimited(j, 90)} className="btn-ghost py-1 px-2 text-xs">+90d</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
         {orgJobs.length === 0 && <p className="text-sm text-muted">No jobs yet.</p>}
       </div>
+      <p className="text-xs text-muted mt-2">
+        Unlimited access exempts this one job from its company's plan limits (scopes/sessions per project) for the period granted — the company's user/project caps are unaffected.
+      </p>
       <button onClick={onClose} className="btn-secondary w-full mt-5">Close</button>
     </ModalShell>
   )
@@ -308,6 +335,17 @@ export default function SuperAdmin() {
     loadAll()
   }
 
+  async function grantUnlimited(job, days) {
+    const until = days == null ? null : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+    const { data, error } = await supabase.from('jobs').update({ unlimited_until: until }).eq('id', job.id).select().single()
+    if (error) { showToast(error.message); return }
+    if (!data) { showToast('Nothing changed — check the jobs_update_super_admin RLS policy (see supabase-migration-plan-limits.sql).'); return }
+    showToast(days == null
+      ? `Cleared unlimited access for ${job.name}.`
+      : `${job.name} now has unlimited access until ${new Date(until).toLocaleDateString()}.`)
+    loadAll()
+  }
+
   async function toggleActive(user) {
     const next = !(user.active !== false)
     if (!confirm(next
@@ -475,7 +513,7 @@ export default function SuperAdmin() {
       </div>
 
       {viewOrg && (
-        <CompanyViewModal org={viewOrg} users={users} jobs={jobs} sfByOrg={sfByOrg} onClose={() => setViewOrg(null)} />
+        <CompanyViewModal org={viewOrg} users={users} jobs={jobs} sfByOrg={sfByOrg} onClose={() => setViewOrg(null)} onGrantUnlimited={grantUnlimited} />
       )}
       {adminOrg && (
         <ChangeAdminModal
