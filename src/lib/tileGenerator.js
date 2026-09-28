@@ -9,11 +9,21 @@ import { supabase } from './supabase'
 // paint layers, and photos are what needed locking down.
 const BUCKET = 'floor-plan-tiles'
 const TILE_SIZE = 256
-// Largest single render/decode allowed per canvas — same ceiling used
-// elsewhere in the app for iPad memory safety (Canvas.jsx MAX_DIM). Any
-// pyramid level bigger than this gets rendered in CHUNK-sized pieces
-// instead of one shot, then sliced into TILE_SIZE output tiles.
+// Default largest single render/decode allowed per canvas — same ceiling
+// used elsewhere in the app for iPad memory safety (Canvas.jsx MAX_DIM).
+// generatePdfTiles accepts a bigger chunkSize override for desktop callers
+// (see its own comment) — this default stays put as the safe floor for
+// anything still running on an iPad.
 const CHUNK = 2048
+// Cross-browser-safe ceiling for a single canvas axis. generatePdfTiles
+// assembles one canvas at the full maxLevel resolution (see its comment) —
+// this guards against ever trying to allocate something bigger than any
+// real browser will actually give a canvas, rather than silently failing.
+const MAX_CANVAS_DIM = 16384
+// Generous — a chunk render on a genuinely dense real-world drawing has
+// been observed taking minutes on its own (see generatePdfTiles' comment);
+// this just needs to not give up before a slow-but-working render finishes.
+const RENDER_TIMEOUT_MS = 600000
 // Base render quality for the sharpest (max) pyramid level — matches the
 // desktop RENDER_SCALE used elsewhere in the app (Canvas.jsx) so tiles look
 // as sharp as today's desktop floor plan rendering.
@@ -126,16 +136,27 @@ function queueTileSlices(jobs, srcCanvas, chunkX, chunkY, levelW, levelH, pathPr
 }
 
 /**
- * Generates a tile pyramid from a PDF's first page. Renders each level in
- * CHUNK-sized pieces (memory-bounded — never allocates a canvas bigger than
- * CHUNK×CHUNK, so this is safe to run on iPad) rather than one render call
- * per final TILE_SIZE tile: for a large sheet that's the difference between
- * ~2000 individual pdf.js render passes and ~50, since each render replays
- * the page's full operator list regardless of how small the output canvas
- * is — tile-per-render was measured to make generation impractically slow.
- * Output tiles are sliced from each rendered chunk via cheap canvas copies.
+ * Generates a tile pyramid from a PDF's first page.
+ *
+ * Renders the page only ONCE per region, at the sharpest (max) pyramid
+ * level, in chunkSize-sized pieces (memory-bounded — never allocates a
+ * canvas bigger than chunkSize×chunkSize). Every LOWER zoom level is then
+ * derived by cheap canvas downsampling from that single assembled image
+ * (the same technique generateRasterTiles already uses for plain image
+ * uploads) instead of calling pdf.js's page.render() again at every level.
+ *
+ * That matters because each render() call replays the page's FULL vector
+ * operator list — every line, fill, and hatch — regardless of how small the
+ * output canvas is. For an ordinary sheet that's cheap enough not to notice.
+ * For a genuinely dense real-world drawing, that per-call cost dominates:
+ * confirmed in practice taking several minutes even for a tiny, low-res
+ * pyramid level, so the old one-render-call-per-(level,chunk) approach
+ * added up to hours across a 7-8 level pyramid. Rendering the PDF only at
+ * its top level and downsampling the rest cuts that to just the top
+ * level's chunks — same final sharpness (maxLevel is untouched), a
+ * fraction of the render() calls.
  */
-export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'png', onProgress } = {}) {
+export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'png', onProgress, chunkSize = CHUNK } = {}) {
   console.log('[tileGenerator] Starting PDF tile generation:', pdfUrl)
   const pdfjsLib = await import('pdfjs-dist')
   const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
@@ -150,77 +171,110 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   const pathPrefix = `${projectId}/tiles/${pageId}`
   console.log('[tileGenerator] PDF page size at TILE_BASE_SCALE:', fullW, 'x', fullH, 'levels:', minLevel, '-', maxLevel)
 
-  const jobs = []
+  if (fullW > MAX_CANVAS_DIM || fullH > MAX_CANVAS_DIM) {
+    throw new Error(`This sheet renders too large to tile at full quality (${fullW}x${fullH}px at ${TILE_BASE_SCALE}x scale) — it exceeds what a browser canvas can hold in one piece.`)
+  }
+
+  // Assembled once at maxLevel resolution, then reused as the source for
+  // every lower level below (see levelCanvases). Sized to the full page
+  // (not chunkSize) — chunking below only bounds each individual render()
+  // call/canvas, not this accumulator.
+  const maxLevelCanvas = document.createElement('canvas')
+  maxLevelCanvas.width = fullW
+  maxLevelCanvas.height = fullH
+  const maxLevelCtx = maxLevelCanvas.getContext('2d')
+
+  const chunkCols = Math.ceil(fullW / chunkSize)
+  const chunkRows = Math.ceil(fullH / chunkSize)
+  const renderJobs = []
   let chunkCount = 0
-  for (let level = minLevel; level <= maxLevel; level++) {
-    const { w: lw, h: lh } = levelDims(fullW, fullH, maxLevel, level)
-    const levelScale = TILE_BASE_SCALE / 2 ** (maxLevel - level)
-    const levelViewport = page.getViewport({ scale: levelScale })
-    const chunkCols = Math.ceil(lw / CHUNK)
-    const chunkRows = Math.ceil(lh / CHUNK)
-    for (let cr = 0; cr < chunkRows; cr++) {
-      for (let cc = 0; cc < chunkCols; cc++) {
-        const chunkX = cc * CHUNK, chunkY = cr * CHUNK
-        const cw = Math.min(CHUNK, lw - chunkX)
-        const ch = Math.min(CHUNK, lh - chunkY)
-        const chunkIndex = chunkCount
-        chunkCount++
-        jobs.push(async () => {
-          const t0 = performance.now()
-          if (chunkIndex === 0) console.log('[tileGenerator] Rendering chunk 0 (level', level, ') — first render on this page, can take a while to parse...')
-          const chunkCanvas = document.createElement('canvas')
-          chunkCanvas.width = cw; chunkCanvas.height = ch
-          // The very first render() call on a page is the expensive one — it's
-          // what parses and caches the page's whole operator list; every
-          // later render (any level/chunk) reuses that cache and is much
-          // faster. 30s wasn't enough for a genuinely complex real-world
-          // drawing's first pass, then 120s wasn't either (confirmed hitting
-          // the wall repeatedly on this same large/detailed PDF, both on the
-          // cold-start chunk and on a full-size chunk at the highest pyramid
-          // level) — 300s gives real headroom on slower hardware without
-          // letting a truly hung render block generation forever.
-          await withTimeout(
-            page.render({
-              canvasContext: chunkCanvas.getContext('2d'),
-              viewport: levelViewport,
-              transform: [1, 0, 0, 1, -chunkX, -chunkY],
-            }).promise,
-            300000,
-            `Render of level ${level} chunk ${chunkIndex}`,
-          )
-          console.log('[tileGenerator] chunk', chunkIndex, 'level', level, 'rendered in', Math.round(performance.now() - t0), 'ms — uploading tiles...')
-          const tileJobs = []
-          queueTileSlices(tileJobs, chunkCanvas, chunkX, chunkY, lw, lh, pathPrefix, level, format)
-          await runPool(tileJobs, 6)
-          console.log('[tileGenerator] chunk', chunkIndex, 'level', level, 'fully done in', Math.round(performance.now() - t0), 'ms (', tileJobs.length, 'tiles )')
-        })
-      }
+  for (let cr = 0; cr < chunkRows; cr++) {
+    for (let cc = 0; cc < chunkCols; cc++) {
+      const chunkX = cc * chunkSize, chunkY = cr * chunkSize
+      const cw = Math.min(chunkSize, fullW - chunkX)
+      const ch = Math.min(chunkSize, fullH - chunkY)
+      const chunkIndex = chunkCount
+      chunkCount++
+      renderJobs.push(async () => {
+        const t0 = performance.now()
+        if (chunkIndex === 0) console.log('[tileGenerator] Rendering chunk 0 — first render on this page, can take a while to parse a dense drawing...')
+        const chunkCanvas = document.createElement('canvas')
+        chunkCanvas.width = cw; chunkCanvas.height = ch
+        // 30s wasn't enough for a genuinely complex real-world drawing's
+        // first render, then 120s wasn't either (confirmed hitting the wall
+        // repeatedly on this same large/detailed PDF) — RENDER_TIMEOUT_MS
+        // gives real headroom on slower hardware without letting a truly
+        // hung render block generation forever.
+        await withTimeout(
+          page.render({
+            canvasContext: chunkCanvas.getContext('2d'),
+            viewport: baseViewport,
+            transform: [1, 0, 0, 1, -chunkX, -chunkY],
+          }).promise,
+          RENDER_TIMEOUT_MS,
+          `Render of chunk ${chunkIndex}`,
+        )
+        maxLevelCtx.drawImage(chunkCanvas, chunkX, chunkY)
+        console.log('[tileGenerator] chunk', chunkIndex, '/', chunkCount, 'rendered in', Math.round(performance.now() - t0), 'ms')
+      })
     }
   }
-  console.log('[tileGenerator] Rendering', chunkCount, 'chunk(s) across', maxLevel - minLevel + 1, 'levels')
+  console.log('[tileGenerator] Rendering', chunkCount, 'chunk(s) at full', fullW, 'x', fullH, 'resolution (chunkSize', chunkSize, ')')
 
+  // Tile count across every level, computed up front so progress can span
+  // both the (slow) render phase and the (fast) slice/upload phase in one
+  // consistent 0-100% scale instead of jumping/resetting between them.
+  let totalTiles = 0
+  for (let level = minLevel; level <= maxLevel; level++) {
+    const { w, h } = levelDims(fullW, fullH, maxLevel, level)
+    totalTiles += Math.ceil(w / TILE_SIZE) * Math.ceil(h / TILE_SIZE)
+  }
+  const totalUnits = chunkCount + totalTiles
   let done = 0
-  // Sequential (concurrency 1) on purpose: level 8 (the smallest, ~189x135px)
-  // hung indefinitely when run concurrently with level 9's render — both call
-  // page.render() on the same shared PDFPageProxy with very different
-  // viewport scales/transforms, and pdf.js's shared operator-list state
-  // across concurrent render tasks on one page appears not to handle that
-  // combination reliably. One render at a time removes the race entirely;
-  // it's slower but each chunk render is fast on its own (seconds, not the
-  // page-complexity-dependent slowness the old per-final-tile design had).
-  const errors = await runPool(jobs, 1, () => {
+
+  // Sequential (concurrency 1) on purpose: pdf.js's shared operator-list
+  // state across concurrent render() tasks on one page has been observed
+  // hanging when two calls with different transforms race each other. One
+  // render at a time removes that race entirely.
+  const renderErrors = await runPool(renderJobs, 1, () => {
     done++
     console.log('[tileGenerator] Rendered chunk', done, '/', chunkCount)
-    onProgress?.(done, chunkCount)
+    onProgress?.(done, totalUnits)
   })
   // Every chunk failing means nothing usable got produced at all — a real
-  // failure, not the partial-pyramid case below. A handful of chunks
-  // failing (this PDF's own worst case: an especially slow first-render
-  // parse timing out at one small level) still leaves a mostly-complete
-  // pyramid; OSD falls back to the nearest available level for the few
-  // gaps rather than failing to display the sheet at all.
-  if (errors.length === chunkCount) throw errors[0]
-  if (errors.length) console.warn('[tileGenerator]', errors.length, '/', chunkCount, 'chunk(s) failed — pyramid has some gaps but is otherwise usable.')
+  // failure. A handful of chunks failing still leaves a mostly-complete
+  // maxLevel (and so every level below it) with a few gaps; OSD falls back
+  // to the nearest available level/tile rather than failing to display the
+  // sheet at all.
+  if (renderErrors.length === chunkCount) throw renderErrors[0]
+  if (renderErrors.length) console.warn('[tileGenerator]', renderErrors.length, '/', chunkCount, 'chunk(s) failed to render — pyramid will have gaps in that region at every level.')
+
+  // Build every lower pyramid level by halving the level above — sharper
+  // than re-downsampling from the original each time (same technique as
+  // generateRasterTiles), and never touches the PDF/pdf.js again.
+  const levelCanvases = { [maxLevel]: maxLevelCanvas }
+  for (let level = maxLevel - 1; level >= minLevel; level--) {
+    const { w: lw, h: lh } = levelDims(fullW, fullH, maxLevel, level)
+    const prev = levelCanvases[level + 1]
+    const c = document.createElement('canvas')
+    c.width = lw; c.height = lh
+    c.getContext('2d').drawImage(prev, 0, 0, prev.width, prev.height, 0, 0, lw, lh)
+    levelCanvases[level] = c
+  }
+
+  const tileJobs = []
+  for (let level = minLevel; level <= maxLevel; level++) {
+    const src = levelCanvases[level]
+    queueTileSlices(tileJobs, src, 0, 0, src.width, src.height, pathPrefix, level, format)
+  }
+  console.log('[tileGenerator] Slicing/uploading', tileJobs.length, 'tile(s) across', maxLevel - minLevel + 1, 'levels')
+
+  const uploadErrors = await runPool(tileJobs, 6, () => {
+    done++
+    onProgress?.(done, totalUnits)
+  })
+  if (uploadErrors.length === tileJobs.length) throw uploadErrors[0]
+  if (uploadErrors.length) console.warn('[tileGenerator]', uploadErrors.length, '/', tileJobs.length, 'tile(s) failed to upload — pyramid has some gaps but is otherwise usable.')
 
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(pathPrefix)
   console.log('[tileGenerator] PDF tiling complete:', data.publicUrl)

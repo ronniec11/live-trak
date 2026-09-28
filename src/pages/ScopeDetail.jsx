@@ -691,7 +691,15 @@ export default function ScopeDetail() {
       if (!url) throw new Error('Could not access the source floor plan file to tile it.')
       const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
       const onProgress = (done, total) => setTilingProgress(total ? Math.round((done / total) * 100) : 0)
-      const opts = { projectId, pageId: page.id, onProgress }
+      // generatePdfTiles' default chunkSize is deliberately small (iPad-safe
+      // memory ceiling) — an iPad doing this same generation needs that
+      // ceiling, but a desktop browser doing it has far more RAM to spare,
+      // so a bigger chunkSize here cuts the number of separate pdf.js
+      // render() calls needed for a dense sheet (each one costly — see
+      // generatePdfTiles' own comment) without changing TILE_BASE_SCALE or
+      // final tile resolution/quality at all.
+      const isIPad = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+      const opts = { projectId, pageId: page.id, onProgress, ...(isIPad ? {} : { chunkSize: 4096 }) }
       const tile_meta = isPdf
         ? await generatePdfTiles(url, opts)
         : await generateRasterTiles(url, opts)
