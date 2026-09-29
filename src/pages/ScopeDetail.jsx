@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import OfflineSyncButton from '../components/OfflineSyncButton'
+import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
@@ -510,307 +511,6 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
   )
 }
 
-// Consolidates the fields that used to be edited piecemeal via pencil
-// icons scattered across the header and both Progress cards — Contract
-// Cost especially, which was showing (and separately editable) in two
-// places at once. Name/status/targets still keep their own quick-edit
-// affordances elsewhere on the page too; this is just the one place
-// Contract Cost lives now. canEditCost mirrors the page's own
-// canEditFinancials — Superintendent can open this (canManage) and see
-// cost, same as everywhere else on this page, but not change it.
-function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
-  const { profile } = useAuth()
-  const [name, setName] = useState(project.name || '')
-  const [status, setStatus] = useState(project.status || 'active')
-  const [targetUom, setTargetUom] = useState(project.target_uom || 'sf')
-  const [dailyTarget, setDailyTarget] = useState(project.daily_sf_target ?? '')
-  const [totalTarget, setTotalTarget] = useState(project.total_sf_target ?? '')
-  const [dailyLfTarget, setDailyLfTarget] = useState(project.daily_lf_target ?? '')
-  const [totalLfTarget, setTotalLfTarget] = useState(project.total_lf_target ?? '')
-  const [cost, setCost] = useState(project.cost ?? '')
-  const [lunchBreak, setLunchBreak] = useState(project.lunch_break_minutes ?? '')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  // Tags: fetched once from the org's shared list (Company Hub) plus this
-  // scope's current selections, so picking one is a dropdown rather than
-  // free typing — see supabase-migration-tags-production-rates.sql.
-  const [allTags, setAllTags] = useState([])
-  const [selectedTagIds, setSelectedTagIds] = useState([])
-  const [initialTagIds, setInitialTagIds] = useState([])
-  const [tagQuery, setTagQuery] = useState('')
-  const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
-  const [creatingTag, setCreatingTag] = useState(false)
-  const [tagsError, setTagsError] = useState('')
-
-  useEffect(() => {
-    if (!profile?.organization_id) return
-    supabase.from('tags').select('*').order('name')
-      .then(({ data, error: err }) => { if (!err) setAllTags(data || []) })
-    supabase.from('project_tags').select('tag_id').eq('project_id', project.id)
-      .then(({ data, error: err }) => {
-        if (err) { setTagsError('Could not load this scope\'s tags — run supabase-migration-tags-production-rates.sql if you haven\'t yet.'); return }
-        const ids = (data || []).map(r => r.tag_id)
-        setSelectedTagIds(ids)
-        setInitialTagIds(ids)
-      })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.organization_id, project.id])
-
-  const selectedTags = selectedTagIds.map(id => allTags.find(t => t.id === id)).filter(Boolean)
-  // A tag only drives the target if it actually has a rate for the unit
-  // this scope is tracked in — a purely descriptive tag (no rate set) or
-  // one whose rate is in the other unit is just a label here.
-  const rateTagsForUom = selectedTags.filter(t => t.uom === targetUom && (t.rate_per_day != null || t.rate_per_man_hour != null))
-  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
-  const tagRateConflict = rateTagsForUom.length > 1
-
-  const matchingTags = allTags.filter(t =>
-    !selectedTagIds.includes(t.id) && t.name.toLowerCase().includes(tagQuery.trim().toLowerCase())
-  )
-  const exactMatch = allTags.some(t => t.name.toLowerCase() === tagQuery.trim().toLowerCase())
-
-  function addTag(tagId) {
-    setSelectedTagIds(ids => [...ids, tagId])
-    setTagQuery('')
-    setTagDropdownOpen(false)
-  }
-
-  function removeTag(tagId) {
-    setSelectedTagIds(ids => ids.filter(id => id !== tagId))
-  }
-
-  async function createAndAddTag() {
-    const trimmed = tagQuery.trim()
-    if (!trimmed || !profile?.organization_id) return
-    setCreatingTag(true)
-    setTagsError('')
-    try {
-      const { data, error: err } = await supabase.from('tags')
-        .insert({ organization_id: profile.organization_id, name: trimmed, uom: targetUom })
-        .select().single()
-      if (err) throw err
-      setAllTags(t => [...t, data])
-      addTag(data.id)
-    } catch (err) {
-      setTagsError(err.code === '23505' ? 'A tag with this name already exists.' : (err.message || 'Failed to create tag.'))
-    } finally {
-      setCreatingTag(false)
-    }
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    const trimmedName = name.trim()
-    if (!trimmedName) return
-    setSaving(true)
-    setError('')
-    try {
-      const patch = {
-        name: trimmedName,
-        status,
-        target_uom: targetUom,
-        daily_sf_target: parseFloat(dailyTarget) || 0,
-        total_sf_target: parseFloat(totalTarget) || 0,
-        daily_lf_target: parseFloat(dailyLfTarget) || 0,
-        total_lf_target: parseFloat(totalLfTarget) || 0,
-        lunch_break_minutes: lunchBreak === '' ? null : (parseFloat(lunchBreak) || null),
-      }
-      if (canEditCost) patch.cost = cost === '' ? null : (parseFloat(cost) || null)
-      const { data, error: sErr } = await supabase.from('projects').update(patch).eq('id', project.id).select().single()
-      if (sErr) throw sErr
-      if (!data) throw new Error('Nothing was saved — you may not have permission to edit this scope.')
-
-      const addedIds = selectedTagIds.filter(id => !initialTagIds.includes(id))
-      const removedIds = initialTagIds.filter(id => !selectedTagIds.includes(id))
-      if (addedIds.length > 0) {
-        const { error: insErr } = await supabase.from('project_tags')
-          .insert(addedIds.map(tag_id => ({ project_id: project.id, tag_id })))
-        if (insErr) throw insErr
-      }
-      if (removedIds.length > 0) {
-        const { error: delErr } = await supabase.from('project_tags')
-          .delete().eq('project_id', project.id).in('tag_id', removedIds)
-        if (delErr) throw delErr
-      }
-
-      onSaved({ ...patch, tags: selectedTags })
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      {/* Rounding and scrolling on separate layers (see ProfileModal.jsx's
-          copy of this comment) — this form grew past a screen's height once
-          tags/targets were added, so it needed to actually scroll. */}
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="p-6 overflow-y-auto min-h-0">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
-          <button onClick={onClose} className="btn-ghost p-1.5">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="label">Scope Name *</label>
-            <input className="input" value={name} onChange={e => setName(e.target.value)} required />
-          </div>
-          <div>
-            <label className="label">Status</label>
-            <select className="input capitalize" value={status} onChange={e => setStatus(e.target.value)}>
-              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="label">Tags</label>
-            <p className="text-xs text-muted mb-1.5">
-              Tag this scope with a line item from Company Hub to compare its production against your company's standard rate.
-            </p>
-            {selectedTags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {selectedTags.map(t => (
-                  <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
-                    {t.name}
-                    <button type="button" onClick={() => removeTag(t.id)} className="hover:text-red-500">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="relative">
-              <input
-                className="input" placeholder="Search or create a tag..."
-                value={tagQuery}
-                onChange={e => { setTagQuery(e.target.value); setTagDropdownOpen(true) }}
-                onFocus={() => setTagDropdownOpen(true)}
-                onBlur={() => setTimeout(() => setTagDropdownOpen(false), 150)}
-              />
-              {tagDropdownOpen && tagQuery.trim() && (
-                <div className="absolute z-10 top-full mt-1 w-full bg-surface border border-border rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                  {matchingTags.map(t => (
-                    <button
-                      key={t.id} type="button" onMouseDown={() => addTag(t.id)}
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-surface-2 flex items-center justify-between"
-                    >
-                      <span>{t.name}</span>
-                      <span className="text-xs text-muted uppercase">{t.uom}</span>
-                    </button>
-                  ))}
-                  {!exactMatch && (
-                    <button
-                      type="button" onMouseDown={createAndAddTag} disabled={creatingTag}
-                      className="w-full text-left px-3 py-2 text-sm text-accent hover:bg-surface-2"
-                    >
-                      {creatingTag ? 'Creating...' : `+ Create "${tagQuery.trim()}"`}
-                    </button>
-                  )}
-                  {matchingTags.length === 0 && exactMatch && (
-                    <div className="px-3 py-2 text-sm text-muted">Already added.</div>
-                  )}
-                </div>
-              )}
-            </div>
-            {tagsError && <p className="text-xs text-red-500 mt-1.5">{tagsError}</p>}
-          </div>
-
-          <div>
-            <label className="label">Target Unit</label>
-            <div className="flex gap-2">
-              {['sf', 'lf'].map(u => (
-                <button
-                  key={u} type="button" onClick={() => setTargetUom(u)}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                    targetUom === u ? 'bg-accent/10 text-accent border-accent/30' : 'bg-surface-2 text-muted hover:text-gray-700 dark:hover:text-gray-300 border-border'
-                  }`}
-                >
-                  {u.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {activeRateTag && (
-            <div className="bg-accent/10 border border-accent/30 rounded-lg px-3 py-2 text-accent text-sm">
-              Following "{activeRateTag.name}"'s rate:{' '}
-              {activeRateTag.rate_per_day != null && <>{activeRateTag.rate_per_day.toLocaleString()} {targetUom.toUpperCase()}/day</>}
-              {activeRateTag.rate_per_day != null && activeRateTag.rate_per_man_hour != null && ' · '}
-              {activeRateTag.rate_per_man_hour != null && <>{activeRateTag.rate_per_man_hour.toLocaleString()} {targetUom.toUpperCase()}/man-hr</>}
-              . Leave the targets below blank to use it, or set a number to override just this scope.
-            </div>
-          )}
-          {tagRateConflict && (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-400 text-sm">
-              This scope has more than one {targetUom.toUpperCase()} tag with a rate ({rateTagsForUom.map(t => t.name).join(', ')}) — remove one, or set a manual target below to make it explicit.
-            </div>
-          )}
-
-          {targetUom === 'sf' ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Daily SF Target</label>
-                <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder={activeRateTag?.rate_per_day ? `${activeRateTag.rate_per_day} (from tag)` : '5000'} />
-              </div>
-              <div>
-                <label className="label">Total SF Target</label>
-                <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Daily LF Target</label>
-                <input className="input" type="number" min="0" value={dailyLfTarget} onChange={e => setDailyLfTarget(e.target.value)} placeholder={activeRateTag?.rate_per_day ? `${activeRateTag.rate_per_day} (from tag)` : '500'} />
-              </div>
-              <div>
-                <label className="label">Total LF Target</label>
-                <input className="input" type="number" min="0" value={totalLfTarget} onChange={e => setTotalLfTarget(e.target.value)} placeholder="e.g. 25000" />
-              </div>
-            </div>
-          )}
-          <div>
-            <label className="label">Contract Cost ($)</label>
-            <input
-              className="input" type="number" min="0" value={cost}
-              onChange={e => setCost(e.target.value)}
-              disabled={!canEditCost}
-              placeholder="e.g. 500000"
-            />
-          </div>
-          <div>
-            {/* Deducted per crew member from a session's logged hours when
-                the Sheet Report computes man-hours (Total Hours column and
-                SF/Man-Hour) — the session itself still keeps the raw crew
-                size and hours exactly as entered. */}
-            <label className="label">Lunch Break (minutes)</label>
-            <input className="input" type="number" min="0" value={lunchBreak} onChange={e => setLunchBreak(e.target.value)} placeholder="e.g. 30" />
-          </div>
-
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
-          )}
-
-          <div className="flex gap-2 pt-1">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving || !name.trim()} className="btn-primary flex-1">
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 export default function ScopeDetail() {
   const { projectId } = useParams()
@@ -1085,8 +785,8 @@ export default function ScopeDetail() {
       setProject(proj)
       setPages(pgs || [])
       setMembers((mems || []).map(m => m.profiles))
-      setTargetInput((proj?.target_uom === 'lf' ? proj?.daily_lf_target : proj?.daily_sf_target) || 0)
-      setTotalTargetInput((proj?.target_uom === 'lf' ? proj?.total_lf_target : proj?.total_sf_target) || 0)
+      setTargetInput(proj?.daily_sf_target || 0)
+      setTotalTargetInput(proj?.total_sf_target || 0)
       if (pgs && pgs.length > 0) setActivePage(pgs[0])
       setOfflineMode(false)
       setNotCachedOffline(false)
@@ -1130,20 +830,28 @@ export default function ScopeDetail() {
 
   const today = new Date().toLocaleDateString('en-CA')
 
-  // Which unit this scope is actually tracked in (Scope Settings' Target
-  // Unit toggle) — sessions already compute both sf and lf depending on
-  // which tools were used, so this just picks which one counts here.
-  const targetUom = project?.target_uom || 'sf'
-  const unitLabel = targetUom.toUpperCase()
-  const sessionValue = s => parseFloat(targetUom === 'lf' ? s.lf : s.sf) || 0
+  // Which unit this scope is actually tracked in (Scope Settings' Unit of
+  // Measure) — a pre-existing field (SF/LF/Count) that ProjectDetail.jsx's
+  // scope cards already used for the exact same purpose, so this matches
+  // that instead of introducing a second, separate unit concept. Sessions
+  // already compute sf/lf/count_data depending on which tools were used;
+  // this just picks which one counts here, same three-way branch
+  // ProjectDetail.jsx's own per-scope totals use.
+  const unitLabel = project?.uom || 'SF'
+  const uomLower = unitLabel.toLowerCase()
+  const sessionValue = s => uomLower === 'lf' ? (parseFloat(s.lf) || 0)
+    : uomLower === 'count' ? (s.count_data?.length ?? s.count_data?.markers?.length ?? 0)
+    : (parseFloat(s.sf) || 0)
   // Only a tag with a rate for THIS unit can drive the daily target, and
   // only if there's exactly one such tag — see ScopeSettingsModal's
   // tagRateConflict for why more than one is left ambiguous rather than
-  // guessed at here.
-  const rateTagsForUom = (project?.tags || []).filter(t => t.uom === targetUom && (t.rate_per_day != null || t.rate_per_man_hour != null))
+  // guessed at here. Tags only ever carry sf/lf rates, so a Count scope
+  // never has one (rateTagsForUom is always empty), which is fine — it
+  // just always uses a manual target like before tags existed.
+  const rateTagsForUom = (project?.tags || []).filter(t => t.uom === uomLower && (t.rate_per_day != null || t.rate_per_man_hour != null))
   const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
-  const manualDailyTarget = (targetUom === 'lf' ? project?.daily_lf_target : project?.daily_sf_target) || 0
-  const effectiveTotalTarget = (targetUom === 'lf' ? project?.total_lf_target : project?.total_sf_target) || 0
+  const manualDailyTarget = project?.daily_sf_target || 0
+  const effectiveTotalTarget = project?.total_sf_target || 0
   // A manually-set target always wins; otherwise fall back to the tag's
   // daily rate (a tag has no concept of a cumulative "total", so total
   // target stays manual-only).
@@ -1163,9 +871,8 @@ export default function ScopeDetail() {
   async function saveTarget() {
     setSavingTarget(true)
     try {
-      const col = targetUom === 'lf' ? 'daily_lf_target' : 'daily_sf_target'
-      await supabase.from('projects').update({ [col]: parseFloat(targetInput) || 0 }).eq('id', projectId)
-      setProject(p => ({ ...p, [col]: parseFloat(targetInput) || 0 }))
+      await supabase.from('projects').update({ daily_sf_target: parseFloat(targetInput) || 0 }).eq('id', projectId)
+      setProject(p => ({ ...p, daily_sf_target: parseFloat(targetInput) || 0 }))
       setEditingTarget(false)
     } catch (err) { console.error(err) }
     finally { setSavingTarget(false) }
@@ -1174,9 +881,8 @@ export default function ScopeDetail() {
   async function saveTotalTarget() {
     setSavingTotalTarget(true)
     try {
-      const col = targetUom === 'lf' ? 'total_lf_target' : 'total_sf_target'
-      await supabase.from('projects').update({ [col]: parseFloat(totalTargetInput) || 0 }).eq('id', projectId)
-      setProject(p => ({ ...p, [col]: parseFloat(totalTargetInput) || 0 }))
+      await supabase.from('projects').update({ total_sf_target: parseFloat(totalTargetInput) || 0 }).eq('id', projectId)
+      setProject(p => ({ ...p, total_sf_target: parseFloat(totalTargetInput) || 0 }))
       setEditingTotalTarget(false)
     } catch (err) { console.error(err) }
     finally { setSavingTotalTarget(false) }
@@ -1823,7 +1529,7 @@ export default function ScopeDetail() {
       )}
       {showScopeSettings && (
         <ScopeSettingsModal
-          project={project}
+          scope={project}
           canEditCost={canEditFinancials}
           onClose={() => setShowScopeSettings(false)}
           onSaved={patch => setProject(p => ({ ...p, ...patch }))}

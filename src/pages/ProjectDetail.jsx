@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
+import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getCachedJobDetail } from '../lib/offlineCache'
@@ -463,128 +464,6 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
   )
 }
 
-function ScopeSettingsModal({ scope, onClose, onSaved }) {
-  // Pre-filled with whichever of name/description the card is actually
-  // showing as its title (see ScopeCard) — what you see is what you edit,
-  // and saving writes the same text back to both columns (see handleSubmit)
-  // so the two can't drift apart into two different answers to the same
-  // "what is this scope" question again.
-  const [name, setName] = useState(scope.description || scope.name || '')
-  const [status, setStatus] = useState(scope.status || 'active')
-  const [uom, setUom] = useState(scope.uom || 'SF')
-  const [dailyTarget, setDailyTarget] = useState(scope.daily_sf_target ?? '')
-  const [totalTarget, setTotalTarget] = useState(scope.total_sf_target ?? '')
-  const [cost, setCost] = useState(scope.cost ?? '')
-  const [lunchBreak, setLunchBreak] = useState(scope.lunch_break_minutes ?? '')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    const trimmedName = name.trim()
-    if (!trimmedName) return
-    setSaving(true)
-    setError('')
-    try {
-      const patch = {
-        name: trimmedName,
-        description: trimmedName,
-        status,
-        uom,
-        daily_sf_target: parseFloat(dailyTarget) || 0,
-        total_sf_target: parseFloat(totalTarget) || 0,
-        cost: cost === '' ? null : (parseFloat(cost) || null),
-        lunch_break_minutes: lunchBreak === '' ? null : (parseFloat(lunchBreak) || null),
-      }
-      // .select().single() the same way JobSettingsModal does — a blocked
-      // update should surface as a real error, not silently revert the
-      // next time this job's scopes are reloaded.
-      const { data, error: sErr } = await supabase.from('projects').update(patch).eq('id', scope.id).select().single()
-      if (sErr) throw sErr
-      if (!data) throw new Error('Nothing was saved — you may not have permission to edit this scope.')
-      onSaved(patch)
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
-          <button onClick={onClose} className="btn-ghost p-1.5">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="label">Scope Name *</label>
-            <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Final Clean, Under Floor Cleaning" required />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Status</label>
-              <select className="input capitalize" value={status} onChange={e => setStatus(e.target.value)}>
-                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div>
-              {/* Not every scope is measured in square feet — base install
-                  is tracked in linear feet, fixture counts in units, etc.
-                  This is what a session in this scope defaults to unless
-                  its own markup says otherwise. */}
-              <label className="label">Unit of Measure</label>
-              <select className="input" value={uom} onChange={e => setUom(e.target.value)}>
-                {UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Daily {uom} Target</label>
-              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="5000" />
-            </div>
-            <div>
-              <label className="label">Total {uom} Target</label>
-              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
-            </div>
-          </div>
-          <div>
-            <label className="label">Contract Cost ($)</label>
-            <input className="input" type="number" min="0" value={cost} onChange={e => setCost(e.target.value)} placeholder="e.g. 500000" />
-          </div>
-          <div>
-            {/* Deducted per crew member from a session's logged hours when
-                the Sheet Report computes man-hours (Total Hours column and
-                SF/Man-Hour) — the session itself still keeps the raw crew
-                size and hours exactly as entered. */}
-            <label className="label">Lunch Break (minutes)</label>
-            <input className="input" type="number" min="0" value={lunchBreak} onChange={e => setLunchBreak(e.target.value)} placeholder="e.g. 30" />
-          </div>
-
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
-          )}
-
-          <div className="flex gap-2 pt-1">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving || !name.trim()} className="btn-primary flex-1">
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 function JobSettingsModal({ job, onClose, onSaved }) {
   const [name, setName] = useState(job.name || '')
   const [gcName, setGcName] = useState(job.gc_name || '')
@@ -739,8 +618,15 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenS
   }
 
   const uom = scope.uom || 'SF'
-  const dailyPct = scope.daily_sf_target > 0
-    ? Math.min(100, Math.round((todaySF / scope.daily_sf_target) * 100))
+  // A manual daily_sf_target always wins; otherwise fall back to a tagged
+  // Company Hub line item's rate for this scope's unit, same resolution
+  // ScopeDetail.jsx's own Progress card uses (a tag has no "total" concept,
+  // so the total target stays manual-only either way).
+  const rateTagsForUom = (scope.tags || []).filter(t => t.uom === uom.toLowerCase() && (t.rate_per_day != null || t.rate_per_man_hour != null))
+  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
+  const effectiveDailyTarget = scope.daily_sf_target > 0 ? scope.daily_sf_target : (activeRateTag?.rate_per_day || 0)
+  const dailyPct = effectiveDailyTarget > 0
+    ? Math.min(100, Math.round((todaySF / effectiveDailyTarget) * 100))
     : 0
   const totalPct = scope.total_sf_target > 0
     ? Math.min(100, Math.round((allTimeSF / scope.total_sf_target) * 100))
@@ -816,7 +702,7 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenS
         <div className="flex justify-between text-xs mb-1">
           <span className="text-muted">Daily progress · {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })} {uom}</span>
           <span className={dailyPct >= 100 ? 'text-accent font-medium' : 'text-gray-500 dark:text-gray-400'}>
-            {scope.daily_sf_target > 0 ? `${dailyPct}%` : '—'}
+            {effectiveDailyTarget > 0 ? `${dailyPct}%` : '—'}
           </span>
         </div>
         <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
@@ -970,13 +856,22 @@ export default function ProjectDetail() {
       // front with everything else this page needs, rather than only once
       // that modal opens — an org's directory doesn't change mid-visit, so
       // there's no reason to make "+ Add" wait on a fresh fetch every time.
-      const [{ data: jobData, error: jobErr }, { data: scopesData, error: scopesErr }, { data: directoryData }] = await Promise.all([
+      const [{ data: jobData, error: jobErr }, scopesRes, { data: directoryData }] = await Promise.all([
         supabase.from('jobs').select('*, organizations(name, plan, unlimited_until)').eq('id', jobId).single(),
-        supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
+        // project_tags(tags(*)) may fail until
+        // supabase-migration-tags-production-rates.sql has been run — falls
+        // back to a plain scopes fetch so the page doesn't break before then.
+        supabase.from('projects').select('*, project_tags(tags(*))').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').order('full_name'),
       ])
       if (jobErr) throw jobErr
-      if (scopesErr) throw scopesErr
+      let scopesData = scopesRes.data
+      if (scopesRes.error) {
+        const fallback = await supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false })
+        if (fallback.error) throw fallback.error
+        scopesData = fallback.data
+      }
+      scopesData = (scopesData || []).map(s => ({ ...s, tags: (s.project_tags || []).map(pt => pt.tags).filter(Boolean) }))
 
       setJob(jobData)
       setScopes(scopesData || [])
