@@ -36,16 +36,21 @@
    symbol rather than a normal ampersand, confirmed confusing in things
    like session names ("Cold Aisle - 4 & 5"). Registering a font under the
    SAME name Blinker uses, but restricted via unicode-range to just U+0026,
-   lets the browser pull only that one character from a normal system font
+   lets the browser pull only that one character from a different font
    instead — everything else in the string still renders in Blinker
-   untouched. local() sources mean this needs no extra font file/hosting;
-   virtually every OS has at least one of these installed.
-   Whichever OS font actually matches wins per source order, so list widely-
-   available ones (Segoe UI/Arial on Windows, Helvetica Neue on macOS/iOS)
-   before the universal Arial fallback. */
+   untouched.
+   A first attempt sourced this from local() system fonts (local('Arial')
+   etc.) but that silently never took effect: modern Chrome matches
+   local() by a font's internal PostScript name, not its display name
+   (Arial's PostScript name is "ArialMT", not "Arial"), so none of those
+   sources ever resolved and the browser fell straight back to Blinker's
+   own glyph. Sourcing directly from a hosted woff2 (Inter's ampersand,
+   subsetted to just U+26 via Google Fonts' text= param) sidesteps local
+   font matching entirely and is guaranteed to load the same way in every
+   browser. */
 @font-face {
   font-family: 'Blinker';
-  src: local('Segoe UI'), local('Helvetica Neue'), local('Helvetica'), local('Arial');
+  src: url(https://fonts.gstatic.com/l/font?kit=UcC73FwrK3iLTeHuS_nVMrMxCp50SjIq14D_Vw&skey=c491285d6722e4fa&v=v20) format('woff2');
   unicode-range: U+0026;
   font-weight: 100 900;
 }
