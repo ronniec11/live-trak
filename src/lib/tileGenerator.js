@@ -207,6 +207,19 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   // on a THROWN error, so a silent gap here meant that fallback could never
   // actually run. Throwing instead is what makes the fallback fire.
   let hadGap = false
+  // The recursive quadrant-split was designed assuming ONE small, isolated
+  // hotspot inside an otherwise-fine sheet — confirmed in practice that a
+  // sheet can instead have a broadly bad region, where splitting into
+  // quadrants just means the SAME hang repeats at every depth (4096 -> four
+  // 2048 attempts -> up to sixteen 1024 attempts -> up to sixty-four 512
+  // attempts), each paying its own full RENDER_TIMEOUT_MS — unbounded
+  // recursion turning into hours. This caps total time spent retrying
+  // ANY one region tree: once exceeded, a failing region is accepted as a
+  // gap immediately instead of splitting further, so the whole render
+  // phase fails fast into the server-side fallback rather than grinding
+  // through an exhaustive worst case.
+  const RETRY_BUDGET_MS = 8 * 60 * 1000
+  const renderPhaseStart = performance.now()
 
   // Renders one region at (x,y,w,h) and draws it into maxLevelCanvas. If it
   // times out, that region gets retried as 4 smaller quadrants instead of
@@ -232,8 +245,9 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
       console.log('[tileGenerator]', label, 'rendered in', Math.round(performance.now() - t0), 'ms')
       return true
     } catch (err) {
-      if (w <= MIN_RETRY_CHUNK && h <= MIN_RETRY_CHUNK) {
-        console.warn('[tileGenerator]', label, 'failed even at minimum retry size — leaving a gap there:', err.message)
+      const overBudget = performance.now() - renderPhaseStart > RETRY_BUDGET_MS
+      if ((w <= MIN_RETRY_CHUNK && h <= MIN_RETRY_CHUNK) || overBudget) {
+        console.warn('[tileGenerator]', label, overBudget ? 'retry budget exhausted — leaving a gap there:' : 'failed even at minimum retry size — leaving a gap there:', err.message)
         hadGap = true
         return false
       }
