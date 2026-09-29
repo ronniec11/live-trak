@@ -679,6 +679,10 @@ export default function ScopeDetail() {
   // recourse (no Bluebeam, no idea what "chunk size" means) still ends up
   // with working tiles instead of a dead end.
   async function generateTilesServerSide(page) {
+    // Optimistic — api/tiles/generate.js sets this itself server-side
+    // moments later anyway, but setting it here means the yellow banner
+    // shows immediately rather than waiting on that round trip.
+    setPages(ps => ps.map(p => p.id === page.id ? { ...p, tile_status: 'processing', tile_error: null } : p))
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) throw new Error('Your session expired — sign in again and retry.')
     const res = await fetch('/api/tiles/generate', {
@@ -696,6 +700,9 @@ export default function ScopeDetail() {
     if (!page.floor_plan_url) { alert('This page has no floor plan file to tile.'); return }
     tilingRef.current = true
     setTilingPageId(page.id); setTilingProgress(0); setTilingServerSide(forceServerSide)
+    // Declared outside the try block on purpose — the catch block below
+    // needs to read it too, and a `let` inside try isn't visible there.
+    let usedServerSide = forceServerSide
     try {
       if (page.tile_meta) {
         // Regenerating — clear out any stale/partial tiles from a previous
@@ -744,16 +751,24 @@ export default function ScopeDetail() {
           // generateRasterTiles doesn't touch pdf.js at all.
           if (!isPdf) throw clientErr
           console.warn('[ScopeDetail] Client-side tiling failed, falling back to server-side:', clientErr)
+          usedServerSide = true
           setTilingServerSide(true)
           tile_meta = await generateTilesServerSide(page)
         }
       }
 
-      const { error } = await supabase.from('pages').update({ tile_meta }).eq('id', page.id)
+      const tile_status = usedServerSide ? 'complete' : null
+      const { error } = await supabase.from('pages').update({ tile_meta, tile_status, tile_error: null }).eq('id', page.id)
       if (error) throw error
-      setPages(ps => ps.map(p => p.id === page.id ? { ...p, tile_meta } : p))
+      setPages(ps => ps.map(p => p.id === page.id ? { ...p, tile_meta, tile_status, tile_error: null } : p))
     } catch (err) {
       console.error('[ProjectDetail] Tile generation failed:', err)
+      if (usedServerSide) {
+        // api/tiles/generate.js already wrote tile_status='failed'/tile_error
+        // server-side when ITS attempt failed — reflect that here too so the
+        // red banner shows immediately, without waiting for a reload.
+        setPages(ps => ps.map(p => p.id === page.id ? { ...p, tile_status: 'failed', tile_error: err.message } : p))
+      }
       alert(
         'Tile generation failed: ' + (err.message || 'check console') +
         '\n\nThis file may have a compatibility issue we can\'t render directly. Try re-exporting it as a flattened/printed PDF, or upload it as a JPG/PNG instead.'
@@ -762,6 +777,14 @@ export default function ScopeDetail() {
       setTilingPageId(null); setTilingProgress(0); setTilingServerSide(false)
       tilingRef.current = false
     }
+  }
+
+  // Clears the completed/failed server-side tiling banner once acknowledged
+  // — tile_status only exists to drive that banner, so once someone's seen
+  // it there's nothing left for it to track until the next generation.
+  async function dismissTileBanner(page) {
+    setPages(ps => ps.map(p => p.id === page.id ? { ...p, tile_status: null, tile_error: null } : p))
+    await supabase.from('pages').update({ tile_status: null, tile_error: null }).eq('id', page.id)
   }
 
   async function saveProjectInfo() {
@@ -1060,6 +1083,38 @@ export default function ScopeDetail() {
               the job dashboard, instead of a bottom-border strip. */}
           <div>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Floor Plans</h2>
+            {/* Server-side tiling (api/tiles/generate.js) can take minutes and
+                doesn't need this page open to finish — tile_status is read
+                straight from the page rows loadData() already fetched, so
+                this shows correctly even after leaving and coming back. */}
+            {pages.filter(p => p.tile_status === 'processing' || p.tile_status === 'complete' || p.tile_status === 'failed').map(page => (
+              <div
+                key={page.id}
+                className={`flex items-center justify-between gap-3 mb-3 px-3 py-2 rounded-lg border text-sm ${
+                  page.tile_status === 'processing' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-700 dark:text-yellow-400'
+                    : page.tile_status === 'complete' ? 'bg-accent/10 border-accent/30 text-accent'
+                    : 'bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400'
+                }`}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  {page.tile_status === 'processing' && (
+                    <div className="w-3.5 h-3.5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {page.tile_status === 'processing' && <>"{page.name}" is still processing on our servers…</>}
+                    {page.tile_status === 'complete' && <>"{page.name}" is complete!</>}
+                    {page.tile_status === 'failed' && <>"{page.name}" failed to process on our servers{page.tile_error ? `: ${page.tile_error}` : '.'}</>}
+                  </span>
+                </span>
+                {page.tile_status !== 'processing' && (
+                  <button onClick={() => dismissTileBanner(page)} className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 shrink-0">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
             {pages.length > 0 ? (
               <div className="card">
               <div className="flex gap-2 overflow-x-auto">
