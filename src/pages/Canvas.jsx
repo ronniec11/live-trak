@@ -69,9 +69,18 @@ const DAY_COLORS = [
 
 export default function Canvas() {
   const { pageId } = useParams()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const navigate = useNavigate()
+  // Only the initial fallback now — set once from this page's own load
+  // fetch (see init(), which also needs the plain userProfile variable for
+  // other things below). The live source of truth for what's actually
+  // rendered is AuthContext's own `profile` (headerProfile below): it's
+  // already kept current everywhere else in the app (Navbar, Team, etc.),
+  // including the moment ProfileModal saves a change — canvasProfile on its
+  // own never refreshed after that first fetch, so picking a new avatar
+  // color here updated everywhere BUT the canvas header until now.
   const [canvasProfile, setCanvasProfile] = useState(null)
+  const headerProfile = profile || canvasProfile
   const [showProfile, setShowProfile] = useState(false)
 
   const wrapRef          = useRef(null)
@@ -6010,7 +6019,7 @@ export default function Canvas() {
             addPage's sv fallback, the saved-scale restore on page load),
             so a page still opens and reads at whatever scale it was saved
             at even with no select present. */}
-        {canvasProfile?.role !== 'foreman' && (
+        {headerProfile?.role !== 'foreman' && (
           <>
             <div className="ct-hgroup">
               <span className="ct-hlbl">Scale</span>
@@ -6058,13 +6067,13 @@ export default function Canvas() {
           <div className="ct-stat-lbl">of target</div>
         </div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-          {canvasProfile && (
+          {headerProfile && (
             <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={() => setShowProfile(true)}>
-              <div style={{width:28,height:28,borderRadius:'50%',background:canvasProfile.avatar_color||'#4ade80',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#000',flexShrink:0}}>
-                {(canvasProfile.full_name||user?.email||'U').charAt(0).toUpperCase()}
+              <div style={{width:28,height:28,borderRadius:'50%',background:headerProfile.avatar_color||'#4ade80',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#000',flexShrink:0}}>
+                {(headerProfile.full_name||user?.email||'U').charAt(0).toUpperCase()}
               </div>
               <span style={{fontSize:13,fontWeight:500,color:'var(--ct-text)',whiteSpace:'nowrap'}}>
-                {canvasProfile.full_name||user?.email?.split('@')[0]||'User'}
+                {headerProfile.full_name||user?.email?.split('@')[0]||'User'}
               </span>
             </div>
           )}
