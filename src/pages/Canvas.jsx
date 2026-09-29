@@ -10,6 +10,7 @@ import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancel
 import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource, stitchTilesToImage } from '../lib/offlineCache'
 import { resolveStorageUrl } from '../lib/storageUrls'
 import { limitError, limitsForPlan, orgIsUnlimited } from '../lib/planLimits'
+import ProfileModal from '../components/ProfileModal'
 import './Canvas.css'
 
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
@@ -71,6 +72,7 @@ export default function Canvas() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [canvasProfile, setCanvasProfile] = useState(null)
+  const [showProfile, setShowProfile] = useState(false)
 
   const wrapRef          = useRef(null)
   const planRef          = useRef(null)
@@ -6057,7 +6059,7 @@ export default function Canvas() {
         </div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
           {canvasProfile && (
-            <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={() => navigate('/profile', { state: { returnTo: `/canvas/${pageId}` } })}>
+            <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={() => setShowProfile(true)}>
               <div style={{width:28,height:28,borderRadius:'50%',background:canvasProfile.avatar_color||'#4ade80',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#000',flexShrink:0}}>
                 {(canvasProfile.full_name||user?.email||'U').charAt(0).toUpperCase()}
               </div>
@@ -6376,6 +6378,7 @@ export default function Canvas() {
         </div>
       </div>
 
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
   )
 }
