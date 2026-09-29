@@ -1061,19 +1061,32 @@ export default function ScopeDetail() {
   async function loadData() {
     setLoading(true)
     try {
-      const [{ data: proj, error: projErr }, { data: pgs, error: pgsErr }, { data: mems }] = await Promise.all([
-        supabase.from('projects').select('*').eq('id', projectId).single(),
+      const [projRes, pgsRes, memsRes] = await Promise.all([
+        supabase.from('projects').select('*, project_tags(tags(*))').eq('id', projectId).single(),
         supabase.from('pages').select('*').eq('project_id', projectId).order('created_at'),
         supabase.from('project_members').select('user_id, profiles(*)').eq('project_id', projectId),
       ])
-      if (projErr) throw projErr
+      // project_tags(tags(*)) may fail until
+      // supabase-migration-tags-production-rates.sql has been run — falls
+      // back to a plain projects fetch so the whole page doesn't break for
+      // scopes created before then.
+      let proj = projRes.data
+      if (projRes.error) {
+        const fallback = await supabase.from('projects').select('*').eq('id', projectId).single()
+        if (fallback.error) throw fallback.error
+        proj = fallback.data
+      }
+      const { data: pgs, error: pgsErr } = pgsRes
+      const { data: mems } = memsRes
       if (pgsErr) throw pgsErr
+
+      proj.tags = (proj.project_tags || []).map(pt => pt.tags).filter(Boolean)
 
       setProject(proj)
       setPages(pgs || [])
       setMembers((mems || []).map(m => m.profiles))
-      setTargetInput(proj?.daily_sf_target || 0)
-      setTotalTargetInput(proj?.total_sf_target || 0)
+      setTargetInput((proj?.target_uom === 'lf' ? proj?.daily_lf_target : proj?.daily_sf_target) || 0)
+      setTotalTargetInput((proj?.target_uom === 'lf' ? proj?.total_lf_target : proj?.total_sf_target) || 0)
       if (pgs && pgs.length > 0) setActivePage(pgs[0])
       setOfflineMode(false)
       setNotCachedOffline(false)
@@ -1116,24 +1129,43 @@ export default function ScopeDetail() {
   useEffect(() => { loadData() }, [projectId])
 
   const today = new Date().toLocaleDateString('en-CA')
-  console.log('[ProjectDetail] today:', today)
-  console.log('[ProjectDetail] session work_dates:', todaySessions.map(s => s.work_date))
-  const todaySF = todaySessions.filter(s => s.work_date === today).reduce((sum, s) => sum + (parseFloat(s.sf) || 0), 0)
-  console.log('[ProjectDetail] todaySF:', todaySF)
-  const totalSF = todaySessions.reduce((sum, s) => sum + (parseFloat(s.sf) || 0), 0)
-  const dailyBarColor = todaySF >= (project?.daily_sf_target || 0) && (project?.daily_sf_target || 0) > 0 ? '#4ade80' : '#facc15'
-  const pct = project?.daily_sf_target > 0
-    ? Math.min(100, Math.round((todaySF / project.daily_sf_target) * 100))
+
+  // Which unit this scope is actually tracked in (Scope Settings' Target
+  // Unit toggle) — sessions already compute both sf and lf depending on
+  // which tools were used, so this just picks which one counts here.
+  const targetUom = project?.target_uom || 'sf'
+  const unitLabel = targetUom.toUpperCase()
+  const sessionValue = s => parseFloat(targetUom === 'lf' ? s.lf : s.sf) || 0
+  // Only a tag with a rate for THIS unit can drive the daily target, and
+  // only if there's exactly one such tag — see ScopeSettingsModal's
+  // tagRateConflict for why more than one is left ambiguous rather than
+  // guessed at here.
+  const rateTagsForUom = (project?.tags || []).filter(t => t.uom === targetUom && (t.rate_per_day != null || t.rate_per_man_hour != null))
+  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
+  const manualDailyTarget = (targetUom === 'lf' ? project?.daily_lf_target : project?.daily_sf_target) || 0
+  const effectiveTotalTarget = (targetUom === 'lf' ? project?.total_lf_target : project?.total_sf_target) || 0
+  // A manually-set target always wins; otherwise fall back to the tag's
+  // daily rate (a tag has no concept of a cumulative "total", so total
+  // target stays manual-only).
+  const effectiveDailyTarget = manualDailyTarget > 0 ? manualDailyTarget : (activeRateTag?.rate_per_day || 0)
+  const dailyTargetFromTag = manualDailyTarget <= 0 && activeRateTag?.rate_per_day > 0
+
+  const todaySF = todaySessions.filter(s => s.work_date === today).reduce((sum, s) => sum + sessionValue(s), 0)
+  const totalSF = todaySessions.reduce((sum, s) => sum + sessionValue(s), 0)
+  const dailyBarColor = todaySF >= effectiveDailyTarget && effectiveDailyTarget > 0 ? '#4ade80' : '#facc15'
+  const pct = effectiveDailyTarget > 0
+    ? Math.min(100, Math.round((todaySF / effectiveDailyTarget) * 100))
     : 0
-  const totalPct = project?.total_sf_target > 0
-    ? Math.min(100, Math.round((totalSF / project.total_sf_target) * 100))
+  const totalPct = effectiveTotalTarget > 0
+    ? Math.min(100, Math.round((totalSF / effectiveTotalTarget) * 100))
     : 0
 
   async function saveTarget() {
     setSavingTarget(true)
     try {
-      await supabase.from('projects').update({ daily_sf_target: parseFloat(targetInput) || 0 }).eq('id', projectId)
-      setProject(p => ({ ...p, daily_sf_target: parseFloat(targetInput) || 0 }))
+      const col = targetUom === 'lf' ? 'daily_lf_target' : 'daily_sf_target'
+      await supabase.from('projects').update({ [col]: parseFloat(targetInput) || 0 }).eq('id', projectId)
+      setProject(p => ({ ...p, [col]: parseFloat(targetInput) || 0 }))
       setEditingTarget(false)
     } catch (err) { console.error(err) }
     finally { setSavingTarget(false) }
@@ -1142,8 +1174,9 @@ export default function ScopeDetail() {
   async function saveTotalTarget() {
     setSavingTotalTarget(true)
     try {
-      await supabase.from('projects').update({ total_sf_target: parseFloat(totalTargetInput) || 0 }).eq('id', projectId)
-      setProject(p => ({ ...p, total_sf_target: parseFloat(totalTargetInput) || 0 }))
+      const col = targetUom === 'lf' ? 'total_lf_target' : 'total_sf_target'
+      await supabase.from('projects').update({ [col]: parseFloat(totalTargetInput) || 0 }).eq('id', projectId)
+      setProject(p => ({ ...p, [col]: parseFloat(totalTargetInput) || 0 }))
       setEditingTotalTarget(false)
     } catch (err) { console.error(err) }
     finally { setSavingTotalTarget(false) }
@@ -1426,12 +1459,12 @@ export default function ScopeDetail() {
                   <div className="flex items-center gap-1">
                     <span className="text-sm font-semibold text-gray-900 dark:text-white">
                       {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      {project?.total_sf_target > 0 && (
-                        <span className="text-muted font-normal"> / {project.total_sf_target.toLocaleString()} SF</span>
+                      {effectiveTotalTarget > 0 && (
+                        <span className="text-muted font-normal"> / {effectiveTotalTarget.toLocaleString()} {unitLabel}</span>
                       )}
                     </span>
                     {canEditFinancials && !editingTotalTarget && (
-                      <button onClick={() => setEditingTotalTarget(true)} className="btn-ghost p-1 ml-1">
+                      <button onClick={() => { setTotalTargetInput(effectiveTotalTarget || ''); setEditingTotalTarget(true) }} className="btn-ghost p-1 ml-1">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
                         </svg>
@@ -1447,7 +1480,7 @@ export default function ScopeDetail() {
                       onChange={e => setTotalTargetInput(e.target.value)}
                       className="input w-28 text-xs py-1"
                       min="0"
-                      placeholder="Total SF target"
+                      placeholder={`Total ${unitLabel} target`}
                     />
                     <button onClick={saveTotalTarget} disabled={savingTotalTarget} className="btn-primary text-xs py-1 px-2">
                       {savingTotalTarget ? '...' : 'Save'}
@@ -1455,7 +1488,7 @@ export default function ScopeDetail() {
                     <button onClick={() => setEditingTotalTarget(false)} className="btn-ghost text-xs py-1 px-2">Cancel</button>
                   </div>
                 )}
-                {project?.total_sf_target > 0 && (
+                {effectiveTotalTarget > 0 && (
                   <>
                     <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
                       <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
@@ -1474,12 +1507,12 @@ export default function ScopeDetail() {
                   <span className="text-xs text-muted font-medium">Daily Progress</span>
                   <span className="text-sm font-semibold text-gray-900 dark:text-white">
                     {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {project?.daily_sf_target > 0 && (
-                      <span className="text-muted font-normal"> / {project.daily_sf_target.toLocaleString()} SF</span>
+                    {effectiveDailyTarget > 0 && (
+                      <span className="text-muted font-normal"> / {effectiveDailyTarget.toLocaleString()} {unitLabel}{dailyTargetFromTag && ` (${activeRateTag.name})`}</span>
                     )}
                   </span>
                 </div>
-                {project?.daily_sf_target > 0 && (
+                {effectiveDailyTarget > 0 && (
                   <>
                     <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
                       <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: dailyBarColor }} />
@@ -1515,7 +1548,16 @@ export default function ScopeDetail() {
                   <div className="divide-y divide-border">
                     {sortedDates.map(date => {
                       const dateSessions = byDate[date]
+                      // A session can carry sf and/or lf depending on which
+                      // tools were used, independent of this scope's own
+                      // target unit — show whichever the day's sessions
+                      // actually produced rather than assuming SF.
                       const dateSF = dateSessions.reduce((sum, s) => sum + (parseFloat(s.sf) || 0), 0)
+                      const dateLF = dateSessions.reduce((sum, s) => sum + (parseFloat(s.lf) || 0), 0)
+                      const dateTotals = [
+                        dateSF > 0 && `${dateSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF`,
+                        dateLF > 0 && `${dateLF.toLocaleString(undefined, { maximumFractionDigits: 0 })} LF`,
+                      ].filter(Boolean).join(' · ') || '0 SF'
                       const label = (() => {
                         try { return new Date(date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }
                         catch { return date }
@@ -1524,7 +1566,7 @@ export default function ScopeDetail() {
                         <div key={date} className="px-4 py-3">
                           <div className="flex items-center justify-between mb-2">
                             <p className="text-xs font-semibold text-gray-800 dark:text-gray-200">{label}{date === today && <span className="ml-1.5 text-accent">Today</span>}</p>
-                            <p className="text-xs text-muted">{dateSF.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF</p>
+                            <p className="text-xs text-muted">{dateTotals}</p>
                           </div>
                           <div className="space-y-2">
                             {dateSessions.map(session => (
@@ -1535,7 +1577,7 @@ export default function ScopeDetail() {
                                   {[
                                     session.profiles?.full_name || 'Unknown',
                                     pageMap[session.page_id],
-                                    (() => { const sf = parseFloat(session.sf) || 0; const ct = session.count_data?.length || 0; return sf > 0 && ct > 0 ? `${sf.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF · ${ct} items` : ct > 0 ? `${ct} items` : `${sf.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF` })(),
+                                    (() => { const sf = parseFloat(session.sf) || 0; const lf = parseFloat(session.lf) || 0; const ct = session.count_data?.length || 0; const parts = [sf > 0 && `${sf.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF`, lf > 0 && `${lf.toLocaleString(undefined, { maximumFractionDigits: 0 })} LF`, ct > 0 && `${ct} items`].filter(Boolean); return parts.length > 0 ? parts.join(' · ') : '0 SF' })(),
                                     session.created_at ? new Date(session.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
                                   ].filter(Boolean).join(' · ')}
                                 </p>
@@ -1568,11 +1610,11 @@ export default function ScopeDetail() {
                     <div className="flex items-center gap-1">
                       <p className="text-xs text-gray-700 dark:text-gray-300">
                         {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        {project?.total_sf_target > 0 && <span className="text-muted"> / {project.total_sf_target.toLocaleString()}</span>}
-                        {' SF'}
+                        {effectiveTotalTarget > 0 && <span className="text-muted"> / {effectiveTotalTarget.toLocaleString()}</span>}
+                        {` ${unitLabel}`}
                       </p>
                       {canEditFinancials && !editingTotalTarget && (
-                        <button onClick={() => setEditingTotalTarget(true)} className="btn-ghost p-0.5">
+                        <button onClick={() => { setTotalTargetInput(effectiveTotalTarget || ''); setEditingTotalTarget(true) }} className="btn-ghost p-0.5">
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
                           </svg>
@@ -1588,7 +1630,7 @@ export default function ScopeDetail() {
                         onChange={e => setTotalTargetInput(e.target.value)}
                         className="input w-24 text-xs py-1"
                         min="0"
-                        placeholder="Total SF"
+                        placeholder={`Total ${unitLabel}`}
                       />
                       <button onClick={saveTotalTarget} disabled={savingTotalTarget} className="btn-primary text-xs py-1 px-2">
                         {savingTotalTarget ? '...' : 'Save'}
@@ -1596,7 +1638,7 @@ export default function ScopeDetail() {
                       <button onClick={() => setEditingTotalTarget(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
                     </div>
                   )}
-                  {project?.total_sf_target > 0 ? (
+                  {effectiveTotalTarget > 0 ? (
                     <>
                       <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
                         <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
@@ -1620,11 +1662,12 @@ export default function ScopeDetail() {
                     <div className="flex items-center gap-1">
                       <p className="text-xs text-gray-700 dark:text-gray-300">
                         {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        {project?.daily_sf_target > 0 && <span className="text-muted"> / {project.daily_sf_target.toLocaleString()}</span>}
-                        {' SF'}
+                        {effectiveDailyTarget > 0 && <span className="text-muted"> / {effectiveDailyTarget.toLocaleString()}</span>}
+                        {` ${unitLabel}`}
+                        {dailyTargetFromTag && <span className="text-muted"> ({activeRateTag.name})</span>}
                       </p>
                       {canEditFinancials && !editingTarget && (
-                        <button onClick={() => setEditingTarget(true)} className="btn-ghost p-0.5">
+                        <button onClick={() => { setTargetInput(manualDailyTarget || ''); setEditingTarget(true) }} className="btn-ghost p-0.5">
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
                           </svg>
@@ -1640,7 +1683,7 @@ export default function ScopeDetail() {
                         onChange={e => setTargetInput(e.target.value)}
                         className="input w-24 text-xs py-1"
                         min="0"
-                        placeholder="Daily SF"
+                        placeholder={`Daily ${unitLabel}`}
                       />
                       <button onClick={saveTarget} disabled={savingTarget} className="btn-primary text-xs py-1 px-2">
                         {savingTarget ? '...' : 'Save'}
@@ -1648,7 +1691,7 @@ export default function ScopeDetail() {
                       <button onClick={() => setEditingTarget(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
                     </div>
                   )}
-                  {project?.daily_sf_target > 0 ? (
+                  {effectiveDailyTarget > 0 ? (
                     <>
                       <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
                         <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: dailyBarColor }} />
@@ -1682,7 +1725,7 @@ export default function ScopeDetail() {
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{session.name || 'Session'}</p>
                         <p className="text-xs text-muted">
-                          {(() => { const sf = parseFloat(session.sf) || 0; const ct = session.count_data?.length || 0; return sf > 0 && ct > 0 ? `${sf.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF · ${ct} items` : ct > 0 ? `${ct} items` : `${sf.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF` })()}
+                          {(() => { const sf = parseFloat(session.sf) || 0; const lf = parseFloat(session.lf) || 0; const ct = session.count_data?.length || 0; const parts = [sf > 0 && `${sf.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF`, lf > 0 && `${lf.toLocaleString(undefined, { maximumFractionDigits: 0 })} LF`, ct > 0 && `${ct} items`].filter(Boolean); return parts.length > 0 ? parts.join(' · ') : '0 SF' })()}
                         </p>
                       </div>
                     </div>
