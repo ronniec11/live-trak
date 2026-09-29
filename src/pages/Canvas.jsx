@@ -425,6 +425,32 @@ export default function Canvas() {
     // ── SCALE HELPERS ─────────────────────────────────────────────────────────
     function ppf(n, d) { return (96 * n) / d }
 
+    // Shared with handleCalibClick's own save below — picking a scale from
+    // the dropdown (or typing a custom one) used to only update activePage
+    // in memory, with nothing written to the pages table at all. It LOOKED
+    // saved (the select stayed on the picked value for the rest of the
+    // session) but reopening the page — or another crew member opening it —
+    // silently reverted to whatever scale was last actually calibrated,
+    // with no indication anything had changed. Sessions logged in between
+    // used whichever scale was active in memory at the time, so a sheet
+    // could end up with some sessions' SF computed at one scale and others
+    // at a different one, no warning either way.
+    function saveScaleToDb({ ppf, scale, calibrated, ppi }) {
+      console.log('[Canvas] Saving scale:', { pageId, ppf, scale, calibrated, ppi })
+      supabase.from('pages').update({ pixels_per_foot: ppf, calibrated, scale, ppi }).eq('id', pageId)
+        .then(({ error }) => {
+          if (error) {
+            // Older DBs won't have the ppi column yet (ALTER TABLE pages ADD
+            // COLUMN ppi numeric;) — retry without it so the scale still saves.
+            console.warn('[Canvas] Scale save with ppi failed, retrying without it:', error)
+            supabase.from('pages').update({ pixels_per_foot: ppf, calibrated, scale }).eq('id', pageId)
+              .then(({ error: err2 }) => console.log('[Canvas] Scale save (fallback) result:', err2 || 'success'))
+          } else {
+            console.log('[Canvas] Scale save result: success')
+          }
+        })
+    }
+
     function onScaleChange() {
       if (!scaleSelectRef.current) return
       const v = scaleSelectRef.current.value
@@ -436,10 +462,15 @@ export default function Canvas() {
         activePage.ppf = (s.n / s.d) * ppi
         activePage.scale = v; activePage.calibrated = false
         if (calibInfoRef.current) calibInfoRef.current.style.display = 'none'
+        saveScaleToDb({ ppf: activePage.ppf, scale: v, calibrated: false, ppi: activePage.ppi })
       }
       updateSFDisplay()
     }
 
+    // Debounced (fires on every keystroke in the custom numerator/denominator
+    // fields) — the local ppf/SF display still updates instantly, only the
+    // DB write waits for a short pause so typing "36" doesn't fire two saves.
+    let customScaleSaveTimer = null
     function applyCustomScale() {
       const n = parseFloat(cNumerRef.current?.value) || 1
       const d = parseFloat(cDenomRef.current?.value) || 30
@@ -447,6 +478,10 @@ export default function Canvas() {
         const ppi = activePage.ppi || 72 * 3.0
         activePage.ppf = (n / d) * ppi
         activePage.scale = 'custom'; activePage.calibrated = false
+        clearTimeout(customScaleSaveTimer)
+        customScaleSaveTimer = setTimeout(() => {
+          saveScaleToDb({ ppf: activePage.ppf, scale: 'custom', calibrated: false, ppi: activePage.ppi })
+        }, 500)
       }
       updateSFDisplay()
     }
@@ -2817,25 +2852,7 @@ export default function Canvas() {
       if (!ans || isNaN(parseFloat(ans))) { cancelCalib(); return }
       activePage.ppf = px / parseFloat(ans)
       activePage.calibrated = true
-      console.log('[Canvas] Saving calibration:', { pageId, ppf: activePage.ppf, calibrated: true, scale: activePage.scale, ppi: activePage.ppi })
-      supabase.from('pages').update({
-        pixels_per_foot: activePage.ppf,
-        calibrated: true,
-        scale: activePage.scale,
-        ppi: activePage.ppi,
-      }).eq('id', pageId)
-        .then(({ error }) => {
-          if (error) {
-            // Older DBs won't have the ppi column yet (ALTER TABLE pages ADD
-            // COLUMN ppi numeric;) — retry without it so calibration still saves.
-            console.warn('[Canvas] Calibration save with ppi failed, retrying without it:', error)
-            supabase.from('pages').update({
-              pixels_per_foot: activePage.ppf, calibrated: true, scale: activePage.scale,
-            }).eq('id', pageId).then(({ error: err2 }) => console.log('[Canvas] Calibration save (fallback) result:', err2 || 'success'))
-          } else {
-            console.log('[Canvas] Calibration save result: success')
-          }
-        })
+      saveScaleToDb({ ppf: activePage.ppf, scale: activePage.scale, calibrated: true, ppi: activePage.ppi })
       if (calibInfoRef.current) { calibInfoRef.current.style.display = 'inline'; calibInfoRef.current.textContent = 'Calibrated: ' + activePage.ppf.toFixed(1) + ' px/ft' }
       cancelCalib(); updateSF()
     }
