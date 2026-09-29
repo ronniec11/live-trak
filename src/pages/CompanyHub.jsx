@@ -316,6 +316,158 @@ function SettingsCard({ org, onSaved }) {
   )
 }
 
+// Company-wide line items ("Wood Floor", "Carpet Tile", "Rubber Base"),
+// each with its own unit and an optional rate per man-hour and/or per day
+// (supabase-migration-tags-production-rates.sql). Scope Settings tags a
+// scope with one of these; the scope then reads the rate LIVE from here
+// (never copies it), so editing a rate updates every scope using that tag
+// immediately. Rows save individually (matching a spreadsheet-style
+// add-row flow) rather than one bulk Save for the whole card, since each
+// row is its own `tags` table record, not a field on `organizations`.
+function ProductionRatesCard({ orgId }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+
+  async function load() {
+    setLoading(true)
+    setLoadError('')
+    const { data, error } = await supabase.from('tags').select('*').order('name')
+    if (error) setLoadError(error.message)
+    else setRows((data || []).map(t => ({ ...t, _dirty: false, _saving: false, _error: '' })))
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  function addRow() {
+    setRows(rs => [...rs, {
+      id: `new-${Date.now()}`, _isNew: true, _dirty: false, _saving: false, _error: '',
+      name: '', uom: 'sf', rate_per_day: '', rate_per_man_hour: '',
+    }])
+  }
+
+  function patchRow(id, patch) {
+    setRows(rs => rs.map(r => r.id === id ? { ...r, ...patch, _dirty: true, _error: '' } : r))
+  }
+
+  async function saveRow(id) {
+    const row = rows.find(r => r.id === id)
+    if (!row) return
+    if (!row.name.trim()) { patchRow(id, { _error: 'Name is required.' }); return }
+    setRows(rs => rs.map(r => r.id === id ? { ...r, _saving: true, _error: '' } : r))
+    const payload = {
+      organization_id: orgId,
+      name: row.name.trim(),
+      uom: row.uom,
+      rate_per_day: row.rate_per_day === '' || row.rate_per_day == null ? null : parseFloat(row.rate_per_day),
+      rate_per_man_hour: row.rate_per_man_hour === '' || row.rate_per_man_hour == null ? null : parseFloat(row.rate_per_man_hour),
+    }
+    try {
+      const query = row._isNew
+        ? supabase.from('tags').insert(payload).select().single()
+        : supabase.from('tags').update(payload).eq('id', row.id).select().single()
+      const { data, error } = await query
+      if (error) throw error
+      setRows(rs => rs.map(r => r.id === id ? { ...data, _isNew: false, _dirty: false, _saving: false, _error: '' } : r))
+    } catch (err) {
+      // 23505 = unique_violation, thrown by tags' UNIQUE(organization_id, name)
+      const message = err.code === '23505' ? 'A tag with this name already exists.' : (err.message || 'Failed to save.')
+      setRows(rs => rs.map(r => r.id === id ? { ...r, _saving: false, _error: message } : r))
+    }
+  }
+
+  async function deleteRow(id) {
+    const row = rows.find(r => r.id === id)
+    if (!row) return
+    if (row._isNew) { setRows(rs => rs.filter(r => r.id !== id)); return }
+    if (!confirm(`Delete the "${row.name}" tag? Scopes tagged with it will lose this tag and its rate.`)) return
+    setRows(rs => rs.map(r => r.id === id ? { ...r, _saving: true } : r))
+    try {
+      const { error } = await supabase.from('tags').delete().eq('id', id)
+      if (error) throw error
+      setRows(rs => rs.filter(r => r.id !== id))
+    } catch (err) {
+      setRows(rs => rs.map(r => r.id === id ? { ...r, _saving: false, _error: err.message || 'Failed to delete.' } : r))
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="mb-1">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Production Rates</h2>
+        <p className="text-xs text-muted mt-0.5">
+          Tag scopes in Scope Settings with these line items to track actual production against your company's standard rate.
+        </p>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted mt-3">Loading...</p>
+      ) : loadError ? (
+        <div className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
+          {loadError}
+          {/* Most likely cause: supabase-migration-tags-production-rates.sql hasn't been run yet. */}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-2">
+          {rows.length > 0 && (
+            <div className="hidden sm:flex items-center gap-2 px-1 text-xs text-muted">
+              <span className="flex-1 min-w-0">Tag Name</span>
+              <span className="w-20 shrink-0">Unit</span>
+              <span className="w-28 shrink-0">Per Man-Hour</span>
+              <span className="w-28 shrink-0">Per Day</span>
+              <span className="w-16 shrink-0" />
+            </div>
+          )}
+          {rows.map(row => (
+            <div key={row.id} className="rounded-lg border border-border p-2">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                <input
+                  className="input flex-1 min-w-[140px]" placeholder="e.g. Carpet Tile"
+                  value={row.name} onChange={e => patchRow(row.id, { name: e.target.value })}
+                />
+                <select
+                  className="input w-full sm:w-20 shrink-0"
+                  value={row.uom} onChange={e => patchRow(row.id, { uom: e.target.value })}
+                >
+                  <option value="sf">SF</option>
+                  <option value="lf">LF</option>
+                </select>
+                <input
+                  className="input w-full sm:w-28 shrink-0" type="number" min="0" placeholder="Per man-hr"
+                  value={row.rate_per_man_hour ?? ''} onChange={e => patchRow(row.id, { rate_per_man_hour: e.target.value })}
+                />
+                <input
+                  className="input w-full sm:w-28 shrink-0" type="number" min="0" placeholder="Per day"
+                  value={row.rate_per_day ?? ''} onChange={e => patchRow(row.id, { rate_per_day: e.target.value })}
+                />
+                <div className="flex gap-1 shrink-0 w-16 justify-end">
+                  <button
+                    type="button" onClick={() => saveRow(row.id)} disabled={row._saving || !row._dirty}
+                    title="Save" className="btn-ghost p-1.5 disabled:opacity-30"
+                  >
+                    <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                  </button>
+                  <button
+                    type="button" onClick={() => deleteRow(row.id)} disabled={row._saving}
+                    title="Delete" className="btn-ghost p-1.5 disabled:opacity-30"
+                  >
+                    <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
+              {row._error && <p className="text-xs text-red-500 mt-1.5 px-1">{row._error}</p>}
+            </div>
+          ))}
+          {rows.length === 0 && <p className="text-sm text-muted">No production rates yet — add your first line item below.</p>}
+        </div>
+      )}
+
+      <button type="button" onClick={addRow} className="btn-secondary text-sm mt-3">+ Add Tag</button>
+    </div>
+  )
+}
+
 function TeamCard({ people }) {
   const navigate = useNavigate()
   return (
@@ -566,6 +718,7 @@ export default function CompanyHub() {
           <div className="space-y-6">
             <CompanyProfileCard org={org} onSaved={updated => setOrg(o => ({ ...o, ...updated }))} />
             <SettingsCard org={org} onSaved={updated => setOrg(o => ({ ...o, ...updated }))} />
+            <ProductionRatesCard orgId={org.id} />
             <TeamCard people={people} />
             <IntegrationsCard />
             <PlanUsageCard org={org} people={people} usage={usage} />
