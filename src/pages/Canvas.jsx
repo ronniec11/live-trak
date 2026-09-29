@@ -247,6 +247,16 @@ export default function Canvas() {
     let isPanning   = false
     let panStart    = {x:0, y:0}
     let lastPenPt   = null
+    // Captured once at the start of a Highlight/Erase stroke — while shift
+    // is held, every later point in that same stroke snaps to the nearest
+    // 45° ray from THIS point (snapToAngle), not from whatever the last
+    // sampled point was. Snapping against a moving "last point" instead
+    // would fight normal hand wobble and re-pick a slightly different angle
+    // on every pointermove sample, producing a jagged line instead of a
+    // clean straight one — same reasoning Polygon/LF's own shift-snap
+    // (snapToAngle against the previous vertex) already relies on a fixed
+    // reference point rather than a moving one.
+    let paintStrokeStartPt = null
 
     let cW = 0, cH = 0
     // Last real mouse position over the canvas (drawEl-local screen space),
@@ -1739,7 +1749,7 @@ export default function Canvas() {
         })
         if (undoStack.length > MAX_UNDO) undoStack.shift()
         const pt = s2i(pos.x, pos.y)
-        doPaint(pt.x, pt.y, null); lastPenPt = pt
+        doPaint(pt.x, pt.y, null); lastPenPt = pt; paintStrokeStartPt = pt
       }
     }
 
@@ -1943,7 +1953,10 @@ export default function Canvas() {
         return
       }
       if (isPainting) {
-        const pt = s2i(pos.x, pos.y)
+        let pt = s2i(pos.x, pos.y)
+        if (e.shiftKey && paintStrokeStartPt && (tool === 'highlight' || tool === 'erase')) {
+          pt = snapToAngle(paintStrokeStartPt, pt)
+        }
         doPaint(pt.x, pt.y, lastPenPt); lastPenPt = pt
       }
     }
@@ -1968,7 +1981,7 @@ export default function Canvas() {
       // trackEdgePan(), since edgePanEligible() still covers that case.
       stopEdgePan()
       if (isPainting) {
-        isPainting = false; lastPenPt = null
+        isPainting = false; lastPenPt = null; paintStrokeStartPt = null
         cancelAnimationFrame(rafId); rafId = 0
         clipLiveHLAgainstSessions()
         redrawAll(); updateSF()
