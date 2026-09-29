@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import ProfileModal from './ProfileModal'
 
 export default function Navbar() {
   const { profile } = useAuth()
   const location = useLocation()
+  const [showProfile, setShowProfile] = useState(false)
 
   const isCanvas = location.pathname.includes('/canvas/')
 
@@ -76,8 +79,8 @@ export default function Navbar() {
 
       <div className="ml-auto flex items-center gap-2 shrink-0">
         {profile && (
-          <Link
-            to="/profile"
+          <button
+            onClick={() => setShowProfile(true)}
             className="flex items-center gap-2 hover:bg-surface-2 px-2 py-1.5 rounded-lg transition-colors group"
           >
             <div
@@ -88,9 +91,11 @@ export default function Navbar() {
             </div>
             <span className="text-sm text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 hidden sm:block">{profile.full_name}</span>
             <span className="text-xs text-muted capitalize hidden md:block">({profile.role})</span>
-          </Link>
+          </button>
         )}
       </div>
+
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </header>
   )
 }
