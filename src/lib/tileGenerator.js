@@ -20,6 +20,14 @@ const CHUNK = 2048
 // this guards against ever trying to allocate something bigger than any
 // real browser will actually give a canvas, rather than silently failing.
 const MAX_CANVAS_DIM = 16384
+// Below this, generatePdfTiles stops retrying a timed-out region as smaller
+// pieces and just accepts a gap there — confirmed in practice that a single
+// unusually dense hotspot (heavy hatching, a schedule, an embedded high-res
+// scan) inside an otherwise-normal sheet can still blow past even a generous
+// timeout at a large chunk size; retrying that ONE region at a smaller size
+// resolves it without slowing down the rest of the sheet, which rendered
+// fine at the larger, faster chunkSize.
+const MIN_RETRY_CHUNK = 512
 // Generous — a chunk render on a genuinely dense real-world drawing has
 // been observed taking minutes on its own (see generatePdfTiles' comment);
 // this just needs to not give up before a slow-but-working render finishes.
@@ -184,10 +192,55 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   maxLevelCanvas.height = fullH
   const maxLevelCtx = maxLevelCanvas.getContext('2d')
 
+  // Renders one region at (x,y,w,h) and draws it into maxLevelCanvas. If it
+  // times out, that region gets retried as 4 smaller quadrants instead of
+  // just being skipped — recursing further if even those are still too
+  // dense — down to MIN_RETRY_CHUNK, where a gap is finally accepted rather
+  // than retrying forever. Returns true if ANY pixels got drawn for this
+  // region (including partial — some quadrants succeeding, others not).
+  async function renderRegion(x, y, w, h, label) {
+    const canvas = document.createElement('canvas')
+    canvas.width = w; canvas.height = h
+    const t0 = performance.now()
+    try {
+      await withTimeout(
+        page.render({
+          canvasContext: canvas.getContext('2d'),
+          viewport: baseViewport,
+          transform: [1, 0, 0, 1, -x, -y],
+        }).promise,
+        RENDER_TIMEOUT_MS,
+        `Render of ${label}`,
+      )
+      maxLevelCtx.drawImage(canvas, x, y)
+      console.log('[tileGenerator]', label, 'rendered in', Math.round(performance.now() - t0), 'ms')
+      return true
+    } catch (err) {
+      if (w <= MIN_RETRY_CHUNK && h <= MIN_RETRY_CHUNK) {
+        console.warn('[tileGenerator]', label, 'failed even at minimum retry size — leaving a gap there:', err.message)
+        return false
+      }
+      console.warn('[tileGenerator]', label, `(${w}x${h}) timed out/failed — retrying as smaller pieces:`, err.message)
+      const hw = Math.ceil(w / 2), hh = Math.ceil(h / 2)
+      const quadrants = [
+        [x, y, Math.min(hw, w), Math.min(hh, h)],
+        [x + hw, y, w - hw, Math.min(hh, h)],
+        [x, y + hh, Math.min(hw, w), h - hh],
+        [x + hw, y + hh, w - hw, h - hh],
+      ].filter(([, , qw, qh]) => qw > 0 && qh > 0)
+      let anySucceeded = false
+      for (const [qx, qy, qw, qh] of quadrants) {
+        if (await renderRegion(qx, qy, qw, qh, `${label}/retry`)) anySucceeded = true
+      }
+      return anySucceeded
+    }
+  }
+
   const chunkCols = Math.ceil(fullW / chunkSize)
   const chunkRows = Math.ceil(fullH / chunkSize)
   const renderJobs = []
   let chunkCount = 0
+  let anyRendered = false
   for (let cr = 0; cr < chunkRows; cr++) {
     for (let cc = 0; cc < chunkCols; cc++) {
       const chunkX = cc * chunkSize, chunkY = cr * chunkSize
@@ -196,26 +249,8 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
       const chunkIndex = chunkCount
       chunkCount++
       renderJobs.push(async () => {
-        const t0 = performance.now()
         if (chunkIndex === 0) console.log('[tileGenerator] Rendering chunk 0 — first render on this page, can take a while to parse a dense drawing...')
-        const chunkCanvas = document.createElement('canvas')
-        chunkCanvas.width = cw; chunkCanvas.height = ch
-        // 30s wasn't enough for a genuinely complex real-world drawing's
-        // first render, then 120s wasn't either (confirmed hitting the wall
-        // repeatedly on this same large/detailed PDF) — RENDER_TIMEOUT_MS
-        // gives real headroom on slower hardware without letting a truly
-        // hung render block generation forever.
-        await withTimeout(
-          page.render({
-            canvasContext: chunkCanvas.getContext('2d'),
-            viewport: baseViewport,
-            transform: [1, 0, 0, 1, -chunkX, -chunkY],
-          }).promise,
-          RENDER_TIMEOUT_MS,
-          `Render of chunk ${chunkIndex}`,
-        )
-        maxLevelCtx.drawImage(chunkCanvas, chunkX, chunkY)
-        console.log('[tileGenerator] chunk', chunkIndex, '/', chunkCount, 'rendered in', Math.round(performance.now() - t0), 'ms')
+        if (await renderRegion(chunkX, chunkY, cw, ch, `chunk ${chunkIndex}`)) anyRendered = true
       })
     }
   }
@@ -235,18 +270,21 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   // state across concurrent render() tasks on one page has been observed
   // hanging when two calls with different transforms race each other. One
   // render at a time removes that race entirely.
-  const renderErrors = await runPool(renderJobs, 1, () => {
+  //
+  // renderRegion (above) already retries a failing region as smaller pieces
+  // rather than throwing, so a chunk "failing" here really only means it
+  // (and everything it recursed down into) never resolved — runPool's own
+  // catch is just a last-resort backstop, not the normal failure path.
+  await runPool(renderJobs, 1, () => {
     done++
     console.log('[tileGenerator] Rendered chunk', done, '/', chunkCount)
     onProgress?.(Math.round((done / chunkCount) * RENDER_WEIGHT), 100)
   })
-  // Every chunk failing means nothing usable got produced at all — a real
-  // failure. A handful of chunks failing still leaves a mostly-complete
-  // maxLevel (and so every level below it) with a few gaps; OSD falls back
-  // to the nearest available level/tile rather than failing to display the
-  // sheet at all.
-  if (renderErrors.length === chunkCount) throw renderErrors[0]
-  if (renderErrors.length) console.warn('[tileGenerator]', renderErrors.length, '/', chunkCount, 'chunk(s) failed to render — pyramid will have gaps in that region at every level.')
+  // Nothing rendering ANYWHERE (not even one region at the smallest retry
+  // size) means something is fundamentally wrong with the source PDF, not
+  // just one dense hotspot — a real failure, not the partial-gaps case
+  // renderRegion already handles and logs on its own.
+  if (!anyRendered) throw new Error('Could not render any part of this PDF — the file may be corrupt or unsupported.')
 
   // Build every lower pyramid level by halving the level above — sharper
   // than re-downsampling from the original each time (same technique as
