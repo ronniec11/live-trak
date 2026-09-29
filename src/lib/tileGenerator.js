@@ -221,15 +221,14 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   }
   console.log('[tileGenerator] Rendering', chunkCount, 'chunk(s) at full', fullW, 'x', fullH, 'resolution (chunkSize', chunkSize, ')')
 
-  // Tile count across every level, computed up front so progress can span
-  // both the (slow) render phase and the (fast) slice/upload phase in one
-  // consistent 0-100% scale instead of jumping/resetting between them.
-  let totalTiles = 0
-  for (let level = minLevel; level <= maxLevel; level++) {
-    const { w, h } = levelDims(fullW, fullH, maxLevel, level)
-    totalTiles += Math.ceil(w / TILE_SIZE) * Math.ceil(h / TILE_SIZE)
-  }
-  const totalUnits = chunkCount + totalTiles
+  // Render and upload are wildly different costs per step (a chunk render on
+  // a dense sheet can be the single slowest thing in this whole function;
+  // a tile upload is fast and there can be thousands of them) — weighting
+  // progress by raw step count would make finishing the one render that
+  // actually matters look like it barely moved the bar. RENDER_WEIGHT
+  // reserves most of the bar for the render phase regardless of how many
+  // cheap upload steps come after it.
+  const RENDER_WEIGHT = 80
   let done = 0
 
   // Sequential (concurrency 1) on purpose: pdf.js's shared operator-list
@@ -239,7 +238,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   const renderErrors = await runPool(renderJobs, 1, () => {
     done++
     console.log('[tileGenerator] Rendered chunk', done, '/', chunkCount)
-    onProgress?.(done, totalUnits)
+    onProgress?.(Math.round((done / chunkCount) * RENDER_WEIGHT), 100)
   })
   // Every chunk failing means nothing usable got produced at all — a real
   // failure. A handful of chunks failing still leaves a mostly-complete
@@ -269,9 +268,10 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   }
   console.log('[tileGenerator] Slicing/uploading', tileJobs.length, 'tile(s) across', maxLevel - minLevel + 1, 'levels')
 
+  let uploaded = 0
   const uploadErrors = await runPool(tileJobs, 6, () => {
-    done++
-    onProgress?.(done, totalUnits)
+    uploaded++
+    onProgress?.(RENDER_WEIGHT + Math.round((uploaded / tileJobs.length) * (100 - RENDER_WEIGHT)), 100)
   })
   if (uploadErrors.length === tileJobs.length) throw uploadErrors[0]
   if (uploadErrors.length) console.warn('[tileGenerator]', uploadErrors.length, '/', tileJobs.length, 'tile(s) failed to upload — pyramid has some gaps but is otherwise usable.')
