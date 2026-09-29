@@ -28,10 +28,16 @@ const MAX_CANVAS_DIM = 16384
 // resolves it without slowing down the rest of the sheet, which rendered
 // fine at the larger, faster chunkSize.
 const MIN_RETRY_CHUNK = 512
-// Generous — a chunk render on a genuinely dense real-world drawing has
-// been observed taking minutes on its own (see generatePdfTiles' comment);
-// this just needs to not give up before a slow-but-working render finishes.
-const RENDER_TIMEOUT_MS = 600000
+// 300s (5 min) was already confirmed sufficient for a genuinely complex
+// real-world drawing that actually finishes — a prior legit case needed
+// more than 120s. A region that's actually HUNG (invisible/malformed
+// leftover content, not just dense) times out at any reasonable threshold
+// equally — confirmed in practice hitting this exact ceiling regardless of
+// region size (4096px and 2048px both timed out at the same point) — so a
+// longer timeout here only means longer waits before the server-side
+// fallback (api/tiles/generate.js, mupdf) gets a chance to actually run,
+// not a better shot at success.
+const RENDER_TIMEOUT_MS = 300000
 // Base render quality for the sharpest (max) pyramid level — matches the
 // desktop RENDER_SCALE used elsewhere in the app (Canvas.jsx) so tiles look
 // as sharp as today's desktop floor plan rendering.
@@ -192,6 +198,16 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   maxLevelCanvas.height = fullH
   const maxLevelCtx = maxLevelCanvas.getContext('2d')
 
+  // Set when any region fails even at the smallest retry size — a real gap
+  // in the final tiles, not just a slow-but-eventually-fine render. Checked
+  // after the render phase below: this used to only surface as a quiet
+  // console.warn, which meant generatePdfTiles resolved "successfully"
+  // with a blank hole in the sheet instead of ever signaling a problem —
+  // and the caller's server-side fallback (ScopeDetail.jsx) only triggers
+  // on a THROWN error, so a silent gap here meant that fallback could never
+  // actually run. Throwing instead is what makes the fallback fire.
+  let hadGap = false
+
   // Renders one region at (x,y,w,h) and draws it into maxLevelCanvas. If it
   // times out, that region gets retried as 4 smaller quadrants instead of
   // just being skipped — recursing further if even those are still too
@@ -218,6 +234,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
     } catch (err) {
       if (w <= MIN_RETRY_CHUNK && h <= MIN_RETRY_CHUNK) {
         console.warn('[tileGenerator]', label, 'failed even at minimum retry size — leaving a gap there:', err.message)
+        hadGap = true
         return false
       }
       console.warn('[tileGenerator]', label, `(${w}x${h}) timed out/failed — retrying as smaller pieces:`, err.message)
@@ -285,6 +302,10 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   // just one dense hotspot — a real failure, not the partial-gaps case
   // renderRegion already handles and logs on its own.
   if (!anyRendered) throw new Error('Could not render any part of this PDF — the file may be corrupt or unsupported.')
+  // A real gap (not just a slow render) — throw so the caller's server-side
+  // fallback actually runs instead of silently shipping a sheet with a
+  // blank hole in it.
+  if (hadGap) throw new Error('One or more regions of this sheet could not be rendered client-side (likely invisible/malformed leftover content) — falling back to server-side generation.')
 
   // Build every lower pyramid level by halving the level above — sharper
   // than re-downsampling from the original each time (same technique as
