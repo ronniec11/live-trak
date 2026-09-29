@@ -347,39 +347,39 @@ export default function Reports() {
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
               "{selectedTag.name}" — Actual vs. Standard Rate
             </h2>
-            <div className="flex flex-wrap gap-6">
-              <div>
-                <p className="text-xs text-muted mb-0.5">Jobs</p>
-                <p className="text-lg font-semibold text-gray-900 dark:text-white">{tagSummary.distinctJobs}</p>
-                <p className="text-xs text-muted">{tagSummary.distinctJobs === 1 ? 'job' : 'jobs'} tagged with "{selectedTag.name}"</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-6">
+              <div className="text-center">
+                <p className="text-xs text-muted mb-1">Jobs</p>
+                <p className="text-3xl font-bold text-gray-900 dark:text-white">{tagSummary.distinctJobs}</p>
               </div>
-              <div>
-                <p className="text-xs text-muted mb-0.5">Total Production</p>
-                <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                  {Math.round(tagSummary.actual).toLocaleString()} {tagSummary.uomLabel}
+              <div className="text-center">
+                <p className="text-xs text-muted mb-1">Total Production</p>
+                <p className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {Math.round(tagSummary.actual).toLocaleString()} <span className="text-lg font-semibold">{tagSummary.uomLabel}</span>
                 </p>
-                <p className="text-xs text-muted">across {tagSummary.distinctDays} day{tagSummary.distinctDays === 1 ? '' : 's'}</p>
               </div>
-              {tagSummary.ratePerManHour != null && (
-                <div>
-                  <p className="text-xs text-muted mb-0.5">Per Man-Hour (avg vs. target)</p>
-                  {tagSummary.avgPerManHour != null ? (
-                    <p className={`text-lg font-semibold ${tagSummary.avgPerManHour >= tagSummary.ratePerManHour ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400'}`}>
-                      {tagSummary.avgPerManHour.toFixed(1)} <span className="text-muted font-normal">/ {tagSummary.ratePerManHour.toLocaleString()} {tagSummary.uomLabel}</span>
-                    </p>
-                  ) : (
-                    <p className="text-sm text-muted">No crew size/hours logged on these sessions.</p>
-                  )}
-                </div>
-              )}
-              {tagSummary.ratePerDay != null && (
-                <div>
-                  <p className="text-xs text-muted mb-0.5">Per Day (avg vs. target)</p>
-                  <p className={`text-lg font-semibold ${tagSummary.avgPerDay >= tagSummary.ratePerDay ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400'}`}>
-                    {Math.round(tagSummary.avgPerDay).toLocaleString()} <span className="text-muted font-normal">/ {tagSummary.ratePerDay.toLocaleString()} {tagSummary.uomLabel}</span>
+              <div className="text-center">
+                <p className="text-xs text-muted mb-1">Days</p>
+                <p className="text-3xl font-bold text-gray-900 dark:text-white">{tagSummary.distinctDays}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-muted mb-1">Per Man-Hour {tagSummary.ratePerManHour != null && '(avg vs. target)'}</p>
+                {tagSummary.avgPerManHour != null ? (
+                  <p className={`text-3xl font-bold ${tagSummary.ratePerManHour != null ? (tagSummary.avgPerManHour >= tagSummary.ratePerManHour ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400') : 'text-gray-900 dark:text-white'}`}>
+                    {tagSummary.avgPerManHour.toFixed(1)}
+                    {tagSummary.ratePerManHour != null && <span className="text-lg font-semibold text-muted"> / {tagSummary.ratePerManHour.toLocaleString()}</span>}
                   </p>
-                </div>
-              )}
+                ) : (
+                  <p className="text-sm text-muted mt-2">No crew size/hours logged.</p>
+                )}
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-muted mb-1">Avg {tagSummary.uomLabel}/Day {tagSummary.ratePerDay != null && '(vs. target)'}</p>
+                <p className={`text-3xl font-bold ${tagSummary.ratePerDay != null ? (tagSummary.avgPerDay >= tagSummary.ratePerDay ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400') : 'text-gray-900 dark:text-white'}`}>
+                  {Math.round(tagSummary.avgPerDay).toLocaleString()}
+                  {tagSummary.ratePerDay != null && <span className="text-lg font-semibold text-muted"> / {tagSummary.ratePerDay.toLocaleString()}</span>}
+                </p>
+              </div>
             </div>
           </div>
         )}
