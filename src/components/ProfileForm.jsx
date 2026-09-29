@@ -9,7 +9,8 @@ const PRESET_COLORS = [
   '#fbbf24', '#f87171', '#34d399', '#60a5fa', '#e879f9',
   '#f59e0b', '#84cc16', '#14b8a6', '#0ea5e9', '#6366f1',
   '#f43f5e', '#8b5cf6', '#ea580c', '#059669', '#db2777',
-  '#64748b', '#fde047',
+  '#64748b', '#fde047', '#ffffff', '#000000', '#78350f',
+  '#1e3a8a', '#a3e635', '#7f1d1d', '#94a3b8', '#2dd4bf',
 ]
 
 // Shared content for both the full /profile page (Profile.jsx — the target
