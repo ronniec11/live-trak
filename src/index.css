@@ -32,6 +32,24 @@
   --color-text: 232 234 246;
 }
 
+/* Blinker's own "&" glyph is unusually shaped — reads as a garbled/broken
+   symbol rather than a normal ampersand, confirmed confusing in things
+   like session names ("Cold Aisle - 4 & 5"). Registering a font under the
+   SAME name Blinker uses, but restricted via unicode-range to just U+0026,
+   lets the browser pull only that one character from a normal system font
+   instead — everything else in the string still renders in Blinker
+   untouched. local() sources mean this needs no extra font file/hosting;
+   virtually every OS has at least one of these installed.
+   Whichever OS font actually matches wins per source order, so list widely-
+   available ones (Segoe UI/Arial on Windows, Helvetica Neue on macOS/iOS)
+   before the universal Arial fallback. */
+@font-face {
+  font-family: 'Blinker';
+  src: local('Segoe UI'), local('Helvetica Neue'), local('Helvetica'), local('Arial');
+  unicode-range: U+0026;
+  font-weight: 100 900;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
