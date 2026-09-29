@@ -254,8 +254,8 @@ export default function Reports() {
         </div>
 
         <div className="card mb-6">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-[160px]">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[140px]">
               <label className="block text-xs text-muted mb-1">Filter By</label>
               <div className="flex gap-2">
                 <button
@@ -277,7 +277,7 @@ export default function Reports() {
               </div>
             </div>
             {filterMode === 'project' ? (
-              <div className="flex-1 min-w-[160px]">
+              <div className="flex-1 min-w-[140px]">
                 <label className="block text-xs text-muted mb-1">Project</label>
                 <select value={selectedProjectId} onChange={e => setSelectedProjectId(e.target.value)} className="input">
                   <option value="all">All Projects</option>
@@ -285,7 +285,7 @@ export default function Reports() {
                 </select>
               </div>
             ) : (
-              <div className="flex-1 min-w-[160px]">
+              <div className="flex-1 min-w-[140px]">
                 <label className="block text-xs text-muted mb-1">Tag</label>
                 <select value={selectedTagId} onChange={e => setSelectedTagId(e.target.value)} className="input">
                   <option value="">Select a tag...</option>
@@ -293,7 +293,7 @@ export default function Reports() {
                 </select>
               </div>
             )}
-            <div className="flex-1 min-w-[140px]">
+            <div className="flex-1 min-w-[120px]">
               <label className="block text-xs text-muted mb-1">Start date</label>
               {/* Blurring right after a date is picked closes the native
                   calendar popup immediately — without this, picking a date
@@ -308,7 +308,7 @@ export default function Reports() {
                   any other date happen. */}
               <input type="date" value={startDate} onChange={e => { const hadValue = !!startDate; setStartDate(e.target.value); if (hadValue) e.target.blur() }} className="input" />
             </div>
-            <div className="flex-1 min-w-[140px]">
+            <div className="flex-1 min-w-[120px]">
               <label className="block text-xs text-muted mb-1">End date</label>
               <input type="date" value={endDate} onChange={e => { const hadValue = !!endDate; setEndDate(e.target.value); if (hadValue) e.target.blur() }} className="input" />
             </div>
@@ -317,7 +317,7 @@ export default function Reports() {
               <button onClick={() => setPreset('month')} className="btn-secondary text-sm">This month</button>
               <button onClick={() => setPreset('all')} className="btn-secondary text-sm">All time</button>
             </div>
-            <button onClick={runReport} disabled={loading} className="btn-primary shrink-0 w-full sm:w-auto">
+            <button onClick={runReport} disabled={loading} className="btn-primary shrink-0 w-full sm:w-auto whitespace-nowrap">
               {loading ? 'Running…' : 'Run Report'}
             </button>
           </div>
