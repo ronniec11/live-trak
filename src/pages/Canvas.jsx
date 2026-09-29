@@ -4637,7 +4637,6 @@ export default function Canvas() {
             <tr>
               <td>Total</td>
               <td></td>
-              <td></td>
               <td class="ct-rep-num">${Math.round(data.totalSF).toLocaleString()}</td>
               <td class="ct-rep-num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
               <td class="ct-rep-num"></td>
