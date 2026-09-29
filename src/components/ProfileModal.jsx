@@ -5,8 +5,11 @@ import ProfileForm from './ProfileForm'
 // already open, rather than navigating away to /profile.
 export default function ProfileModal({ onClose }) {
   return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-lg p-6 max-h-[85vh] overflow-y-auto">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-lg p-6 max-h-[85vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Profile</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
