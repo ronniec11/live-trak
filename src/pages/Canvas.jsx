@@ -7,7 +7,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOpsForSession } from '../lib/offlineSync'
-import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource } from '../lib/offlineCache'
+import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource, stitchTilesToImage } from '../lib/offlineCache'
 import { resolveStorageUrl } from '../lib/storageUrls'
 import { limitError, limitsForPlan, orgIsUnlimited } from '../lib/planLimits'
 import './Canvas.css'
@@ -4371,49 +4371,39 @@ export default function Canvas() {
         list.appendChild(row)
       })
     }
-    // Re-renders the ORIGINAL floor plan file (PDF or raster) straight from
-    // its source URL, independent of OpenSeadragon/tiles entirely. Used for
-    // a tiled page's report snapshot, since activePage.image there is just a
-    // {width,height} placeholder — OSD owns the actual pixels, split across
-    // a tile pyramid, and none of it is real <img>/<canvas> data we could
-    // draw from directly. Screenshotting OSD's own canvas was considered and
-    // rejected: this OSD version defaults to a WebGL drawer, which can
-    // require preserveDrawingBuffer and can taint the canvas on read-back
-    // depending on the tile source's CORS behavior — re-rendering the
-    // source file the same way the non-tiled path already does sidesteps
-    // all of that with code this file already trusts.
-    async function renderFloorPlanBase(stored, targetW, targetH) {
-      const isPdf = /\.pdf($|\?)/i.test(stored) || stored.toLowerCase().includes('.pdf')
-      // Resolved fresh right before use, not reused from whenever the page
-      // was first opened — activePage.sourceUrl (see addPage) can sit
-      // around for as long as the tab stays open, well past a signed URL's
-      // expiry, so this only ever works from the bare path/original stored
-      // value, never a URL captured earlier.
-      const url = await resolveStorageUrl(stored)
-      if (!url) throw new Error('Could not access the floor plan source file for the report.')
-      let src
-      if (isPdf) {
-        const pdfjsLib = await import('pdfjs-dist')
-        const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-        const pdfDoc = await pdfjsLib.getDocument({ url, withCredentials: false }).promise
-        const page = await pdfDoc.getPage(1)
-        const baseViewport = page.getViewport({ scale: 1 })
-        const viewport = page.getViewport({ scale: targetW / baseViewport.width })
-        const offscreen = document.createElement('canvas')
-        offscreen.width = Math.round(viewport.width); offscreen.height = Math.round(viewport.height)
-        await page.render({ canvasContext: offscreen.getContext('2d'), viewport }).promise
-        src = offscreen
-      } else {
+    // Builds a flat drawable image for a tiled page's report snapshot, since
+    // activePage.image there is just a {width,height} placeholder — OSD owns
+    // the actual pixels, split across a tile pyramid, and none of it is real
+    // <img>/<canvas> data we could draw from directly. Screenshotting OSD's
+    // own canvas was considered and rejected: this OSD version defaults to a
+    // WebGL drawer, which can require preserveDrawingBuffer and can taint the
+    // canvas on read-back depending on the tile source's CORS behavior.
+    //
+    // This used to re-render the ORIGINAL floor plan file via pdf.js, straight
+    // from its source URL — independent of the tile pyramid entirely. That
+    // re-triggered the exact same pdf.js hang tileGenerator.js's own fixes
+    // were built for (see its comments), except with no timeout, no chunking,
+    // and no server-side fallback at all: a tiled page whose source PDF had
+    // needed the server-side (mupdf) path to tile in the first place would
+    // hang indefinitely generating a report, every single time. Stitching
+    // from the already-generated tile pyramid instead (same technique
+    // offlineCache.js's stitchTilesToImage already uses, and already proven
+    // reliable there) means this never touches pdf.js, or the original file,
+    // or cares which path (client or server) produced the tiles.
+    async function renderFloorPlanBase(tileMeta, targetW, targetH) {
+      const blob = await stitchTilesToImage(tileMeta)
+      if (!blob) throw new Error('Could not build a floor plan image from the tile pyramid for the report.')
+      const url = URL.createObjectURL(blob)
+      try {
         const img = new Image()
-        img.crossOrigin = 'anonymous'
         await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url })
-        src = img
+        const c = document.createElement('canvas')
+        c.width = targetW; c.height = targetH
+        c.getContext('2d').drawImage(img, 0, 0, targetW, targetH)
+        return c
+      } finally {
+        URL.revokeObjectURL(url)
       }
-      const c = document.createElement('canvas')
-      c.width = targetW; c.height = targetH
-      c.getContext('2d').drawImage(src, 0, 0, targetW, targetH)
-      return c
     }
     // Composites just the given sessions onto the sheet's base image —
     // 30%-alpha highlight, full-opacity pen, so a report scoped to one
@@ -4423,9 +4413,8 @@ export default function Canvas() {
       if (!w || !h) return null
       let base
       if (activePage.tileMeta) {
-        if (!activePage.sourceUrl) return null
         try {
-          base = await renderFloorPlanBase(activePage.sourceUrl, w, h)
+          base = await renderFloorPlanBase(activePage.tileMeta, w, h)
         } catch (e) {
           console.warn('[Canvas] Snapshot base render failed for tiled page:', e)
           return null

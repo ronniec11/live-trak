@@ -85,7 +85,7 @@ function levelDims(fullW, fullH, maxLevel, level) {
 // than necessary — stitching a level that's a bit larger than the target
 // and downscaling it precisely afterward stays sharp, the same as scaling
 // any other image down.
-async function stitchTilesToImage(tileMeta) {
+export async function stitchTilesToImage(tileMeta) {
   const { baseUrl, width, height, tileSize, minLevel, maxLevel, format } = tileMeta
   let level = maxLevel
   let dims = levelDims(width, height, maxLevel, maxLevel)
