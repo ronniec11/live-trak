@@ -218,8 +218,14 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   // gap immediately instead of splitting further, so the whole render
   // phase fails fast into the server-side fallback rather than grinding
   // through an exhaustive worst case.
+  //
+  // Scoped PER TOP-LEVEL CHUNK (each renderJobs entry passes its own fresh
+  // start time in) — NOT shared across the whole page. A shared/global
+  // clock here was a real bug: once chunk 0 alone burned through the
+  // budget, every later chunk's very first attempt immediately counted as
+  // "over budget" and got zero retries at all, even though a retry at a
+  // smaller size might have actually succeeded for them.
   const RETRY_BUDGET_MS = 8 * 60 * 1000
-  const renderPhaseStart = performance.now()
 
   // Renders one region at (x,y,w,h) and draws it into maxLevelCanvas. If it
   // times out, that region gets retried as 4 smaller quadrants instead of
@@ -227,7 +233,9 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   // dense — down to MIN_RETRY_CHUNK, where a gap is finally accepted rather
   // than retrying forever. Returns true if ANY pixels got drawn for this
   // region (including partial — some quadrants succeeding, others not).
-  async function renderRegion(x, y, w, h, label) {
+  // budgetStart is this region's TOP-LEVEL chunk's own start time, carried
+  // unchanged through every recursive retry call.
+  async function renderRegion(x, y, w, h, label, budgetStart) {
     const canvas = document.createElement('canvas')
     canvas.width = w; canvas.height = h
     const t0 = performance.now()
@@ -245,7 +253,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
       console.log('[tileGenerator]', label, 'rendered in', Math.round(performance.now() - t0), 'ms')
       return true
     } catch (err) {
-      const overBudget = performance.now() - renderPhaseStart > RETRY_BUDGET_MS
+      const overBudget = performance.now() - budgetStart > RETRY_BUDGET_MS
       if ((w <= MIN_RETRY_CHUNK && h <= MIN_RETRY_CHUNK) || overBudget) {
         console.warn('[tileGenerator]', label, overBudget ? 'retry budget exhausted — leaving a gap there:' : 'failed even at minimum retry size — leaving a gap there:', err.message)
         hadGap = true
@@ -261,7 +269,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
       ].filter(([, , qw, qh]) => qw > 0 && qh > 0)
       let anySucceeded = false
       for (const [qx, qy, qw, qh] of quadrants) {
-        if (await renderRegion(qx, qy, qw, qh, `${label}/retry`)) anySucceeded = true
+        if (await renderRegion(qx, qy, qw, qh, `${label}/retry`, budgetStart)) anySucceeded = true
       }
       return anySucceeded
     }
@@ -281,7 +289,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
       chunkCount++
       renderJobs.push(async () => {
         if (chunkIndex === 0) console.log('[tileGenerator] Rendering chunk 0 — first render on this page, can take a while to parse a dense drawing...')
-        if (await renderRegion(chunkX, chunkY, cw, ch, `chunk ${chunkIndex}`)) anyRendered = true
+        if (await renderRegion(chunkX, chunkY, cw, ch, `chunk ${chunkIndex}`, performance.now())) anyRendered = true
       })
     }
   }

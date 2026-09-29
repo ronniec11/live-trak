@@ -691,51 +691,62 @@ export default function ScopeDetail() {
     return data.tile_meta
   }
 
-  async function generateTiles(page) {
+  async function generateTiles(page, forceServerSide = false) {
     if (tilingRef.current) return
     if (!page.floor_plan_url) { alert('This page has no floor plan file to tile.'); return }
     tilingRef.current = true
-    setTilingPageId(page.id); setTilingProgress(0); setTilingServerSide(false)
+    setTilingPageId(page.id); setTilingProgress(0); setTilingServerSide(forceServerSide)
     try {
       if (page.tile_meta) {
         // Regenerating — clear out any stale/partial tiles from a previous
         // attempt (e.g. a different pyramid depth) before writing new ones.
         await deleteTiles(projectId, page.id)
       }
-      // Tiling needs to actually fetch the source file, which lives in the
-      // now-private floor-plans bucket — resolveStorageUrl signs it first
-      // (floor_plan_url is a bare path now; it also tolerates a leftover
-      // legacy full URL from before this bucket went private).
-      const url = await resolveStorageUrl(page.floor_plan_url)
-      if (!url) throw new Error('Could not access the source floor plan file to tile it.')
-      const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
-      const onProgress = (done, total) => setTilingProgress(total ? Math.round((done / total) * 100) : 0)
-      // generatePdfTiles' default chunkSize is deliberately small (iPad-safe
-      // memory ceiling) — an iPad doing this same generation needs that
-      // ceiling, but a desktop browser doing it has far more RAM to spare,
-      // so a bigger chunkSize here cuts the number of separate pdf.js
-      // render() calls needed for a dense sheet (each one costly — see
-      // generatePdfTiles' own comment) without changing TILE_BASE_SCALE or
-      // final tile resolution/quality at all.
-      const isIPad = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
-      const opts = { projectId, pageId: page.id, onProgress, ...(isIPad ? {} : { chunkSize: 4096 }) }
+      const isPdf = /\.pdf($|\?)/i.test(page.floor_plan_url) || page.floor_plan_url.toLowerCase().includes('.pdf')
 
       let tile_meta
-      try {
-        tile_meta = isPdf
-          ? await generatePdfTiles(url, opts)
-          : await generateRasterTiles(url, opts)
-      } catch (clientErr) {
-        // pdf.js is a browser-embedded VIEWER, not a hardened production
-        // rasterizer — real-world CAD-exported PDFs can contain leftover
-        // invisible content that hangs it regardless of chunk size (see
-        // tileGenerator.js). Only PDFs have a server-side fallback; a
-        // failed raster (plain image) upload has no such path, since
-        // generateRasterTiles doesn't touch pdf.js at all.
-        if (!isPdf) throw clientErr
-        console.warn('[ScopeDetail] Client-side tiling failed, falling back to server-side:', clientErr)
-        setTilingServerSide(true)
+      // Shift-click (see the button's title) skips straight to server-side
+      // (mupdf) — for a file already known/suspected to be slow across the
+      // WHOLE page rather than one isolated spot, there's no reason to make
+      // anyone sit through pdf.js failing first every single time it's
+      // regenerated.
+      if (forceServerSide) {
+        if (!isPdf) throw new Error('Server-side generation only handles PDF floor plans.')
         tile_meta = await generateTilesServerSide(page)
+      } else {
+        // Tiling needs to actually fetch the source file, which lives in the
+        // now-private floor-plans bucket — resolveStorageUrl signs it first
+        // (floor_plan_url is a bare path now; it also tolerates a leftover
+        // legacy full URL from before this bucket went private).
+        const url = await resolveStorageUrl(page.floor_plan_url)
+        if (!url) throw new Error('Could not access the source floor plan file to tile it.')
+        const onProgress = (done, total) => setTilingProgress(total ? Math.round((done / total) * 100) : 0)
+        // generatePdfTiles' default chunkSize is deliberately small (iPad-safe
+        // memory ceiling) — an iPad doing this same generation needs that
+        // ceiling, but a desktop browser doing it has far more RAM to spare,
+        // so a bigger chunkSize here cuts the number of separate pdf.js
+        // render() calls needed for a dense sheet (each one costly — see
+        // generatePdfTiles' own comment) without changing TILE_BASE_SCALE or
+        // final tile resolution/quality at all.
+        const isIPad = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+        const opts = { projectId, pageId: page.id, onProgress, ...(isIPad ? {} : { chunkSize: 4096 }) }
+
+        try {
+          tile_meta = isPdf
+            ? await generatePdfTiles(url, opts)
+            : await generateRasterTiles(url, opts)
+        } catch (clientErr) {
+          // pdf.js is a browser-embedded VIEWER, not a hardened production
+          // rasterizer — real-world CAD-exported PDFs can contain leftover
+          // invisible content that hangs it regardless of chunk size (see
+          // tileGenerator.js). Only PDFs have a server-side fallback; a
+          // failed raster (plain image) upload has no such path, since
+          // generateRasterTiles doesn't touch pdf.js at all.
+          if (!isPdf) throw clientErr
+          console.warn('[ScopeDetail] Client-side tiling failed, falling back to server-side:', clientErr)
+          setTilingServerSide(true)
+          tile_meta = await generateTilesServerSide(page)
+        }
       }
 
       const { error } = await supabase.from('pages').update({ tile_meta }).eq('id', page.id)
@@ -1100,12 +1111,15 @@ export default function ScopeDetail() {
                             <svg className="w-3 h-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                           </button>
                           <button
-                            onClick={e => { e.stopPropagation(); generateTiles(page) }}
+                            onClick={e => { e.stopPropagation(); generateTiles(page, e.shiftKey) }}
                             disabled={!!tilingPageId}
                             className={`absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 transition-opacity flex items-center gap-0.5 ${
                               tilingPageId === page.id ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100'
                             } ${page.tile_meta ? 'hover:bg-black/60' : 'hover:bg-accent/60'}`}
-                            title={page.tile_meta ? 'Regenerate deep-zoom tiles' : 'Generate deep-zoom tiles (smooth, fast zoom on iPad and desktop)'}
+                            title={
+                              (page.tile_meta ? 'Regenerate deep-zoom tiles' : 'Generate deep-zoom tiles (smooth, fast zoom on iPad and desktop)') +
+                              ' — Shift+click to generate on our servers directly (skips the browser attempt; use this if it failed/hung before)'
+                            }
                           >
                             {tilingPageId === page.id ? (
                               <span className="text-[9px] text-white font-medium">{tilingServerSide ? 'Server…' : `${tilingProgress}%`}</span>
