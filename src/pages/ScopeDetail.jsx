@@ -654,6 +654,7 @@ export default function ScopeDetail() {
   const [savingProjectInfo, setSavingProjectInfo] = useState(false)
   const [tilingPageId, setTilingPageId] = useState(null)
   const [tilingProgress, setTilingProgress] = useState(0)
+  const [tilingServerSide, setTilingServerSide] = useState(false)
   // setTilingPageId is async (React state), so a burst of clicks/duplicate
   // events landing before the next render can all read the same stale
   // tilingPageId and slip past the `if (tilingPageId) return` guard below —
@@ -672,11 +673,29 @@ export default function ScopeDetail() {
   // Scope Settings (see canManage) and see cost there, just not change it.
   const canEditFinancials = profile?.role === 'admin' || profile?.role === 'pm'
 
+  // Server-side fallback (api/tiles/generate.js) for when client-side
+  // tiling itself fails — see supabase-migration-server-tiling.sql for the
+  // full rationale. Only handles PDFs; a customer with no technical
+  // recourse (no Bluebeam, no idea what "chunk size" means) still ends up
+  // with working tiles instead of a dead end.
+  async function generateTilesServerSide(page) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) throw new Error('Your session expired — sign in again and retry.')
+    const res = await fetch('/api/tiles/generate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageId: page.id }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || 'Server-side tile generation failed.')
+    return data.tile_meta
+  }
+
   async function generateTiles(page) {
     if (tilingRef.current) return
     if (!page.floor_plan_url) { alert('This page has no floor plan file to tile.'); return }
     tilingRef.current = true
-    setTilingPageId(page.id); setTilingProgress(0)
+    setTilingPageId(page.id); setTilingProgress(0); setTilingServerSide(false)
     try {
       if (page.tile_meta) {
         // Regenerating — clear out any stale/partial tiles from a previous
@@ -700,18 +719,36 @@ export default function ScopeDetail() {
       // final tile resolution/quality at all.
       const isIPad = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
       const opts = { projectId, pageId: page.id, onProgress, ...(isIPad ? {} : { chunkSize: 4096 }) }
-      const tile_meta = isPdf
-        ? await generatePdfTiles(url, opts)
-        : await generateRasterTiles(url, opts)
+
+      let tile_meta
+      try {
+        tile_meta = isPdf
+          ? await generatePdfTiles(url, opts)
+          : await generateRasterTiles(url, opts)
+      } catch (clientErr) {
+        // pdf.js is a browser-embedded VIEWER, not a hardened production
+        // rasterizer — real-world CAD-exported PDFs can contain leftover
+        // invisible content that hangs it regardless of chunk size (see
+        // tileGenerator.js). Only PDFs have a server-side fallback; a
+        // failed raster (plain image) upload has no such path, since
+        // generateRasterTiles doesn't touch pdf.js at all.
+        if (!isPdf) throw clientErr
+        console.warn('[ScopeDetail] Client-side tiling failed, falling back to server-side:', clientErr)
+        setTilingServerSide(true)
+        tile_meta = await generateTilesServerSide(page)
+      }
 
       const { error } = await supabase.from('pages').update({ tile_meta }).eq('id', page.id)
       if (error) throw error
       setPages(ps => ps.map(p => p.id === page.id ? { ...p, tile_meta } : p))
     } catch (err) {
       console.error('[ProjectDetail] Tile generation failed:', err)
-      alert('Tile generation failed: ' + (err.message || 'check console'))
+      alert(
+        'Tile generation failed: ' + (err.message || 'check console') +
+        '\n\nThis file may have a compatibility issue we can\'t render directly. Try re-exporting it as a flattened/printed PDF, or upload it as a JPG/PNG instead.'
+      )
     } finally {
-      setTilingPageId(null); setTilingProgress(0)
+      setTilingPageId(null); setTilingProgress(0); setTilingServerSide(false)
       tilingRef.current = false
     }
   }
@@ -1071,7 +1108,7 @@ export default function ScopeDetail() {
                             title={page.tile_meta ? 'Regenerate deep-zoom tiles' : 'Generate deep-zoom tiles (smooth, fast zoom on iPad and desktop)'}
                           >
                             {tilingPageId === page.id ? (
-                              <span className="text-[9px] text-white font-medium">{tilingProgress}%</span>
+                              <span className="text-[9px] text-white font-medium">{tilingServerSide ? 'Server…' : `${tilingProgress}%`}</span>
                             ) : (
                               <svg className={`w-3 h-3 ${page.tile_meta ? 'text-accent' : 'text-white'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg>
                             )}
