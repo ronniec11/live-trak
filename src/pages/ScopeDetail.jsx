@@ -519,14 +519,85 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
 // canEditFinancials — Superintendent can open this (canManage) and see
 // cost, same as everywhere else on this page, but not change it.
 function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
+  const { profile } = useAuth()
   const [name, setName] = useState(project.name || '')
   const [status, setStatus] = useState(project.status || 'active')
+  const [targetUom, setTargetUom] = useState(project.target_uom || 'sf')
   const [dailyTarget, setDailyTarget] = useState(project.daily_sf_target ?? '')
   const [totalTarget, setTotalTarget] = useState(project.total_sf_target ?? '')
+  const [dailyLfTarget, setDailyLfTarget] = useState(project.daily_lf_target ?? '')
+  const [totalLfTarget, setTotalLfTarget] = useState(project.total_lf_target ?? '')
   const [cost, setCost] = useState(project.cost ?? '')
   const [lunchBreak, setLunchBreak] = useState(project.lunch_break_minutes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // Tags: fetched once from the org's shared list (Company Hub) plus this
+  // scope's current selections, so picking one is a dropdown rather than
+  // free typing — see supabase-migration-tags-production-rates.sql.
+  const [allTags, setAllTags] = useState([])
+  const [selectedTagIds, setSelectedTagIds] = useState([])
+  const [initialTagIds, setInitialTagIds] = useState([])
+  const [tagQuery, setTagQuery] = useState('')
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
+  const [creatingTag, setCreatingTag] = useState(false)
+  const [tagsError, setTagsError] = useState('')
+
+  useEffect(() => {
+    if (!profile?.organization_id) return
+    supabase.from('tags').select('*').order('name')
+      .then(({ data, error: err }) => { if (!err) setAllTags(data || []) })
+    supabase.from('project_tags').select('tag_id').eq('project_id', project.id)
+      .then(({ data, error: err }) => {
+        if (err) { setTagsError('Could not load this scope\'s tags — run supabase-migration-tags-production-rates.sql if you haven\'t yet.'); return }
+        const ids = (data || []).map(r => r.tag_id)
+        setSelectedTagIds(ids)
+        setInitialTagIds(ids)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.organization_id, project.id])
+
+  const selectedTags = selectedTagIds.map(id => allTags.find(t => t.id === id)).filter(Boolean)
+  // A tag only drives the target if it actually has a rate for the unit
+  // this scope is tracked in — a purely descriptive tag (no rate set) or
+  // one whose rate is in the other unit is just a label here.
+  const rateTagsForUom = selectedTags.filter(t => t.uom === targetUom && (t.rate_per_day != null || t.rate_per_man_hour != null))
+  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
+  const tagRateConflict = rateTagsForUom.length > 1
+
+  const matchingTags = allTags.filter(t =>
+    !selectedTagIds.includes(t.id) && t.name.toLowerCase().includes(tagQuery.trim().toLowerCase())
+  )
+  const exactMatch = allTags.some(t => t.name.toLowerCase() === tagQuery.trim().toLowerCase())
+
+  function addTag(tagId) {
+    setSelectedTagIds(ids => [...ids, tagId])
+    setTagQuery('')
+    setTagDropdownOpen(false)
+  }
+
+  function removeTag(tagId) {
+    setSelectedTagIds(ids => ids.filter(id => id !== tagId))
+  }
+
+  async function createAndAddTag() {
+    const trimmed = tagQuery.trim()
+    if (!trimmed || !profile?.organization_id) return
+    setCreatingTag(true)
+    setTagsError('')
+    try {
+      const { data, error: err } = await supabase.from('tags')
+        .insert({ organization_id: profile.organization_id, name: trimmed, uom: targetUom })
+        .select().single()
+      if (err) throw err
+      setAllTags(t => [...t, data])
+      addTag(data.id)
+    } catch (err) {
+      setTagsError(err.code === '23505' ? 'A tag with this name already exists.' : (err.message || 'Failed to create tag.'))
+    } finally {
+      setCreatingTag(false)
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -538,15 +609,32 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
       const patch = {
         name: trimmedName,
         status,
+        target_uom: targetUom,
         daily_sf_target: parseFloat(dailyTarget) || 0,
         total_sf_target: parseFloat(totalTarget) || 0,
+        daily_lf_target: parseFloat(dailyLfTarget) || 0,
+        total_lf_target: parseFloat(totalLfTarget) || 0,
         lunch_break_minutes: lunchBreak === '' ? null : (parseFloat(lunchBreak) || null),
       }
       if (canEditCost) patch.cost = cost === '' ? null : (parseFloat(cost) || null)
       const { data, error: sErr } = await supabase.from('projects').update(patch).eq('id', project.id).select().single()
       if (sErr) throw sErr
       if (!data) throw new Error('Nothing was saved — you may not have permission to edit this scope.')
-      onSaved(patch)
+
+      const addedIds = selectedTagIds.filter(id => !initialTagIds.includes(id))
+      const removedIds = initialTagIds.filter(id => !selectedTagIds.includes(id))
+      if (addedIds.length > 0) {
+        const { error: insErr } = await supabase.from('project_tags')
+          .insert(addedIds.map(tag_id => ({ project_id: project.id, tag_id })))
+        if (insErr) throw insErr
+      }
+      if (removedIds.length > 0) {
+        const { error: delErr } = await supabase.from('project_tags')
+          .delete().eq('project_id', project.id).in('tag_id', removedIds)
+        if (delErr) throw delErr
+      }
+
+      onSaved({ ...patch, tags: selectedTags })
       onClose()
     } catch (err) {
       setError(err.message)
@@ -557,7 +645,11 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
 
   return (
     <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+      {/* Rounding and scrolling on separate layers (see ProfileModal.jsx's
+          copy of this comment) — this form grew past a screen's height once
+          tags/targets were added, so it needed to actually scroll. */}
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-6 overflow-y-auto min-h-0">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -578,16 +670,113 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
               {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Daily SF Target</label>
-              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="5000" />
+          <div>
+            <label className="label">Tags</label>
+            <p className="text-xs text-muted mb-1.5">
+              Tag this scope with a line item from Company Hub to compare its production against your company's standard rate.
+            </p>
+            {selectedTags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {selectedTags.map(t => (
+                  <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
+                    {t.name}
+                    <button type="button" onClick={() => removeTag(t.id)} className="hover:text-red-500">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="relative">
+              <input
+                className="input" placeholder="Search or create a tag..."
+                value={tagQuery}
+                onChange={e => { setTagQuery(e.target.value); setTagDropdownOpen(true) }}
+                onFocus={() => setTagDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setTagDropdownOpen(false), 150)}
+              />
+              {tagDropdownOpen && tagQuery.trim() && (
+                <div className="absolute z-10 top-full mt-1 w-full bg-surface border border-border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                  {matchingTags.map(t => (
+                    <button
+                      key={t.id} type="button" onMouseDown={() => addTag(t.id)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-surface-2 flex items-center justify-between"
+                    >
+                      <span>{t.name}</span>
+                      <span className="text-xs text-muted uppercase">{t.uom}</span>
+                    </button>
+                  ))}
+                  {!exactMatch && (
+                    <button
+                      type="button" onMouseDown={createAndAddTag} disabled={creatingTag}
+                      className="w-full text-left px-3 py-2 text-sm text-accent hover:bg-surface-2"
+                    >
+                      {creatingTag ? 'Creating...' : `+ Create "${tagQuery.trim()}"`}
+                    </button>
+                  )}
+                  {matchingTags.length === 0 && exactMatch && (
+                    <div className="px-3 py-2 text-sm text-muted">Already added.</div>
+                  )}
+                </div>
+              )}
             </div>
-            <div>
-              <label className="label">Total SF Target</label>
-              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
+            {tagsError && <p className="text-xs text-red-500 mt-1.5">{tagsError}</p>}
+          </div>
+
+          <div>
+            <label className="label">Target Unit</label>
+            <div className="flex gap-2">
+              {['sf', 'lf'].map(u => (
+                <button
+                  key={u} type="button" onClick={() => setTargetUom(u)}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    targetUom === u ? 'bg-accent/10 text-accent border-accent/30' : 'bg-surface-2 text-muted hover:text-gray-700 dark:hover:text-gray-300 border-border'
+                  }`}
+                >
+                  {u.toUpperCase()}
+                </button>
+              ))}
             </div>
           </div>
+
+          {activeRateTag && (
+            <div className="bg-accent/10 border border-accent/30 rounded-lg px-3 py-2 text-accent text-sm">
+              Following "{activeRateTag.name}"'s rate:{' '}
+              {activeRateTag.rate_per_day != null && <>{activeRateTag.rate_per_day.toLocaleString()} {targetUom.toUpperCase()}/day</>}
+              {activeRateTag.rate_per_day != null && activeRateTag.rate_per_man_hour != null && ' · '}
+              {activeRateTag.rate_per_man_hour != null && <>{activeRateTag.rate_per_man_hour.toLocaleString()} {targetUom.toUpperCase()}/man-hr</>}
+              . Leave the targets below blank to use it, or set a number to override just this scope.
+            </div>
+          )}
+          {tagRateConflict && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-400 text-sm">
+              This scope has more than one {targetUom.toUpperCase()} tag with a rate ({rateTagsForUom.map(t => t.name).join(', ')}) — remove one, or set a manual target below to make it explicit.
+            </div>
+          )}
+
+          {targetUom === 'sf' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Daily SF Target</label>
+                <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder={activeRateTag?.rate_per_day ? `${activeRateTag.rate_per_day} (from tag)` : '5000'} />
+              </div>
+              <div>
+                <label className="label">Total SF Target</label>
+                <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Daily LF Target</label>
+                <input className="input" type="number" min="0" value={dailyLfTarget} onChange={e => setDailyLfTarget(e.target.value)} placeholder={activeRateTag?.rate_per_day ? `${activeRateTag.rate_per_day} (from tag)` : '500'} />
+              </div>
+              <div>
+                <label className="label">Total LF Target</label>
+                <input className="input" type="number" min="0" value={totalLfTarget} onChange={e => setTotalLfTarget(e.target.value)} placeholder="e.g. 25000" />
+              </div>
+            </div>
+          )}
           <div>
             <label className="label">Contract Cost ($)</label>
             <input
@@ -617,6 +806,7 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   )
