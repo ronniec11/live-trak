@@ -134,8 +134,8 @@ function AddPageModal({ projectId, onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !loading && onClose()}>
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Floor Plan</h2>
           <button onClick={onClose} disabled={loading} className="btn-ghost p-1.5">
@@ -329,8 +329,8 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-lg p-6">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !importing && onClose()}>
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Import from Autodesk</h2>
           <button onClick={onClose} disabled={importing} className="btn-ghost p-1.5">
@@ -465,8 +465,8 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
   })
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -556,8 +556,8 @@ function ScopeSettingsModal({ project, canEditCost, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">

@@ -299,8 +299,8 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
   })
 
   return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -402,8 +402,8 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
   }
 
   return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">New Scope</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -512,8 +512,8 @@ function ScopeSettingsModal({ scope, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Scope Settings</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
@@ -628,8 +628,8 @@ function JobSettingsModal({ job, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6">
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Project Settings</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">

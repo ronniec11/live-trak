@@ -70,8 +70,8 @@ function CloseIcon() {
 
 function ModalShell({ title, onClose, children, wide = false }) {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className={`bg-surface border border-border rounded-2xl w-full ${wide ? 'max-w-lg' : 'max-w-md'} p-6 max-h-[85vh] overflow-y-auto`}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className={`bg-surface border border-border rounded-2xl w-full ${wide ? 'max-w-lg' : 'max-w-md'} p-6 max-h-[85vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white truncate pr-4">{title}</h2>
           <button onClick={onClose} className="btn-ghost p-1.5 shrink-0"><CloseIcon /></button>
