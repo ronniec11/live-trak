@@ -58,6 +58,7 @@ function shapeRow(s) {
   return {
     person: s.profiles?.full_name || 'Unknown',
     project: s.pages?.projects?.name || '',
+    jobId: s.pages?.projects?.job_id || null,
     floorPlan: s.pages?.name || '',
     date: s.work_date || '',
     time: s.created_at ? new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
@@ -150,7 +151,7 @@ export default function Reports() {
         if (crewHours) cols.push('crew_size', 'hours_worked')
         if (totalHours) cols.push('total_hours')
         cols.push('profiles(full_name)')
-        cols.push(`pages(name, project_id, projects(name${lunch ? ', lunch_break_minutes' : ''}))`)
+        cols.push(`pages(name, project_id, projects(name, job_id${lunch ? ', lunch_break_minutes' : ''}))`)
         return cols.join(', ')
       }
 
@@ -218,6 +219,7 @@ export default function Reports() {
     const uom = selectedTag.uom === 'lf' ? 'lf' : 'sf'
     const actual = rows.reduce((sum, r) => sum + (uom === 'lf' ? r.lf : r.sf), 0)
     const distinctDays = new Set(rows.map(r => r.date).filter(Boolean)).size
+    const distinctJobs = new Set(rows.map(r => r.jobId).filter(Boolean)).size
     const totalManHours = rows.reduce((sum, r) => sum + (parseFloat(r.totalHours) || 0), 0)
     const avgPerDay = distinctDays > 0 ? actual / distinctDays : 0
     const avgPerManHour = totalManHours > 0 ? actual / totalManHours : 0
@@ -225,6 +227,7 @@ export default function Reports() {
       uomLabel: uom.toUpperCase(),
       actual,
       distinctDays,
+      distinctJobs,
       avgPerDay,
       avgPerManHour: totalManHours > 0 ? avgPerManHour : null,
       ratePerDay: selectedTag.rate_per_day,
@@ -346,20 +349,17 @@ export default function Reports() {
             </h2>
             <div className="flex flex-wrap gap-6">
               <div>
+                <p className="text-xs text-muted mb-0.5">Jobs</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-white">{tagSummary.distinctJobs}</p>
+                <p className="text-xs text-muted">{tagSummary.distinctJobs === 1 ? 'job' : 'jobs'} tagged with "{selectedTag.name}"</p>
+              </div>
+              <div>
                 <p className="text-xs text-muted mb-0.5">Total Production</p>
                 <p className="text-lg font-semibold text-gray-900 dark:text-white">
                   {Math.round(tagSummary.actual).toLocaleString()} {tagSummary.uomLabel}
                 </p>
                 <p className="text-xs text-muted">across {tagSummary.distinctDays} day{tagSummary.distinctDays === 1 ? '' : 's'}</p>
               </div>
-              {tagSummary.ratePerDay != null && (
-                <div>
-                  <p className="text-xs text-muted mb-0.5">Per Day (avg vs. target)</p>
-                  <p className={`text-lg font-semibold ${tagSummary.avgPerDay >= tagSummary.ratePerDay ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400'}`}>
-                    {Math.round(tagSummary.avgPerDay).toLocaleString()} <span className="text-muted font-normal">/ {tagSummary.ratePerDay.toLocaleString()} {tagSummary.uomLabel}</span>
-                  </p>
-                </div>
-              )}
               {tagSummary.ratePerManHour != null && (
                 <div>
                   <p className="text-xs text-muted mb-0.5">Per Man-Hour (avg vs. target)</p>
@@ -370,6 +370,14 @@ export default function Reports() {
                   ) : (
                     <p className="text-sm text-muted">No crew size/hours logged on these sessions.</p>
                   )}
+                </div>
+              )}
+              {tagSummary.ratePerDay != null && (
+                <div>
+                  <p className="text-xs text-muted mb-0.5">Per Day (avg vs. target)</p>
+                  <p className={`text-lg font-semibold ${tagSummary.avgPerDay >= tagSummary.ratePerDay ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                    {Math.round(tagSummary.avgPerDay).toLocaleString()} <span className="text-muted font-normal">/ {tagSummary.ratePerDay.toLocaleString()} {tagSummary.uomLabel}</span>
+                  </p>
                 </div>
               )}
             </div>
