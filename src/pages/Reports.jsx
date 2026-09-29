@@ -77,6 +77,12 @@ export default function Reports() {
 
   const [projectOptions, setProjectOptions] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState('all')
+  // Tag mode pulls every scope across every job carrying a given Production
+  // Rate line item (Company Hub), instead of every scope under one job —
+  // see supabase-migration-tags-production-rates.sql.
+  const [filterMode, setFilterMode] = useState('project')
+  const [tagOptions, setTagOptions] = useState([])
+  const [selectedTagId, setSelectedTagId] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [rows, setRows] = useState([])
@@ -93,7 +99,11 @@ export default function Reports() {
     // Cleaning"), so it never matched what's shown on the Projects page.
     supabase.from('jobs').select('id, name').order('name')
       .then(({ data, error: err }) => { if (!err) setProjectOptions(data || []) })
+    supabase.from('tags').select('*').order('name')
+      .then(({ data, error: err }) => { if (!err) setTagOptions(data || []) })
   }, [canView])
+
+  const selectedTag = tagOptions.find(t => t.id === selectedTagId) || null
 
   function setPreset(preset) {
     if (preset === 'week') { setStartDate(daysAgoISO(7)); setEndDate(todayISO()) }
@@ -105,7 +115,16 @@ export default function Reports() {
     setLoading(true); setError(''); setHasRun(false)
     try {
       let pageQuery = supabase.from('pages').select('id')
-      if (selectedProjectId !== 'all') {
+      if (filterMode === 'tag') {
+        if (!selectedTagId) { setError('Pick a tag.'); setLoading(false); return }
+        // A tag can be on scopes across many different jobs — this is the
+        // whole point of tag mode (see Company Hub's Production Rates).
+        const { data: tagged, error: taggedErr } = await supabase.from('project_tags').select('project_id').eq('tag_id', selectedTagId)
+        if (taggedErr) throw taggedErr
+        const scopeIds = (tagged || []).map(r => r.project_id)
+        if (scopeIds.length === 0) { setRows([]); setHasRun(true); return }
+        pageQuery = pageQuery.in('project_id', scopeIds)
+      } else if (selectedProjectId !== 'all') {
         // selectedProjectId is a job id (see the dropdown above) — a page
         // belongs to a scope, not directly to a job, so resolve to every
         // scope under this job first.
@@ -187,7 +206,31 @@ export default function Reports() {
     downloadCsv(`production-report-${label}.csv`, rowsToCsv(rows, REPORT_COLUMNS))
   }
 
-  const showProjectColumn = selectedProjectId === 'all'
+  const showProjectColumn = filterMode === 'tag' || selectedProjectId === 'all'
+
+  // Simple actual-vs-standard-rate comparison for tag mode — the whole
+  // point of tagging scopes with a company-wide rate in the first place.
+  // A tag's rate has no cumulative "total" concept (see
+  // ScopeSettingsModal's activeRateTag), only day/man-hour paces, so this
+  // stays a pace comparison rather than a progress bar.
+  const tagSummary = (() => {
+    if (filterMode !== 'tag' || !selectedTag || rows.length === 0) return null
+    const uom = selectedTag.uom === 'lf' ? 'lf' : 'sf'
+    const actual = rows.reduce((sum, r) => sum + (uom === 'lf' ? r.lf : r.sf), 0)
+    const distinctDays = new Set(rows.map(r => r.date).filter(Boolean)).size
+    const totalManHours = rows.reduce((sum, r) => sum + (parseFloat(r.totalHours) || 0), 0)
+    const avgPerDay = distinctDays > 0 ? actual / distinctDays : 0
+    const avgPerManHour = totalManHours > 0 ? actual / totalManHours : 0
+    return {
+      uomLabel: uom.toUpperCase(),
+      actual,
+      distinctDays,
+      avgPerDay,
+      avgPerManHour: totalManHours > 0 ? avgPerManHour : null,
+      ratePerDay: selectedTag.rate_per_day,
+      ratePerManHour: selectedTag.rate_per_man_hour,
+    }
+  })()
 
   if (!canView) {
     return (
@@ -210,12 +253,43 @@ export default function Reports() {
         <div className="card mb-6">
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-[160px]">
-              <label className="block text-xs text-muted mb-1">Project</label>
-              <select value={selectedProjectId} onChange={e => setSelectedProjectId(e.target.value)} className="input">
-                <option value="all">All Projects</option>
-                {projectOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <label className="block text-xs text-muted mb-1">Filter By</label>
+              <div className="flex gap-2">
+                <button
+                  type="button" onClick={() => setFilterMode('project')}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    filterMode === 'project' ? 'bg-accent/10 text-accent border-accent/30' : 'bg-surface-2 text-muted hover:text-gray-700 dark:hover:text-gray-300 border-border'
+                  }`}
+                >
+                  Project
+                </button>
+                <button
+                  type="button" onClick={() => setFilterMode('tag')}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    filterMode === 'tag' ? 'bg-accent/10 text-accent border-accent/30' : 'bg-surface-2 text-muted hover:text-gray-700 dark:hover:text-gray-300 border-border'
+                  }`}
+                >
+                  Tag
+                </button>
+              </div>
             </div>
+            {filterMode === 'project' ? (
+              <div className="flex-1 min-w-[160px]">
+                <label className="block text-xs text-muted mb-1">Project</label>
+                <select value={selectedProjectId} onChange={e => setSelectedProjectId(e.target.value)} className="input">
+                  <option value="all">All Projects</option>
+                  {projectOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div className="flex-1 min-w-[160px]">
+                <label className="block text-xs text-muted mb-1">Tag</label>
+                <select value={selectedTagId} onChange={e => setSelectedTagId(e.target.value)} className="input">
+                  <option value="">Select a tag...</option>
+                  {tagOptions.map(t => <option key={t.id} value={t.id}>{t.name} ({t.uom.toUpperCase()})</option>)}
+                </select>
+              </div>
+            )}
             <div className="flex-1 min-w-[140px]">
               <label className="block text-xs text-muted mb-1">Start date</label>
               {/* Blurring right after a date is picked closes the native
@@ -262,6 +336,43 @@ export default function Reports() {
         {!error && hasRun && migrationMissing && (
           <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-800 dark:text-yellow-200">
             Some columns (Linear Footage, Crew Size / Hours Worked, and/or Lunch Break) don't exist in the database yet, so those fields are blank (or Total Hours is un-adjusted) below for every row. Run the migrations noted in Canvas.jsx / supabase-schema.sql and supabase-migration-lunch-break.sql in the Supabase SQL editor, then run this report again.
+          </div>
+        )}
+
+        {!error && hasRun && tagSummary && (
+          <div className="card mb-4">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+              "{selectedTag.name}" — Actual vs. Standard Rate
+            </h2>
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <p className="text-xs text-muted mb-0.5">Total Production</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {Math.round(tagSummary.actual).toLocaleString()} {tagSummary.uomLabel}
+                </p>
+                <p className="text-xs text-muted">across {tagSummary.distinctDays} day{tagSummary.distinctDays === 1 ? '' : 's'}</p>
+              </div>
+              {tagSummary.ratePerDay != null && (
+                <div>
+                  <p className="text-xs text-muted mb-0.5">Per Day (avg vs. target)</p>
+                  <p className={`text-lg font-semibold ${tagSummary.avgPerDay >= tagSummary.ratePerDay ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                    {Math.round(tagSummary.avgPerDay).toLocaleString()} <span className="text-muted font-normal">/ {tagSummary.ratePerDay.toLocaleString()} {tagSummary.uomLabel}</span>
+                  </p>
+                </div>
+              )}
+              {tagSummary.ratePerManHour != null && (
+                <div>
+                  <p className="text-xs text-muted mb-0.5">Per Man-Hour (avg vs. target)</p>
+                  {tagSummary.avgPerManHour != null ? (
+                    <p className={`text-lg font-semibold ${tagSummary.avgPerManHour >= tagSummary.ratePerManHour ? 'text-accent' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                      {tagSummary.avgPerManHour.toFixed(1)} <span className="text-muted font-normal">/ {tagSummary.ratePerManHour.toLocaleString()} {tagSummary.uomLabel}</span>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted">No crew size/hours logged on these sessions.</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
