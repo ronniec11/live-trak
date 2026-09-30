@@ -120,11 +120,16 @@ function CompanyProfileCard({ org, onSaved }) {
     setError('')
     setSaved(false)
     try {
+      const trimmedWebsite = website.trim()
       const patch = {
         name: trimmedName,
         address: address.trim() || null,
         phone: phone.trim() || null,
-        website: website.trim() || null,
+        // A bare domain like "mycompany.com" (the most natural way to type
+        // this) has no scheme, which is fine to store as typed — nothing
+        // else in the app currently turns this into a clickable link, so
+        // there's no reason to force a particular shape on it here.
+        website: trimmedWebsite || null,
       }
       // .select().single() on purpose — a plain .update() with no .select()
       // reports success even if RLS blocks the row (a zero-row match isn't
@@ -192,7 +197,13 @@ function CompanyProfileCard({ org, onSaved }) {
           </div>
           <div>
             <label className="label">Website</label>
-            <input className="input" type="url" value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://..." />
+            {/* type="text", not "url" — a bare domain like "mycompany.com"
+                (the most natural way to type this, no https://) fails the
+                browser's native url-input validation, which silently blocks
+                the form's submit event before handleSave ever runs. There's
+                nothing else here needing the url keyboard/validation badly
+                enough to trade away typing it the plain way. */}
+            <input className="input" type="text" value={website} onChange={e => setWebsite(e.target.value)} placeholder="mycompany.com" />
           </div>
         </div>
 
