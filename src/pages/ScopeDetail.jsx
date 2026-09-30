@@ -931,14 +931,23 @@ export default function ScopeDetail() {
   // actually finishes, independent of whatever happened to the original
   // request/response in this tab.
   useEffect(() => {
-    const processingIds = pages.filter(p => p.tile_status === 'processing').map(p => p.id)
-    if (processingIds.length === 0) return
+    // Also watches pages the CLIENT marked 'failed' (generateTiles' own
+    // catch block, e.g. a gateway timeout on the fetch itself) — not just
+    // ones still 'processing'. That client-side 'failed' is only ever a
+    // guess about what the server is doing; the server can easily still be
+    // running past it (same underlying risk the comment above describes)
+    // and finish successfully moments later, which this would otherwise
+    // never notice until a manual reload. Confirmed happening in practice:
+    // a page showed the failure banner, then flipped to complete on its
+    // own after a refresh with no further action taken.
+    const watchIds = pages.filter(p => p.tile_status === 'processing' || p.tile_status === 'failed').map(p => p.id)
+    if (watchIds.length === 0) return
     const interval = setInterval(async () => {
-      const { data, error } = await supabase.from('pages').select('id, tile_status, tile_meta, tile_error').in('id', processingIds)
+      const { data, error } = await supabase.from('pages').select('id, tile_status, tile_meta, tile_error').in('id', watchIds)
       if (error || !data) return
       setPages(ps => ps.map(p => {
         const fresh = data.find(d => d.id === p.id)
-        return fresh && fresh.tile_status !== 'processing' ? { ...p, ...fresh } : p
+        return fresh ? { ...p, ...fresh } : p
       }))
     }, 8000)
     return () => clearInterval(interval)
