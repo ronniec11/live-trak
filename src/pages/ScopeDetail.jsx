@@ -200,6 +200,97 @@ function AddPageModal({ projectId, onClose, onCreated }) {
   )
 }
 
+// SF/LF/each — deliberately its own vocabulary, separate from the scope's
+// own uom ('SF'/'LF'/'Count', capital C, set in Scope Settings) — a single
+// scope can now hold pages tracked in different units, so each page needs
+// its own independent choice rather than inheriting one shared value.
+const PAGE_UOM_OPTIONS = ['SF', 'LF', 'each']
+
+// A sheet's own unit of measure + daily/total target, overriding the
+// scope-level target for just this one page (read by Canvas.jsx on load —
+// see its "page overrides scope" comment). Opened from the small gear icon
+// on each page's thumbnail (bottom-left corner, alongside Rename/Delete/
+// Generate Tiles), same modal shape as AddPageModal above.
+function PageSettingsModal({ page, onClose, onSaved }) {
+  const [name, setName] = useState(page.name || '')
+  const [uom, setUom] = useState(page.unit_of_measure || 'SF')
+  const [dailyTarget, setDailyTarget] = useState(page.daily_target ?? '')
+  const [totalTarget, setTotalTarget] = useState(page.total_target ?? '')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!name.trim()) return
+    setError('')
+    setLoading(true)
+    const updates = {
+      name: name.trim(),
+      unit_of_measure: uom,
+      daily_target: dailyTarget === '' ? null : parseFloat(dailyTarget) || 0,
+      total_target: totalTarget === '' ? null : parseFloat(totalTarget) || 0,
+    }
+    try {
+      const { error: upErr } = await supabase.from('pages').update(updates).eq('id', page.id)
+      if (upErr) throw upErr
+      onSaved(updates)
+      onClose()
+    } catch (err) {
+      console.error('[PageSettings] save failed:', err)
+      setError(err.message || 'Something went wrong. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !loading && onClose()}>
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Sheet Settings</h2>
+          <button onClick={onClose} disabled={loading} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="label">Sheet Name *</label>
+            <input className="input" value={name} onChange={e => setName(e.target.value)} required />
+          </div>
+          <div>
+            <label className="label">Unit of Measure</label>
+            <select className="input" value={uom} onChange={e => setUom(e.target.value)}>
+              {PAGE_UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Daily Target</label>
+              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="e.g. 5000" />
+            </div>
+            <div>
+              <label className="label">Total Target</label>
+              <input className="input" type="number" min="0" value={totalTarget} onChange={e => setTotalTarget(e.target.value)} placeholder="e.g. 250000" />
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} disabled={loading} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={loading} className="btn-primary flex-1">{loading ? 'Saving...' : 'Save'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // Drills Hubs -> ACC Projects -> Folders -> Files, then downloads the
 // picked file and runs it through the exact same upload+insert path as a
 // local file pick (createPageFromFile) — the only difference is where the
@@ -528,6 +619,7 @@ export default function ScopeDetail() {
   const [showAddPage, setShowAddPage] = useState(false)
   const [showImportAutodesk, setShowImportAutodesk] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
+  const [pageSettingsTarget, setPageSettingsTarget] = useState(null) // the page currently open in Sheet Settings, or null
   const [editingTarget, setEditingTarget] = useState(false)
   const [targetInput, setTargetInput] = useState('')
   const [savingTarget, setSavingTarget] = useState(false)
@@ -892,6 +984,32 @@ export default function ScopeDetail() {
     ? Math.min(100, Math.round((totalSF / effectiveTotalTarget) * 100))
     : 0
 
+  // Per-page UOM breakdown — a scope's pages can now each carry their own
+  // unit of measure (Sheet Settings), independent of the scope's own uom
+  // above. Groups pages by their own unit_of_measure (defaulting an unset
+  // page to 'SF', same default Canvas.jsx/PageSettingsModal use), summing
+  // each group's sessions against that group's own pages' total_target —
+  // same sessionValue three-way split as above, just keyed per-page
+  // instead of by the scope's single uom.
+  const pageUnitValue = (s, uom) => uom === 'LF' ? (parseFloat(s.lf) || 0)
+    : uom === 'each' ? (s.count_data?.length ?? s.count_data?.markers?.length ?? 0)
+    : (parseFloat(s.sf) || 0)
+  const uomBreakdown = (() => {
+    const groups = {}
+    pages.forEach(pg => {
+      const u = pg.unit_of_measure || 'SF'
+      if (!groups[u]) groups[u] = { unit: u, pageIds: new Set(), target: 0 }
+      groups[u].pageIds.add(pg.id)
+      groups[u].target += pg.total_target || 0
+    })
+    return Object.values(groups).map(g => {
+      const total = todaySessions
+        .filter(s => g.pageIds.has(s.page_id))
+        .reduce((sum, s) => sum + pageUnitValue(s, g.unit), 0)
+      return { ...g, total, pct: g.target > 0 ? Math.min(100, Math.round((total / g.target) * 100)) : 0 }
+    })
+  })()
+
   async function saveTarget() {
     setSavingTarget(true)
     try {
@@ -1119,6 +1237,16 @@ export default function ScopeDetail() {
                             <svg className="w-3 h-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                           </button>
                           <button
+                            onClick={e => { e.stopPropagation(); setPageSettingsTarget(page) }}
+                            className="absolute bottom-1 left-1 p-0.5 rounded bg-black/60 opacity-0 group-hover/tab:opacity-100 transition-opacity"
+                            title="Sheet Settings — unit of measure, daily/total target"
+                          >
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                          </button>
+                          <button
                             onClick={e => { e.stopPropagation(); generateTiles(page, e.shiftKey) }}
                             disabled={!!tilingPageId}
                             className={`absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 transition-opacity flex items-center gap-0.5 ${
@@ -1255,6 +1383,35 @@ export default function ScopeDetail() {
                   </>
                 )}
               </div>
+
+              {/* Progress by unit of measure — each page's own Sheet
+                  Settings target, rolled up per unit. Only shown once a
+                  scope actually has pages tracked in more than the default
+                  single unit; a single-unit scope already has its answer
+                  in the Total Progress bar above. */}
+              {uomBreakdown.length > 1 && (
+                <div className="pt-2 border-t border-border">
+                  <span className="text-xs text-muted font-medium block mb-2">Progress by Unit of Measure</span>
+                  <div className="space-y-3">
+                    {uomBreakdown.map(g => (
+                      <div key={g.unit}>
+                        <div className="flex justify-between items-baseline mb-1">
+                          <span className="text-xs text-muted">{g.unit} Progress</span>
+                          <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                            {g.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            {g.target > 0 && <span className="text-muted font-normal"> / {g.target.toLocaleString()} {g.unit}</span>}
+                          </span>
+                        </div>
+                        {g.target > 0 && (
+                          <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
+                            <div className="h-full bg-accent rounded-full transition-all duration-700" style={{ width: `${g.pct}%` }} />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1542,6 +1699,16 @@ export default function ScopeDetail() {
           onCreated={newPage => {
             setShowImportAutodesk(false)
             loadData().then(() => setActivePage(newPage))
+          }}
+        />
+      )}
+      {pageSettingsTarget && (
+        <PageSettingsModal
+          page={pageSettingsTarget}
+          onClose={() => setPageSettingsTarget(null)}
+          onSaved={updates => {
+            setPages(ps => ps.map(p => p.id === pageSettingsTarget.id ? { ...p, ...updates } : p))
+            if (activePage?.id === pageSettingsTarget.id) setActivePage(a => ({ ...a, ...updates }))
           }}
         />
       )}

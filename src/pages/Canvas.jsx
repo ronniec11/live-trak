@@ -48,6 +48,20 @@ import './Canvas.css'
 // same cross-device rescaling shape as count_data/lf_data (each label is a
 // drag-sized box, like Rectangle, not a bare point) — fontSize is in the
 // same image-space px as the bounds, so it rescales right along with them.
+//
+// NOTE: Run this migration to enable per-page units of measure — a page's
+// own unit_of_measure (SF/LF/each) + daily_target/total_target, set from
+// its Sheet Settings (ScopeDetail.jsx), override the scope-level target for
+// that page specifically — see supabase-migration-page-uom.sql:
+// ALTER TABLE public.pages ADD COLUMN IF NOT EXISTS unit_of_measure text DEFAULT 'SF';
+// ALTER TABLE public.pages ADD COLUMN IF NOT EXISTS daily_target numeric;
+// ALTER TABLE public.pages ADD COLUMN IF NOT EXISTS total_target numeric;
+// ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS unit_of_measure text;
+// sessions.unit_of_measure records which unit was active on the page at
+// save time (denormalized, same reasoning as sf/lf/count_data already
+// being saved regardless of which tool was used) — it isn't read back by
+// this file today, but is there for reports/exports that may want it
+// without re-joining pages.
 
 const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
@@ -109,7 +123,9 @@ export default function Canvas() {
   const calibBtnRef      = useRef(null)
   const calibInfoRef     = useRef(null)
   const hdrSessionRef       = useRef(null)
+  const hdrSessionLblRef    = useRef(null)
   const hdrTotalRef         = useRef(null)
+  const hdrTotalLblRef      = useRef(null)
   const hdrPctRef           = useRef(null)
   const hdrProgressFillRef  = useRef(null)
   // sidebar
@@ -127,6 +143,7 @@ export default function Canvas() {
   const progressFillRef  = useRef(null)
   const totalSFsbRef     = useRef(null)
   const targetDisplayRef = useRef(null)
+  const sbUnitSuffixRef  = useRef(null)
   const sessionListRef   = useRef(null)
   const emptyMsgRef      = useRef(null)
   const footerRef        = useRef(null)
@@ -452,8 +469,9 @@ export default function Canvas() {
     let realtimeSub     = null
     let cachedLivePx    = 0   // pixel count of liveHlCanvas, updated on content change
     let cachedTotalPx   = 0   // pixel count of all sessions + live, updated on content change
-    let cachedTodaySF   = 0   // SF total for today's sessions + live (used for daily progress bar)
-    let cachedTotalSF   = 0   // SF total for ALL sessions + live (used for Total SF header)
+    let cachedTodaySF   = 0   // unit total for today's sessions + live (used for daily progress bar) — despite the name, reads whichever field activePage.unitOfMeasure points at, not always sf
+    let cachedTotalSF   = 0   // unit total for ALL sessions + live (used for header "Total" stat)
+    let cachedLiveUnitVal = 0 // today's unsaved work in activePage.unitOfMeasure's own unit — SF from the live raster, LF from liveLFLines, count from liveCountMarkers
 
     // ── SCALE HELPERS ─────────────────────────────────────────────────────────
     function ppf(n, d) { return (96 * n) / d }
@@ -3092,21 +3110,51 @@ export default function Canvas() {
       return toSF(polygonAreaPx(activePoly.points))
     }
 
+    // Header/sidebar stat labels follow the page's own Sheet Settings unit —
+    // called once whenever activePage (and so its unitOfMeasure) changes,
+    // not on every stat recompute, since the label itself doesn't change
+    // between saves the way the numbers do.
+    function applyUnitLabels() {
+      const uom = activePage?.unitOfMeasure || 'SF'
+      const suffix = uom === 'LF' ? 'LF' : uom === 'each' ? 'Items' : 'SF'
+      if (hdrSessionLblRef.current) hdrSessionLblRef.current.textContent = `Session ${suffix}`
+      if (hdrTotalLblRef.current)   hdrTotalLblRef.current.textContent   = `Total ${suffix}`
+      if (sbUnitSuffixRef.current)  sbUnitSuffixRef.current.textContent  = suffix
+    }
+
+    // Which field on a saved session is "the" progress number for this
+    // page — mirrors ScopeDetail.jsx's own sessionValue() (per-scope) so a
+    // page's stats read from whichever field its Sheet Settings UOM points
+    // at, not always sf.
+    function sessionUnitValue(s, uom) {
+      if (uom === 'LF') return parseFloat(s.lf) || 0
+      if (uom === 'each') return s.count_data?.length ?? s.count_data?.markers?.length ?? 0
+      return s.sf || 0
+    }
+
     function updateSF() {
       if (!activePage) { if (hdrSessionRef.current) hdrSessionRef.current.textContent = '0'; if (hdrTotalRef.current) hdrTotalRef.current.textContent = '0'; return }
       cachedLivePx = countPx(liveHlCanvas)
       const today = new Date().toLocaleDateString('en-CA')
       const liveSFVal = toSF(cachedLivePx)
-      // Daily SF = today's sessions only + current unsaved live work (for daily progress bar)
+      const uom = activePage.unitOfMeasure || 'SF'
+      // Only SF has a meaningful "currently being dragged" live value
+      // (Rectangle/Polygon, handled per-frame in updateSFDisplay below) —
+      // LF lines finish on click and Count markers land immediately, so
+      // liveLFLines/liveCountMarkers already hold everything unsaved.
+      cachedLiveUnitVal = uom === 'LF' ? liveLFLines.reduce((a, l) => a + toLF(lineLengthPx(l.points)), 0)
+        : uom === 'each' ? liveCountMarkers.length
+        : liveSFVal
+      // Daily total = today's sessions only + current unsaved live work (for daily progress bar)
       cachedTodaySF = activePage.sessions
         .filter(s => !s._hidden && s.date === today)
-        .reduce((sum, s) => sum + (s.sf || 0), 0)
-        + liveSFVal
-      // Total SF = all non-hidden sessions + live (for header Total SF)
+        .reduce((sum, s) => sum + sessionUnitValue(s, uom), 0)
+        + cachedLiveUnitVal
+      // Grand total = all non-hidden sessions + live (for header Total stat)
       cachedTotalSF = activePage.sessions
         .filter(s => !s._hidden)
-        .reduce((sum, s) => sum + (s.sf || 0), 0)
-        + liveSFVal
+        .reduce((sum, s) => sum + sessionUnitValue(s, uom), 0)
+        + cachedLiveUnitVal
       updateSFDisplay()
     }
 
@@ -3114,15 +3162,21 @@ export default function Canvas() {
     // and on every rect-tool drag frame. An active (not-yet-baked) rectangle
     // is a perfect box, so its area is added analytically rather than via a
     // full countPx() rescan — cheap enough to run on every pointer move.
+    // rectSF only applies to SF pages — Rectangle/Polygon area is
+    // meaningless to an LF/Count-configured page, whose own live
+    // contribution updateSF() above already folded into cachedTodaySF/
+    // cachedTotalSF (those tools don't need this per-frame-cheap path the
+    // way Rectangle's continuous drag does).
     function updateSFDisplay() {
       if (!activePage) return
-      const rectSF   = activeRectSF() + activePolySF()
-      const liveSF   = Math.round(toSF(cachedLivePx) + rectSF)
-      const totalSF  = Math.round(cachedTotalSF + rectSF)
+      const uom = activePage.unitOfMeasure || 'SF'
+      const rectSF   = uom === 'SF' ? (activeRectSF() + activePolySF()) : 0
+      const liveVal  = uom === 'SF' ? Math.round(toSF(cachedLivePx) + rectSF) : Math.round(cachedLiveUnitVal)
+      const totalVal = Math.round(cachedTotalSF + rectSF)
       const totalPct = totalBuildingSF > 0 ? Math.round(((cachedTotalSF + rectSF) / totalBuildingSF) * 100) : 0
       const barPct   = totalBuildingSF > 0 ? Math.min(((cachedTotalSF + rectSF) / totalBuildingSF) * 100, 100) : 0
-      if (hdrSessionRef.current)      hdrSessionRef.current.textContent      = liveSF.toLocaleString()
-      if (hdrTotalRef.current)        hdrTotalRef.current.textContent        = totalSF.toLocaleString()
+      if (hdrSessionRef.current)      hdrSessionRef.current.textContent      = liveVal.toLocaleString()
+      if (hdrTotalRef.current)        hdrTotalRef.current.textContent        = totalVal.toLocaleString()
       if (hdrPctRef.current)          hdrPctRef.current.textContent          = totalBuildingSF > 0 ? totalPct + '%' : '–'
       if (hdrProgressFillRef.current) hdrProgressFillRef.current.style.width = barPct + '%'
       updateProgressBar()
@@ -3675,6 +3729,7 @@ export default function Canvas() {
             ? { w: activePage.image.width, h: activePage.image.height, labels: session.textLabels }
             : null,
           photos,
+          unit_of_measure: activePage.unitOfMeasure || 'SF',
           updated_at:     new Date().toISOString(),
         }
 
@@ -3732,6 +3787,15 @@ export default function Canvas() {
           if (!error && session.textLabels?.length) {
             alert('Session saved, but Text labels were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (text_data ALTER TABLE) in the Supabase SQL editor, then re-add them via Paint More.')
           }
+        }
+        if (error && /unit_of_measure/.test(error.message)) {
+          // Same idea, for the newer per-page unit-of-measure column — silent
+          // drop is fine here (unlike the others above), since nothing in
+          // this file reads sessions.unit_of_measure back; losing it costs
+          // nothing but a denormalized convenience field for future reports.
+          console.warn('[Canvas] unit_of_measure column missing on sessions, retrying without it.')
+          const { unit_of_measure, ...rest } = insertPayload
+          ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
         }
         if (error) throw error
         if (data?.id) session.supabaseId = data.id
@@ -5500,6 +5564,9 @@ export default function Canvas() {
         projectName = cachedProject.name || ''
         projectDescription = cachedProject.description || ''
       }
+      // Same page-overrides-scope precedence as the online load path.
+      if (cachedPage.daily_target) todayTarget = cachedPage.daily_target
+      if (cachedPage.total_target) totalBuildingSF = cachedPage.total_target
 
       if (cachedPage.scale && scaleSelectRef.current) {
         scaleSelectRef.current.value = cachedPage.scale
@@ -5530,6 +5597,10 @@ export default function Canvas() {
             height: Math.round(cachedPage.tileMeta.height * osdOverlayScale),
           }
           addPage(placeholderImg, cachedPage.name, 72 * TILE_BASE_SCALE * osdOverlayScale, cachedPage.tileMeta, null)
+          activePage.unitOfMeasure = cachedPage.unit_of_measure || 'SF'
+          activePage.dailyTarget = cachedPage.daily_target || 0
+          activePage.totalTarget = cachedPage.total_target || 0
+          applyUnitLabels()
           setupOsdViewer(buildOfflineTileSource(cachedPage.tileMeta, tileRecords))
           usedTiledViewer = true
         } catch (e) {
@@ -5595,6 +5666,10 @@ export default function Canvas() {
         }
 
         addPage(img, cachedPage.name, cachedPage.ppi)
+        activePage.unitOfMeasure = cachedPage.unit_of_measure || 'SF'
+        activePage.dailyTarget = cachedPage.daily_target || 0
+        activePage.totalTarget = cachedPage.total_target || 0
+        applyUnitLabels()
       }
 
       if (cachedPage.pixels_per_foot && cachedPage.calibrated) {
@@ -5731,6 +5806,16 @@ export default function Canvas() {
       if (project?.total_sf_target) {
         totalBuildingSF = project.total_sf_target
       }
+      // A target set on the page itself (Sheet Settings) always wins over
+      // the scope's own target — same override precedence as
+      // ScopeDetail.jsx's effectiveDailyTarget (manual overrides
+      // tag-derived), just one level up: page overrides scope.
+      if (pg.daily_target) {
+        todayTarget = pg.daily_target
+      }
+      if (pg.total_target) {
+        totalBuildingSF = pg.total_target
+      }
       if (project?.cost) {
         projectCost = project.cost
       }
@@ -5831,6 +5916,10 @@ export default function Canvas() {
             height: Math.round(pg.tile_meta.height * osdOverlayScale),
           }
           addPage(placeholderImg, pg.name, 72 * TILE_BASE_SCALE * osdOverlayScale, pg.tile_meta, pg.floor_plan_url)
+          activePage.unitOfMeasure = pg.unit_of_measure || 'SF'
+          activePage.dailyTarget = pg.daily_target || 0
+          activePage.totalTarget = pg.total_target || 0
+          applyUnitLabels()
           setupOsdViewer(buildTileSource(pg.tile_meta))
         } else {
         const isPdf = /\.pdf($|\?)/i.test(url) || url.toLowerCase().includes('.pdf')
@@ -5927,6 +6016,10 @@ export default function Canvas() {
         }
 
         addPage(img, pg.name, ppi, null, pg.floor_plan_url)
+        activePage.unitOfMeasure = pg.unit_of_measure || 'SF'
+        activePage.dailyTarget = pg.daily_target || 0
+        activePage.totalTarget = pg.total_target || 0
+        applyUnitLabels()
 
         // Cache PDF render as PNG for faster future loads
         if (isPdf && !pg.cached_image_url) {
@@ -6270,12 +6363,12 @@ export default function Canvas() {
         <div className="ct-hdiv" />
         <div className="ct-stat-box">
           <div ref={hdrSessionRef} className="ct-stat-val" style={{color:'var(--ct-accent)'}}>0</div>
-          <div className="ct-stat-lbl">Session SF</div>
+          <div ref={hdrSessionLblRef} className="ct-stat-lbl">Session SF</div>
         </div>
         <div className="ct-hdiv" />
         <div className="ct-stat-box">
           <div ref={hdrTotalRef} className="ct-stat-val">0</div>
-          <div className="ct-stat-lbl">Total SF</div>
+          <div ref={hdrTotalLblRef} className="ct-stat-lbl">Total SF</div>
         </div>
         <div className="ct-hdiv" />
         <div className="ct-stat-box" style={{minWidth:55}}>
@@ -6378,7 +6471,7 @@ export default function Canvas() {
           <div className="ct-progress-wrap">
             <div className="ct-progress-header">
               <span className="ct-progress-lbl">Daily Progress</span>
-              <span className="ct-progress-nums"><span ref={totalSFsbRef}>0</span> / <span ref={targetDisplayRef}>0</span> SF</span>
+              <span className="ct-progress-nums"><span ref={totalSFsbRef}>0</span> / <span ref={targetDisplayRef}>0</span> <span ref={sbUnitSuffixRef}>SF</span></span>
             </div>
             <div className="ct-progress-bar-bg">
               <div ref={progressFillRef} className="ct-progress-bar-fill" style={{width:'0%'}} />

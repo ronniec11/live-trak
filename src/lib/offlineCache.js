@@ -336,6 +336,7 @@ async function cachePage(pg, projectId, onProgress) {
   await dbPut('cachedPages', {
     id: pg.id, projectId, name: pg.name, scale: pg.scale, ppi: pg.ppi,
     pixels_per_foot: pg.pixels_per_foot, calibrated: pg.calibrated,
+    unit_of_measure: pg.unit_of_measure, daily_target: pg.daily_target, total_target: pg.total_target,
     tileMeta: cachedTileMeta, sourceBlob, sourceIsPdf, sessions, cachedAt: Date.now(),
   })
 }

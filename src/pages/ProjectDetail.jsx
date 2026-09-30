@@ -763,7 +763,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
+function ScopeCard({ scope, todaySF, allTimeSF, uomBreakdown, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same pattern as the
@@ -920,6 +920,31 @@ function ScopeCard({ scope, todaySF, allTimeSF, onClick, onUpdateStatus, onOpenS
         </div>
       </div>
 
+      {/* Per-page UOM breakdown — only shown once this scope's own pages
+          span more than one unit (Sheet Settings, set per-page in
+          ScopeDetail.jsx); a single-unit scope's answer is already the
+          Total progress bar above. */}
+      {uomBreakdown && uomBreakdown.length > 1 && (
+        <div className="mt-3 pt-3 border-t border-border space-y-2">
+          {uomBreakdown.map(g => (
+            <div key={g.unit}>
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-muted">{g.unit} progress</span>
+                <span className="text-gray-700 dark:text-gray-300">
+                  {g.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  {g.target > 0 && <span className="text-muted"> / {g.target.toLocaleString()} {g.unit}</span>}
+                </span>
+              </div>
+              {g.target > 0 && (
+                <div className="h-1 bg-surface-3 rounded-full overflow-hidden">
+                  <div className="h-full bg-accent rounded-full transition-all duration-700" style={{ width: `${g.pct}%` }} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="mt-3 pt-3 border-t border-border">
         {/* No onClick here — a click bubbles up to the card's own onClick
             (the whole card is already the navigation target), so this
@@ -945,6 +970,7 @@ export default function ProjectDetail() {
   const [scopes, setScopes] = useState([])
   const [sfTodayByScope, setSfTodayByScope] = useState({})
   const [sfTotalByScope, setSfTotalByScope] = useState({})
+  const [uomBreakdownByScope, setUomBreakdownByScope] = useState({}) // scope.id -> [{unit, total, target, pct}, ...], per-page Sheet Settings rolled up per scope
   const [todaySessions, setTodaySessions] = useState([])
   const [recentSessions, setRecentSessions] = useState([])
   const [members, setMembers] = useState([])
@@ -1086,7 +1112,7 @@ export default function ProjectDetail() {
       }
 
       const [{ data: pages }, { data: memberRows }] = await Promise.all([
-        supabase.from('pages').select('id, project_id, name').in('project_id', scopeIds),
+        supabase.from('pages').select('id, project_id, name, unit_of_measure, total_target').in('project_id', scopeIds),
         supabase.from('project_members').select('user_id, profiles(*)').in('project_id', scopeIds),
       ])
 
@@ -1101,7 +1127,7 @@ export default function ProjectDetail() {
       ;(pages || []).forEach(pg => { pageToScope[pg.id] = pg.project_id; pageToName[pg.id] = pg.name })
       const pageIds = Object.keys(pageToScope)
       if (pageIds.length === 0) {
-        setSfTodayByScope({}); setSfTotalByScope({}); setTodaySessions([]); setRecentSessions([])
+        setSfTodayByScope({}); setSfTotalByScope({}); setUomBreakdownByScope({}); setTodaySessions([]); setRecentSessions([])
         return
       }
 
@@ -1132,6 +1158,39 @@ export default function ProjectDetail() {
       })
       setSfTodayByScope(todayMap)
       setSfTotalByScope(totalMap)
+
+      // Per-page UOM breakdown (Sheet Settings) — independent of the
+      // scope's own uom above; a scope's pages can each be tracked in a
+      // different unit now, so this groups by each page's OWN unit and
+      // sums target/actual per group, same math as ScopeDetail.jsx's own
+      // uomBreakdown, computed here across every scope on this job at once.
+      const pageUnitById = {}
+      const groupByScope = {} // scopeId -> unit -> { pageIds:Set, target, total }
+      ;(pages || []).forEach(pg => {
+        const u = pg.unit_of_measure || 'SF'
+        pageUnitById[pg.id] = u
+        const scopeId = pg.project_id
+        if (!groupByScope[scopeId]) groupByScope[scopeId] = {}
+        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { pageIds: new Set(), target: 0, total: 0 }
+        groupByScope[scopeId][u].pageIds.add(pg.id)
+        groupByScope[scopeId][u].target += pg.total_target || 0
+      })
+      const pageUnitValue = (s, uom) => uom === 'LF' ? (parseFloat(s.lf) || 0)
+        : uom === 'each' ? countItemsFor(s.count_data)
+        : (parseFloat(s.sf) || 0)
+      ;(sessions || []).forEach(s => {
+        const u = pageUnitById[s.page_id]
+        const g = groupByScope[pageToScope[s.page_id]]?.[u]
+        if (g) g.total += pageUnitValue(s, u)
+      })
+      const uomBreakdownMap = {}
+      Object.entries(groupByScope).forEach(([scopeId, units]) => {
+        uomBreakdownMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
+          unit, total: g.total, target: g.target,
+          pct: g.target > 0 ? Math.min(100, Math.round((g.total / g.target) * 100)) : 0,
+        }))
+      })
+      setUomBreakdownByScope(uomBreakdownMap)
 
       const withNames = (sessions || []).map(s => ({
         ...s,
@@ -1331,6 +1390,7 @@ export default function ProjectDetail() {
                     scope={scope}
                     todaySF={sfTodayByScope[scope.id] || 0}
                     allTimeSF={sfTotalByScope[scope.id] || 0}
+                    uomBreakdown={uomBreakdownByScope[scope.id]}
                     onClick={() => navigate(`/scopes/${scope.id}`)}
                     onUpdateStatus={updateScopeStatus}
                     onOpenSettings={setScopeSettingsTarget}
