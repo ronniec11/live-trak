@@ -1495,21 +1495,6 @@ export default function ScopeDetail() {
         {/* Sidebar */}
         <div className="lg:w-72 shrink-0 overflow-auto">
           <div className="p-4 sm:p-6 space-y-4">
-            {/* Progress */}
-            <div>
-              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Progress</h3>
-              <div className="bg-surface-2 rounded-xl p-3 space-y-4 elevated">
-                <div>
-                  <p className="text-xs text-muted font-medium mb-2">Daily Progress</p>
-                  <UomProgressBar groups={dailyGroups} size="sm" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted font-medium mb-2">Total Progress</p>
-                  <UomProgressBar groups={totalGroups} size="sm" />
-                </div>
-              </div>
-            </div>
-
             {/* Today's Sessions */}
             {todaySessions.filter(s => s.work_date === today).length > 0 && (
               <div>
