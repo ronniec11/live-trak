@@ -202,8 +202,16 @@ function CompanyProfileCard({ org, onSaved }) {
                 browser's native url-input validation, which silently blocks
                 the form's submit event before handleSave ever runs. There's
                 nothing else here needing the url keyboard/validation badly
-                enough to trade away typing it the plain way. */}
-            <input className="input" type="text" value={website} onChange={e => setWebsite(e.target.value)} placeholder="mycompany.com" />
+                enough to trade away typing it the plain way.
+                autoCapitalize="off" — plain text inputs auto-capitalize
+                their first letter on mobile (iOS/Android), which type="url"
+                inputs are normally exempt from; a domain typed that way on
+                a phone/iPad would otherwise start "Mycompany.com" instead
+                of "mycompany.com". */}
+            <input
+              className="input" type="text" autoCapitalize="off" autoCorrect="off" spellCheck="false"
+              value={website} onChange={e => setWebsite(e.target.value)} placeholder="mycompany.com"
+            />
           </div>
         </div>
 
