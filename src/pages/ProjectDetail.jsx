@@ -16,6 +16,11 @@ const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 // units), so this is what a scope is expected to be tracked in unless a
 // given session's markup says otherwise.
 const UOM_OPTIONS = ['SF', 'LF', 'Count']
+// Display-only capitalization for a page's own unit_of_measure (stored
+// lowercase 'each' — matches ScopeDetail.jsx's identical helper, see its
+// PAGE_UOM_OPTIONS comment for why pages use their own SF/LF/each
+// vocabulary instead of this scope-level UOM_OPTIONS one).
+const pageUomLabel = u => u === 'each' ? 'Each' : u
 // Austin, TX — used for the weather widget whenever a job has no address
 // set yet, so the widget always has something to show rather than an empty
 // box.
@@ -929,10 +934,10 @@ function ScopeCard({ scope, todaySF, allTimeSF, uomBreakdown, onClick, onUpdateS
           {uomBreakdown.map(g => (
             <div key={g.unit}>
               <div className="flex justify-between text-xs mb-1">
-                <span className="text-muted">{g.unit} progress</span>
+                <span className="text-muted">{pageUomLabel(g.unit)} progress</span>
                 <span className="text-gray-700 dark:text-gray-300">
                   {g.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  {g.target > 0 && <span className="text-muted"> / {g.target.toLocaleString()} {g.unit}</span>}
+                  {g.target > 0 && <span className="text-muted"> / {g.target.toLocaleString()} {pageUomLabel(g.unit)}</span>}
                 </span>
               </div>
               {g.target > 0 && (

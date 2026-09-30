@@ -205,6 +205,10 @@ function AddPageModal({ projectId, onClose, onCreated }) {
 // scope can now hold pages tracked in different units, so each page needs
 // its own independent choice rather than inheriting one shared value.
 const PAGE_UOM_OPTIONS = ['SF', 'LF', 'each']
+// The stored value stays lowercase 'each' (matches the DB value and every
+// uom === 'each' check elsewhere) — this is display-only, for the dropdown
+// and the Progress-by-Unit labels below.
+const pageUomLabel = u => u === 'each' ? 'Each' : u
 
 // A sheet's own unit of measure + daily/total target, overriding the
 // scope-level target for just this one page (read by Canvas.jsx on load —
@@ -263,7 +267,7 @@ function PageSettingsModal({ page, onClose, onSaved }) {
           <div>
             <label className="label">Unit of Measure</label>
             <select className="input" value={uom} onChange={e => setUom(e.target.value)}>
-              {PAGE_UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+              {PAGE_UOM_OPTIONS.map(u => <option key={u} value={u}>{pageUomLabel(u)}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1405,10 +1409,10 @@ export default function ScopeDetail() {
                     {uomBreakdown.map(g => (
                       <div key={g.unit}>
                         <div className="flex justify-between items-baseline mb-1">
-                          <span className="text-xs text-muted">{g.unit} Progress</span>
+                          <span className="text-xs text-muted">{pageUomLabel(g.unit)} Progress</span>
                           <span className="text-sm font-semibold text-gray-900 dark:text-white">
                             {g.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            {g.target > 0 && <span className="text-muted font-normal"> / {g.target.toLocaleString()} {g.unit}</span>}
+                            {g.target > 0 && <span className="text-muted font-normal"> / {g.target.toLocaleString()} {pageUomLabel(g.unit)}</span>}
                           </span>
                         </div>
                         {g.target > 0 && (
