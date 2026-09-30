@@ -346,6 +346,18 @@ export default function Canvas() {
     let lfMoveStart   = null   // image-space pointer position when a move-drag started
     let lfMoveOrig    = null   // activeLFLine.points snapshot when a move-drag started
 
+    // Copy/paste — Ctrl/Cmd+C copies whatever shape is currently active
+    // (uncommitted) for rect/poly/lf, or the text box currently open for
+    // editing; Ctrl/Cmd+V commits that active shape (same bake/commit call
+    // setTool() already makes when you switch tools away from it — see its
+    // own comment) and drops a new active shape cloned from the clipboard,
+    // offset a bit so it's visibly a separate shape and immediately
+    // grabbable to drag into place. Repeated Ctrl+V without an intervening
+    // Ctrl+C cascades further from the last paste, not from the original
+    // copy — same convention as Illustrator/PowerPoint.
+    let shapeClipboard = null  // { tool: 'rect'|'poly'|'text'|'lf', ...tool-specific geometry, lastX, lastY } | null
+    const PASTE_OFFSET = 24    // image-space px per paste step
+
     // Session composite cache
     let sessionsHL    = document.createElement('canvas')
     let sessionsPen   = document.createElement('canvas')
@@ -1429,6 +1441,26 @@ export default function Canvas() {
       return false
     }
 
+    // Click-to-reselect an already-committed LF line — pulls it back into
+    // activeLFLine (already finished, so vertex-drag/move work immediately)
+    // for editing, removing it from liveLFLines until it's recommitted.
+    // Mirrors hitTextBox's click-to-reopen for committed text boxes, a
+    // capability LF never had before (rect/poly can't have this — they're
+    // rasterized on commit, with no vector data left to reselect).
+    function hitCommittedLFLine(sx, sy) {
+      if (!activePage) return -1
+      const z = activePage.zoom, p = activePage.pan
+      for (let li = liveLFLines.length - 1; li >= 0; li--) {
+        const pts = liveLFLines[li].points
+        for (let i = 1; i < pts.length; i++) {
+          const a = {x: pts[i - 1].x * z + p.x, y: pts[i - 1].y * z + p.y}
+          const b = {x: pts[i].x * z + p.x, y: pts[i].y * z + p.y}
+          if (distToSegment({x: sx, y: sy}, a, b) < 12) return li
+        }
+      }
+      return -1
+    }
+
     function drawActiveLFPreview(cursorPos) {
       drawCtx.clearRect(0, 0, cW, cH)
       if (!activeLFLine || !activePage || activeLFLine.points.length === 0) return
@@ -1497,6 +1529,86 @@ export default function Canvas() {
       drawActiveLFPreview()
       drawMarkersLayer()
       updateUnsaved(true)
+    }
+
+    // ── COPY / PASTE (Ctrl/Cmd+C / Ctrl/Cmd+V) ─────────────────────────────────
+    // Rect/poly/lf all store clipboard geometry relative to the shape's own
+    // top-left, so pasting is just "rebuild at a new anchor point" — the
+    // anchor (lastX/lastY) advances by PASTE_OFFSET on every paste and gets
+    // reset on every copy, so repeated Ctrl+V without an intervening Ctrl+C
+    // cascades diagonally from the last paste rather than stacking exactly
+    // on top of itself.
+    function copyActiveShape() {
+      if (tool === 'rect' && activeRect) {
+        shapeClipboard = {
+          tool: 'rect',
+          w: activeRect.maxX - activeRect.minX,
+          h: activeRect.maxY - activeRect.minY,
+          lastX: activeRect.minX, lastY: activeRect.minY,
+        }
+      } else if (tool === 'poly' && activePoly && activePoly.closed) {
+        const minX = Math.min(...activePoly.points.map(p => p.x))
+        const minY = Math.min(...activePoly.points.map(p => p.y))
+        shapeClipboard = {
+          tool: 'poly',
+          relPoints: activePoly.points.map(p => ({ x: p.x - minX, y: p.y - minY })),
+          lastX: minX, lastY: minY,
+        }
+      } else if (tool === 'lf' && activeLFLine && activeLFLine.finished) {
+        const minX = Math.min(...activeLFLine.points.map(p => p.x))
+        const minY = Math.min(...activeLFLine.points.map(p => p.y))
+        shapeClipboard = {
+          tool: 'lf',
+          relPoints: activeLFLine.points.map(p => ({ x: p.x - minX, y: p.y - minY })),
+          lastX: minX, lastY: minY, color: activeColor,
+        }
+      } else if (tool === 'text' && hoveredTextBoxId != null) {
+        // Keyed off hoveredTextBoxId (mouse hovering a committed box), not
+        // textEditId — the window keydown handler this feeds is skipped
+        // entirely while the textarea itself is focused (isTyping, above),
+        // on purpose: Ctrl+C while actually typing needs to stay the
+        // browser's own native copy-the-selected-text behavior, not get
+        // hijacked into copying the whole box. Same trigger Delete/Backspace
+        // already uses for a committed text box.
+        const entry = liveTextLabels.find(t => t.id === hoveredTextBoxId)
+        if (!entry) return
+        shapeClipboard = {
+          tool: 'text',
+          w: entry.maxX - entry.minX, h: entry.maxY - entry.minY,
+          text: entry.text, color: entry.color, fontSize: entry.fontSize,
+          lastX: entry.minX, lastY: entry.minY,
+        }
+      }
+    }
+
+    function pasteShape() {
+      if (!shapeClipboard || shapeClipboard.tool !== tool || !activePage) return
+      const c = shapeClipboard
+      const newX = c.lastX + PASTE_OFFSET, newY = c.lastY + PASTE_OFFSET
+      c.lastX = newX; c.lastY = newY
+
+      if (tool === 'rect') {
+        bakeActiveRect()
+        activeRect = { minX: newX, minY: newY, maxX: newX + c.w, maxY: newY + c.h }
+        rectHandle = null
+        drawActiveRectPreview(); updateSFDisplay(); updateUnsaved(true)
+      } else if (tool === 'poly') {
+        bakePolygon()
+        activePoly = { points: c.relPoints.map(p => ({ x: p.x + newX, y: p.y + newY })), closed: true }
+        polyDragMode = null; polyVertexIdx = null
+        drawActivePolyPreview(); updateSFDisplay(); updateUnsaved(true)
+      } else if (tool === 'lf') {
+        commitLFLine()
+        activeLFLine = { points: c.relPoints.map(p => ({ x: p.x + newX, y: p.y + newY })), finished: true }
+        lfDragMode = null; lfVertexIdx = null
+        pickColor(c.color)
+        drawActiveLFPreview(); updateUnsaved(true)
+      } else if (tool === 'text') {
+        commitTextLabel()
+        const entry = { id: Date.now(), minX: newX, minY: newY, maxX: newX + c.w, maxY: newY + c.h, text: c.text, color: c.color, fontSize: c.fontSize }
+        liveTextLabels.push(entry)
+        drawMarkersLayer(); updateUnsaved(true)
+      }
     }
 
     function tintCanvas(src, hexColor) {
@@ -1696,6 +1808,14 @@ export default function Canvas() {
             const prevVertex = activeLFLine.points[activeLFLine.points.length - 1]
             activeLFLine.points.push(e.shiftKey ? snapToAngle(prevVertex, pt) : pt)
             drawActiveLFPreview(); updateUnsaved(true)
+            return
+          }
+          const committedIdx = hitCommittedLFLine(pos.x, pos.y)
+          if (committedIdx !== -1) {
+            const [line] = liveLFLines.splice(committedIdx, 1)
+            activeLFLine = { points: line.points.map(p => ({ ...p })), finished: true }
+            pickColor(line.color)
+            drawActiveLFPreview(); drawMarkersLayer(); updateUnsaved(true)
             return
           }
           activeLFLine = {points: [pt], finished: false}
@@ -2591,6 +2711,14 @@ export default function Canvas() {
           }
           activeLFLine.points.push(pt)
           drawActiveLFPreview(); updateUnsaved(true)
+          return
+        }
+        const committedIdx = hitCommittedLFLine(pos.x, pos.y)
+        if (committedIdx !== -1) {
+          const [line] = liveLFLines.splice(committedIdx, 1)
+          activeLFLine = { points: line.points.map(p => ({ ...p })), finished: true }
+          pickColor(line.color)
+          drawActiveLFPreview(); drawMarkersLayer(); updateUnsaved(true)
           return
         }
         activeLFLine = {points: [pt], finished: false}
@@ -5943,6 +6071,8 @@ export default function Canvas() {
         if (k === 'z') { e.preventDefault(); undoLast(); return }
         if (k === 's') { e.preventDefault(); saveSession(); return }
         if (k === 'h') { e.preventDefault(); openHistory(); return }
+        if (k === 'c') { e.preventDefault(); copyActiveShape(); return }
+        if (k === 'v') { e.preventDefault(); pasteShape(); return }
         return
       }
 
