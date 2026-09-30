@@ -724,7 +724,7 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Scope Member</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -776,6 +776,7 @@ export default function ScopeDetail() {
   const [pages, setPages] = useState([])
   const [members, setMembers] = useState([])
   const [todaySessions, setTodaySessions] = useState([])
+  const [scopeTags, setScopeTags] = useState([])
   const [activePage, setActivePage] = useState(null)
   const [loading, setLoading] = useState(true)
   const [offlineMode, setOfflineMode] = useState(false)
@@ -1097,6 +1098,22 @@ export default function ScopeDetail() {
     return () => clearInterval(interval)
   }, [pages])
 
+  // Tags now live on individual sheets (Sheet Settings), not the scope
+  // itself (see supabase-migration-page-tags.sql) — a scope's own "Tags"
+  // widget rolls up whichever tags are attached to ANY of its pages,
+  // deduped by tag id (the same tag can be attached to more than one
+  // sheet in this scope).
+  useEffect(() => {
+    if (pages.length === 0) { setScopeTags([]); return }
+    supabase.from('page_tags').select('tags(*)').in('page_id', pages.map(p => p.id))
+      .then(({ data, error }) => {
+        if (error) { setScopeTags([]); return }
+        const byId = new Map()
+        ;(data || []).forEach(row => { if (row.tags) byId.set(row.tags.id, row.tags) })
+        setScopeTags([...byId.values()])
+      })
+  }, [pages])
+
   const today = new Date().toLocaleDateString('en-CA')
 
   // Per-page UOM breakdown — replaces the old scope-wide Unit of
@@ -1132,6 +1149,30 @@ export default function ScopeDetail() {
       .reduce((sum, s) => sum + pageUnitValue(s, g.unit), 0)
     return { unit: g.unit, value, target: g.totalTarget, pct: g.totalTarget > 0 ? Math.min(100, Math.round((value / g.totalTarget) * 100)) : 0 }
   })
+
+  // Last Activity — todaySessions (despite its name) already holds every
+  // session across every page in this scope, ordered newest-first, so the
+  // most recent one is just its first entry.
+  const lastSession = todaySessions[0] || null
+  function relativeDay(dateStr) {
+    if (!dateStr) return ''
+    const days = Math.round((new Date(today + 'T00:00:00') - new Date(dateStr + 'T00:00:00')) / 86400000)
+    if (days <= 0) return 'Today'
+    if (days === 1) return 'Yesterday'
+    return `${days} days ago`
+  }
+
+  // This Week's Man-Hours — same crew x (hours - lunch break) math as the
+  // Sheet Report (Canvas.jsx) and Reports.jsx, summed over the last 7
+  // calendar days (today included) across every page in this scope.
+  const weekStart = new Date(today + 'T00:00:00')
+  weekStart.setDate(weekStart.getDate() - 6)
+  const weekStartStr = weekStart.toLocaleDateString('en-CA')
+  const lunchHours = (project?.lunch_break_minutes || 0) / 60
+  const sessionManHours = s => (s.total_hours != null ? s.total_hours : (s.crew_size || 0) * Math.max(0, (s.hours_worked || 0) - lunchHours))
+  const weekManHours = todaySessions
+    .filter(s => s.work_date >= weekStartStr)
+    .reduce((sum, s) => sum + sessionManHours(s), 0)
 
   if (loading) {
     return (
@@ -1495,6 +1536,55 @@ export default function ScopeDetail() {
         {/* Sidebar */}
         <div className="lg:w-72 shrink-0 overflow-auto">
           <div className="p-4 sm:p-6 space-y-4">
+            {/* Tags In This Scope — rolled up from whichever of this
+                scope's sheets are tagged (Sheet Settings), since tags
+                live per-sheet now, not on the scope itself. */}
+            {scopeTags.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Tags In This Scope</h3>
+                <div className="flex flex-wrap gap-1.5">
+                  {scopeTags.map(t => (
+                    <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
+                      {t.name}
+                      {(t.rate_per_day != null || t.rate_per_man_hour != null) && (
+                        <span className="text-muted font-normal">
+                          · {t.rate_per_day != null ? `${t.rate_per_day.toLocaleString()}/day` : `${t.rate_per_man_hour.toLocaleString()}/man-hr`}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Last Activity — the single most recent session across every
+                page in this scope, so a stalled scope is obvious at a
+                glance instead of requiring a scroll through Recent
+                Sessions to notice. */}
+            {lastSession && (
+              <div>
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Last Activity</h3>
+                <div className="bg-surface-2 rounded-lg p-2.5 flex items-center gap-2.5">
+                  <div className="w-6 h-6 rounded-full shrink-0" style={{ backgroundColor: lastSession.color || '#facc15' }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{lastSession.name || 'Session'}</p>
+                    <p className="text-xs text-muted">{relativeDay(lastSession.work_date)} · {lastSession.profiles?.full_name || 'Unknown'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* This Week's Man-Hours — same crew x (hours - lunch break)
+                math as the Sheet Report/Reports.jsx, last 7 calendar days
+                across every page in this scope. */}
+            <div>
+              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">This Week's Man-Hours</h3>
+              <div className="bg-surface-2 rounded-lg p-3">
+                <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">{weekManHours.toFixed(1)}</p>
+                <p className="text-xs text-muted mt-0.5">last 7 days</p>
+              </div>
+            </div>
+
             {/* Today's Sessions */}
             {todaySessions.filter(s => s.work_date === today).length > 0 && (
               <div>
@@ -1518,10 +1608,10 @@ export default function ScopeDetail() {
               </div>
             )}
 
-            {/* Team Members */}
+            {/* Scope Members */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">Team Members</h3>
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">Scope Members</h3>
                 {canManage && (
                   <button onClick={() => setShowAddMember(true)} className="btn-ghost py-0.5 px-2 text-xs">
                     + Add

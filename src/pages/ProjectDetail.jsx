@@ -496,7 +496,7 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
     <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-sm p-6 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Team Member</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Add Project Member</h2>
           <button onClick={onClose} className="btn-ghost p-1.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1387,7 +1387,7 @@ export default function ProjectDetail() {
             <LocationMap location={location} />
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">Team Members</h3>
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">Project Members</h3>
                 {canManageMembers && (
                   <button onClick={() => setShowAddMember(true)} className="btn-ghost py-0.5 px-2 text-xs">
                     + Add
