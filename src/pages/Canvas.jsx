@@ -985,8 +985,18 @@ export default function Canvas() {
       const minY = Math.min(fixed.y, pt.y), maxY = Math.max(fixed.y, pt.y)
       const origH = Math.max(1, orig.maxY - orig.minY)
       const ratio = (maxY - minY) / origH
-      const fontSize = Math.min(TEXT_MAX_FONT, Math.max(TEXT_MIN_FONT, (orig.fontSize || TEXT_FONT_SIZE) * ratio))
-      liveTextLabels = liveTextLabels.map(t => t.id !== id ? t : { ...t, minX, minY, maxX, maxY, fontSize })
+      const ratioFont = Math.min(TEXT_MAX_FONT, Math.max(TEXT_MIN_FONT, (orig.fontSize || TEXT_FONT_SIZE) * ratio))
+      // The height ratio alone can still overflow — a box that got narrower
+      // wraps its text into MORE lines, so the same ratio-scaled font can
+      // still be too tall for the new box. fitFontSizeToBox shrinks further
+      // from that ratio target (never grows past it — this is a direct
+      // manipulation, so it shouldn't override what the drag implies) until
+      // the text actually fits.
+      liveTextLabels = liveTextLabels.map(t => {
+        if (t.id !== id) return t
+        const fontSize = fitFontSizeToBox(t.text, maxX - minX, maxY - minY, ratioFont)
+        return { ...t, minX, minY, maxX, maxY, fontSize }
+      })
     }
 
     // Walk in reverse so an overlapping later box wins the hit test,
@@ -1048,6 +1058,26 @@ export default function Canvas() {
         out.push(line)
       })
       return out
+    }
+
+    // Shrinks fontSize (image-space px, same units the box's own fontSize
+    // field is stored in) until the wrapped text's total line height fits
+    // inside boxH at the box's current width — measured with the real
+    // wrap/measure path (wrapTextLines + countCtx), not a size-ratio guess,
+    // so this actually matches what drawMarkersLayer will render. Never
+    // grows past startFont — callers pass the size they'd prefer (the
+    // default, or a ratio-scaled target from an explicit resize) and this
+    // only pulls it down as far as needed to stop the text overflowing.
+    function fitFontSizeToBox(text, boxW, boxH, startFont) {
+      let fontSize = Math.min(TEXT_MAX_FONT, Math.max(TEXT_MIN_FONT, startFont))
+      if (!text) return fontSize
+      while (fontSize > TEXT_MIN_FONT) {
+        countCtx.font = `bold ${fontSize}px system-ui,sans-serif`
+        const lines = wrapTextLines(countCtx, text, Math.max(10, boxW))
+        if (lines.length * fontSize * 1.2 <= boxH) break
+        fontSize -= 1
+      }
+      return fontSize
     }
 
     function drawActiveTextBoxPreview() {
@@ -1129,7 +1159,17 @@ export default function Canvas() {
         // Replaces (rather than mutates) the array element for the same
         // reason moveTextBox does — see its comment.
         if (!text) liveTextLabels = liveTextLabels.filter(t => t.id !== editId)
-        else liveTextLabels = liveTextLabels.map(t => t.id === editId ? {...t, text} : t)
+        else liveTextLabels = liveTextLabels.map(t => {
+          if (t.id !== editId) return t
+          // Auto-fit on every commit, not just on an explicit resize drag —
+          // this is what actually fixes "box smaller than the text just
+          // stays bigger": a box's font can grow back toward the default
+          // once shorter text fits again, or shrink further if what was
+          // just typed no longer fits at its current size.
+          const startFont = Math.max(t.fontSize || TEXT_FONT_SIZE, TEXT_FONT_SIZE)
+          const fontSize = fitFontSizeToBox(text, t.maxX - t.minX, t.maxY - t.minY, startFont)
+          return { ...t, text, fontSize }
+        })
       }
       drawMarkersLayer(); updateUnsaved(checkHasLiveContent())
     }
@@ -2044,11 +2084,19 @@ export default function Canvas() {
         return
       }
       if (tool === 'lf' && lfDragMode) {
-        const pt = s2i(pos.x, pos.y)
+        let pt = s2i(pos.x, pos.y)
         if (lfDragMode === 'move') {
           const dx = pt.x - lfMoveStart.x, dy = pt.y - lfMoveStart.y
           activeLFLine.points = lfMoveOrig.map(p => ({x: p.x + dx, y: p.y + dy}))
         } else {
+          // Snapped relative to whichever neighbor stays put — the previous
+          // point normally, or the next one when dragging the first vertex
+          // (no previous point to anchor against) — same convention as
+          // placing a new point (snapToAngle(prevVertex, pt)).
+          if (e.shiftKey) {
+            const anchor = activeLFLine.points[lfVertexIdx - 1] || activeLFLine.points[lfVertexIdx + 1]
+            if (anchor) pt = snapToAngle(anchor, pt)
+          }
           activeLFLine.points[lfVertexIdx] = pt
         }
         drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
@@ -2348,11 +2396,15 @@ export default function Canvas() {
         return
       }
       if (tool === 'lf' && lfDragMode) {
-        const pt = s2i(pos.x, pos.y)
+        let pt = s2i(pos.x, pos.y)
         if (lfDragMode === 'move') {
           const dx = pt.x - lfMoveStart.x, dy = pt.y - lfMoveStart.y
           activeLFLine.points = lfMoveOrig.map(p => ({x: p.x + dx, y: p.y + dy}))
         } else {
+          if (shiftKey) {
+            const anchor = activeLFLine.points[lfVertexIdx - 1] || activeLFLine.points[lfVertexIdx + 1]
+            if (anchor) pt = snapToAngle(anchor, pt)
+          }
           activeLFLine.points[lfVertexIdx] = pt
         }
         drawActiveLFPreview(); updateUnsaved(checkHasLiveContent())
