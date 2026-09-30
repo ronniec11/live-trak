@@ -1771,7 +1771,7 @@ export default function Canvas() {
     function onDown(e) {
       if (!activePage) return
       const pos = getOffset(e)
-      if (calibrating && e.button === 0) { handleCalibClick(pos.x, pos.y); return }
+      if (calibrating && e.button === 0) { handleCalibClick(pos.x, pos.y, e.shiftKey); return }
       if (e.button === 1 || e.altKey) {
         isPanning = true
         panStart = {x: e.clientX, y: e.clientY}
@@ -1949,7 +1949,20 @@ export default function Canvas() {
       trackEdgePan(pos, e.shiftKey)
 
       if (calibrating) {
-        calibMousePos = {x: pos.x, y: pos.y}; drawCalibLine()
+        // Snap the still-being-dragged second point to 45/90 while Shift is
+        // held, same convention as LF/Polygon placement — snapToAngle is
+        // pure geometry (distance/angle relative to a fixed base point), so
+        // it works the same in screen space as image space as long as zoom
+        // is uniform, which it always is here (a single scalar, no
+        // separate x/y scale).
+        if (e.shiftKey && calibPt1 && activePage) {
+          const z = activePage.zoom, p = activePage.pan
+          const base = {x: calibPt1.x * z + p.x, y: calibPt1.y * z + p.y}
+          calibMousePos = snapToAngle(base, {x: pos.x, y: pos.y})
+        } else {
+          calibMousePos = {x: pos.x, y: pos.y}
+        }
+        drawCalibLine()
         ring.style.display = 'none'; return
       }
 
@@ -3065,9 +3078,10 @@ export default function Canvas() {
       drawCtx.restore()
     }
 
-    function handleCalibClick(sx, sy) {
-      const pt = s2i(sx, sy)
+    function handleCalibClick(sx, sy, shiftKey = false) {
+      let pt = s2i(sx, sy)
       if (!calibPt1) { calibPt1 = pt; if (calibStatusRef.current) calibStatusRef.current.textContent = 'Click point 2 on the plan...'; return }
+      if (shiftKey) pt = snapToAngle(calibPt1, pt)
       const dx = pt.x - calibPt1.x, dy = pt.y - calibPt1.y
       const px = Math.sqrt(dx * dx + dy * dy)
       const ans = prompt('Enter the real distance between those 2 points in feet:', '')
