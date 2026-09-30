@@ -1158,6 +1158,31 @@ export default function ScopeDetail() {
               </button>
             </div>
             <div className="card space-y-4">
+              {/* Daily progress bar (green) — matches ProjectDetail.jsx's
+                  scope cards, which have always shown Daily above Total. */}
+              <div>
+                <div className="flex justify-between items-baseline mb-2">
+                  <span className="text-xs text-muted font-medium">Daily Progress</span>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                    {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {effectiveDailyTarget > 0 && (
+                      <span className="text-muted font-normal"> / {effectiveDailyTarget.toLocaleString()} {unitLabel}{dailyTargetFromTag && ` (${activeRateTag.name})`}</span>
+                    )}
+                  </span>
+                </div>
+                {effectiveDailyTarget > 0 && (
+                  <>
+                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: dailyBarColor }} />
+                    </div>
+                    <div className="flex justify-between text-xs mt-1">
+                      <span className="text-muted">{pct}% complete</span>
+                      {pct >= 100 && <span className="text-accent font-medium">Target reached!</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+
               {/* Total progress bar (blue) */}
               <div>
                 <div className="flex justify-between items-baseline mb-2">
@@ -1202,30 +1227,6 @@ export default function ScopeDetail() {
                     <div className="flex justify-between text-xs mt-1">
                       <span className="text-muted">{totalPct}% complete</span>
                       {totalPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Building complete!</span>}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Daily progress bar (green) */}
-              <div>
-                <div className="flex justify-between items-baseline mb-2">
-                  <span className="text-xs text-muted font-medium">Daily Progress</span>
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                    {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {effectiveDailyTarget > 0 && (
-                      <span className="text-muted font-normal"> / {effectiveDailyTarget.toLocaleString()} {unitLabel}{dailyTargetFromTag && ` (${activeRateTag.name})`}</span>
-                    )}
-                  </span>
-                </div>
-                {effectiveDailyTarget > 0 && (
-                  <>
-                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: dailyBarColor }} />
-                    </div>
-                    <div className="flex justify-between text-xs mt-1">
-                      <span className="text-muted">{pct}% complete</span>
-                      {pct >= 100 && <span className="text-accent font-medium">Target reached!</span>}
                     </div>
                   </>
                 )}
@@ -1309,59 +1310,8 @@ export default function ScopeDetail() {
               <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Progress</h3>
               <div className="bg-surface-2 rounded-xl p-3 space-y-4 elevated">
 
-                {/* Total progress (blue) */}
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <p className="text-xs text-muted font-medium">Total Progress</p>
-                    <div className="flex items-center gap-1">
-                      <p className="text-xs text-gray-700 dark:text-gray-300">
-                        {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        {effectiveTotalTarget > 0 && <span className="text-muted"> / {effectiveTotalTarget.toLocaleString()}</span>}
-                        {` ${unitLabel}`}
-                      </p>
-                      {canEditFinancials && !editingTotalTarget && (
-                        <button onClick={() => { setTotalTargetInput(effectiveTotalTarget || ''); setEditingTotalTarget(true) }} className="btn-ghost p-0.5">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {editingTotalTarget && (
-                    <div className="flex items-center gap-1 mb-1.5">
-                      <input
-                        type="number"
-                        value={totalTargetInput}
-                        onChange={e => setTotalTargetInput(e.target.value)}
-                        className="input w-24 text-xs py-1"
-                        min="0"
-                        placeholder={`Total ${unitLabel}`}
-                      />
-                      <button onClick={saveTotalTarget} disabled={savingTotalTarget} className="btn-primary text-xs py-1 px-2">
-                        {savingTotalTarget ? '...' : 'Save'}
-                      </button>
-                      <button onClick={() => setEditingTotalTarget(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
-                    </div>
-                  )}
-                  {effectiveTotalTarget > 0 ? (
-                    <>
-                      <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
-                      </div>
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-muted">{totalPct}%</span>
-                        {totalPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Complete!</span>}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500/30 rounded-full" style={{ width: '0%' }} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Daily progress (green) */}
+                {/* Daily progress (green) — matches ProjectDetail.jsx's
+                    scope cards, which have always shown Daily above Total. */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <p className="text-xs text-muted font-medium">Daily Progress</p>
@@ -1410,6 +1360,58 @@ export default function ScopeDetail() {
                   ) : (
                     <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
                       <div className="h-full bg-accent/30 rounded-full" style={{ width: '0%' }} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Total progress (blue) */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <p className="text-xs text-muted font-medium">Total Progress</p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs text-gray-700 dark:text-gray-300">
+                        {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        {effectiveTotalTarget > 0 && <span className="text-muted"> / {effectiveTotalTarget.toLocaleString()}</span>}
+                        {` ${unitLabel}`}
+                      </p>
+                      {canEditFinancials && !editingTotalTarget && (
+                        <button onClick={() => { setTotalTargetInput(effectiveTotalTarget || ''); setEditingTotalTarget(true) }} className="btn-ghost p-0.5">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {editingTotalTarget && (
+                    <div className="flex items-center gap-1 mb-1.5">
+                      <input
+                        type="number"
+                        value={totalTargetInput}
+                        onChange={e => setTotalTargetInput(e.target.value)}
+                        className="input w-24 text-xs py-1"
+                        min="0"
+                        placeholder={`Total ${unitLabel}`}
+                      />
+                      <button onClick={saveTotalTarget} disabled={savingTotalTarget} className="btn-primary text-xs py-1 px-2">
+                        {savingTotalTarget ? '...' : 'Save'}
+                      </button>
+                      <button onClick={() => setEditingTotalTarget(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
+                    </div>
+                  )}
+                  {effectiveTotalTarget > 0 ? (
+                    <>
+                      <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
+                      </div>
+                      <div className="flex justify-between text-xs mt-1">
+                        <span className="text-muted">{totalPct}%</span>
+                        {totalPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Complete!</span>}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500/30 rounded-full" style={{ width: '0%' }} />
                     </div>
                   )}
                 </div>
