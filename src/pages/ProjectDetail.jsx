@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import Layout from '../components/Layout'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import { useAuth } from '../contexts/AuthContext'
+import { useTheme } from '../contexts/ThemeContext'
 import { supabase } from '../lib/supabase'
 import { getCachedJobDetail } from '../lib/offlineCache'
 import { limitError } from '../lib/planLimits'
@@ -233,44 +234,110 @@ function WeatherWidget({ location }) {
   )
 }
 
-// Renders straight onto OpenStreetMap's raw tiles via Leaflet — no API key
-// needed, same as the old iframe embed, but without OSM's own site chrome
-// (search bar, "Report a problem" link, footer) eating most of a 160px-tall
-// sidebar widget. Leaflet still shows the required attribution, just as one
-// small corner label instead of a full header/footer.
-function LocationMap({ location }) {
+// CartoDB's free basemaps (no API key, same usage terms as raw OSM tiles —
+// they're OSM data, just pre-styled for light/dark UI use) instead of OSM's
+// own mapnik tiles, which only ever render light. Positron/Dark Matter are
+// the standard free choice for a themed embedded map.
+function tilesForTheme(theme) {
+  const style = theme === 'dark' ? 'dark_all' : 'light_all'
+  return {
+    url: `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  }
+}
+
+// Shared by the small sidebar preview and the enlarged modal — each gets
+// its own Leaflet instance (a map is bound to one DOM node for life), and
+// re-tiles in place if the theme flips while either is on screen.
+function LocationMapView({ location, theme, interactive, height }) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
+  const tilesRef = useRef(null)
 
   useEffect(() => {
-    if (location.status !== 'ready' || !elRef.current) return
+    if (location.status !== 'ready' || !elRef.current || mapRef.current) return
     const { lat, lon } = location
-    if (!mapRef.current) {
-      const map = L.map(elRef.current, {
-        scrollWheelZoom: false, // a small embedded map shouldn't hijack page-scroll on hover
-      }).setView([lat, lon], 15)
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }).addTo(map)
-      L.circleMarker([lat, lon], {
-        radius: 8, color: '#fff', weight: 2, fillColor: '#4f46e5', fillOpacity: 1,
-      }).addTo(map)
-      mapRef.current = map
-    } else {
-      mapRef.current.setView([lat, lon], 15)
-    }
+    const map = L.map(elRef.current, {
+      zoomControl: interactive,
+      dragging: interactive,
+      scrollWheelZoom: false, // even enlarged, scroll-to-zoom is more surprise than help — buttons/pinch/double-click cover it
+      doubleClickZoom: interactive,
+      touchZoom: interactive,
+      keyboard: interactive,
+      attributionControl: interactive,
+    }).setView([lat, lon], 15)
+    const { url, attribution } = tilesForTheme(theme)
+    tilesRef.current = L.tileLayer(url, { maxZoom: 19, attribution, subdomains: 'abcd' }).addTo(map)
+    L.circleMarker([lat, lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#4f46e5', fillOpacity: 1 }).addTo(map)
+    mapRef.current = map
+    // The modal's map mounts while its open transition may still be
+    // resolving layout, so its container can report a stale (often zero)
+    // size at creation time — nudge Leaflet to re-measure after paint.
+    requestAnimationFrame(() => map.invalidateSize())
+    return () => { map.remove(); mapRef.current = null; tilesRef.current = null }
   }, [location.status, location.lat, location.lon])
 
-  useEffect(() => () => { mapRef.current?.remove(); mapRef.current = null }, [])
+  useEffect(() => {
+    if (!mapRef.current) return
+    if (tilesRef.current) mapRef.current.removeLayer(tilesRef.current)
+    const { url, attribution } = tilesForTheme(theme)
+    tilesRef.current = L.tileLayer(url, { maxZoom: 19, attribution, subdomains: 'abcd' }).addTo(mapRef.current)
+  }, [theme])
+
+  if (location.status !== 'ready') {
+    return <div className="bg-surface-2 animate-pulse" style={{ height, width: '100%' }} />
+  }
+  return <div ref={elRef} style={{ height, width: '100%' }} />
+}
+
+// The sidebar widget is a static preview (no drag/zoom of its own — there's
+// no room to usefully pan around in 160px) that opens a full, interactive
+// map in a modal on click; clicking off the modal closes it, matching every
+// other modal in the app (see ScopeSettingsModal's backdrop/panel split).
+function LocationMap({ location }) {
+  const { theme } = useTheme()
+  const [expanded, setExpanded] = useState(false)
 
   if (location.status !== 'ready') {
     return <div className="rounded-xl border border-border overflow-hidden elevated h-40 bg-surface-2 animate-pulse" />
   }
+
   return (
-    <div className="rounded-xl border border-border overflow-hidden elevated">
-      <div ref={elRef} style={{ height: 160, width: '100%' }} />
-    </div>
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded(true)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(true) } }}
+        aria-label="Open map"
+        className="relative block w-full rounded-xl border border-border overflow-hidden elevated cursor-pointer group"
+      >
+        <LocationMapView location={location} theme={theme} interactive={false} height={160} />
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
+        <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-black/60 text-white text-[10px] px-1.5 py-0.5 leading-none pointer-events-none">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4" />
+          </svg>
+          Tap to enlarge
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setExpanded(false)}>
+          <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white truncate pr-2">{location.label}</h2>
+              <button onClick={() => setExpanded(false)} className="btn-ghost p-1.5 shrink-0">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <LocationMapView location={location} theme={theme} interactive height={480} />
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
