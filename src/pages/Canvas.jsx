@@ -4757,6 +4757,35 @@ export default function Canvas() {
       sessions.forEach(s => { if (s.hlCanvas) ec.drawImage(s.hlCanvas, 0, 0) })
       ec.globalAlpha = 1
       sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0) })
+
+      // Count markers — unlike highlight/pen, these aren't baked into a
+      // per-session canvas, so they're drawn fresh here: same circle +
+      // number look as the live Count tool (drawMarkersLayer), just sized
+      // relative to the sheet's own resolution rather than the current
+      // viewport zoom, which has no meaning for a full-resolution export.
+      const r = Math.max(14, Math.min(w, h) * 0.012)
+      sessions.forEach(s => {
+        (s.countMarkers || []).forEach(m => {
+          ec.save()
+          ec.shadowColor = 'rgba(0,0,0,0.5)'
+          ec.shadowBlur = r * 0.3
+          ec.beginPath()
+          ec.arc(m.x, m.y, r, 0, Math.PI * 2)
+          ec.fillStyle = m.color || '#4ade80'
+          ec.fill()
+          ec.strokeStyle = '#fff'
+          ec.lineWidth = Math.max(2, r * 0.15)
+          ec.shadowBlur = 0
+          ec.stroke()
+          ec.font = `bold ${Math.max(9, r * 0.85)}px system-ui,sans-serif`
+          ec.textAlign = 'center'
+          ec.textBaseline = 'middle'
+          ec.fillStyle = '#fff'
+          ec.fillText(String(m.num), m.x, m.y)
+          ec.restore()
+        })
+      })
+
       return exp.toDataURL('image/png')
     }
     async function generateSheetReport() {
