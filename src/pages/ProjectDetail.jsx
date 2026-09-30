@@ -448,9 +448,14 @@ function LocationMap({ location }) {
 
 // Adding someone here inserts one job_members row (see
 // supabase-migration-job-members.sql) — an independent job-level roster,
-// not derived from scope membership. A DB trigger fans that out to every
-// one of the job's scopes, same as the reverse direction (adding someone
-// to a scope adds them to the job too).
+// not derived from scope membership, and doesn't touch any scope's own
+// membership either. Being on the project doesn't put someone on every
+// scope automatically (not every superintendent works every scope of a
+// job) — that's chosen per scope, at scope creation (AddScopeModal) or
+// after, from the scope's own Add Scope Member. The one auto-sync that
+// does still happen is the other direction: adding someone to a scope
+// adds them to the project too, since working a scope obviously means
+// working the job.
 // directory is prefetched by JobDetail's loadJobDetail() alongside
 // everything else this page needs, rather than fetched fresh the moment
 // this modal opens — the fetch-then-render gap was exactly the "lag then
@@ -533,12 +538,20 @@ function AddMemberModal({ directory, jobId, existingMemberIds, onClose, onAdded 
   )
 }
 
-function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberIds, onClose, onCreated }) {
+function AddScopeModal({ jobId, job, currentScopeCount, userId, members, onClose, onCreated }) {
   const [form, setForm] = useState({ name: '', status: 'active', cost: '' })
+  // Deliberately opt-in, not "everyone on the job" — a scope's crew isn't
+  // always the whole project team (e.g. one superintendent only ever
+  // looks after one particular scope), so a new scope starts empty
+  // except for whoever's creating it, picked here rather than inherited.
+  const [selectedMemberIds, setSelectedMemberIds] = useState([userId])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+  function toggleMember(id) {
+    setSelectedMemberIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -568,16 +581,12 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
         .single()
       if (sErr) throw sErr
 
-      // Carry over the job's existing team (plus whoever's creating this,
-      // in case they're not on it yet) rather than starting the new scope
-      // with zero members — otherwise it'd be invisible to everyone
-      // already working this job until someone remembered to add them
-      // back one at a time.
-      const memberIds = [...new Set([...existingMemberIds, userId])]
-      const { error: mErr } = await supabase
-        .from('project_members')
-        .insert(memberIds.map(user_id => ({ project_id: scope.id, user_id })))
-      if (mErr && !mErr.message.includes('duplicate key')) throw mErr
+      if (selectedMemberIds.length > 0) {
+        const { error: mErr } = await supabase
+          .from('project_members')
+          .insert(selectedMemberIds.map(user_id => ({ project_id: scope.id, user_id })))
+        if (mErr && !mErr.message.includes('duplicate key')) throw mErr
+      }
 
       onCreated(scope)
       onClose()
@@ -614,6 +623,25 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
           <div>
             <label className="label">Contract Cost ($)</label>
             <input className="input" type="number" min="0" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 500000" />
+          </div>
+          <div>
+            <label className="label">Scope Members</label>
+            <p className="text-xs text-muted mb-1.5">
+              Not every project member has to be on every scope — pick who's actually working this one. You can add or remove people later from the scope's own page.
+            </p>
+            {members.length === 0 ? (
+              <p className="text-xs text-muted">No project members yet — add some from the sidebar first, or add them to this scope afterward.</p>
+            ) : (
+              <div className="space-y-0.5 max-h-40 overflow-y-auto border border-border rounded-lg p-1.5">
+                {members.map(m => (
+                  <label key={m.id} className="flex items-center gap-2 py-1 px-1.5 rounded hover:bg-surface-2 cursor-pointer text-sm">
+                    <input type="checkbox" checked={selectedMemberIds.includes(m.id)} onChange={() => toggleMember(m.id)} />
+                    <span className="truncate text-gray-800 dark:text-gray-200">{m.full_name}</span>
+                    <span className="text-xs text-muted capitalize ml-auto shrink-0">{m.role}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           {error && (
@@ -1496,7 +1524,7 @@ export default function ProjectDetail() {
           job={job}
           currentScopeCount={scopes.length}
           userId={user.id}
-          existingMemberIds={members.map(m => m.id)}
+          members={members}
           onClose={() => setShowAddScope(false)}
           onCreated={loadJobDetail}
         />
