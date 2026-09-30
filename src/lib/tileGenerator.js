@@ -19,7 +19,24 @@ const CHUNK = 2048
 // assembles one canvas at the full maxLevel resolution (see its comment) —
 // this guards against ever trying to allocate something bigger than any
 // real browser will actually give a canvas, rather than silently failing.
-const MAX_CANVAS_DIM = 16384
+//
+// iOS Safari's real ceiling here is much lower than desktop's — informally,
+// a canvas whose total area exceeds roughly 4096x4096 (~16.7M px) doesn't
+// throw or fail loudly, it just silently produces blank/corrupted pixels
+// for everything drawn into it from that point on. A 36x48 architectural
+// sheet at TILE_BASE_SCALE (4x) assembles a full-page accumulator canvas
+// around 13824x10368 (~143M px) — each individual chunk render into it
+// stays safely small (CHUNK/MIN_RETRY_CHUNK below), but the ACCUMULATOR
+// itself doesn't, so it hit exactly this WebKit limit: tiling "succeeded"
+// (every chunk rendered without error) but the assembled tiles came back
+// blank, with no thrown error to trigger the server-side (mupdf) fallback
+// this same generatePdfTiles already has. Capping this much lower on
+// iPad/Safari makes an oversized sheet throw up front instead, so that
+// fallback actually gets a chance to run.
+const isSafari = typeof navigator !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+const isIPad = typeof navigator !== 'undefined' && /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+const MAX_CANVAS_DIM = (isIPad || isSafari) ? 8192 : 16384
+const MAX_CANVAS_AREA = (isIPad || isSafari) ? 16 * 1024 * 1024 : 256 * 1024 * 1024
 // Below this, generatePdfTiles stops retrying a timed-out region as smaller
 // pieces and just accepts a gap there — confirmed in practice that a single
 // unusually dense hotspot (heavy hatching, a schedule, an embedded high-res
@@ -195,7 +212,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
   const pathPrefix = `${projectId}/tiles/${pageId}`
   console.log('[tileGenerator] PDF page size at TILE_BASE_SCALE:', fullW, 'x', fullH, 'levels:', minLevel, '-', maxLevel)
 
-  if (fullW > MAX_CANVAS_DIM || fullH > MAX_CANVAS_DIM) {
+  if (fullW > MAX_CANVAS_DIM || fullH > MAX_CANVAS_DIM || (fullW * fullH) > MAX_CANVAS_AREA) {
     throw new Error(`This sheet renders too large to tile at full quality (${fullW}x${fullH}px at ${TILE_BASE_SCALE}x scale) — it exceeds what a browser canvas can hold in one piece.`)
   }
 
