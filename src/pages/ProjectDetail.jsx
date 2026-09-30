@@ -4,7 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import Layout from '../components/Layout'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
-import UomProgressBar, { pageUomDisplay } from '../components/UomProgressBar'
+import UomProgressBar, { UomProgressRows } from '../components/UomProgressBar'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { supabase } from '../lib/supabase'
@@ -738,7 +738,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function ScopeCard({ scope, dailyGroups, totalGroups, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
+function ScopeCard({ scope, totalGroups, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same pattern as the
@@ -843,34 +843,11 @@ function ScopeCard({ scope, dailyGroups, totalGroups, onClick, onUpdateStatus, o
         </div>
       </div>
 
-      {/* Per-unit mini-stat row — replaces the old single "Total {uom}"
-          box now that a scope's pages can each track a different unit
-          (Sheet Settings, per-page). One tile per unit present. */}
-      {totalGroups && totalGroups.length > 0 && (
-        <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${totalGroups.length}, 1fr)` }}>
-          {totalGroups.map(g => (
-            <div key={g.unit} className="bg-surface-2 rounded-lg p-2.5 min-w-0">
-              <p className="text-[10px] font-bold tracking-wide text-muted mb-0.5">{pageUomDisplay(g.unit)}</p>
-              <p className="text-base font-extrabold text-gray-900 dark:text-white leading-tight truncate">
-                {g.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                {g.target > 0 && <span className="text-xs font-medium text-muted"> / {g.target.toLocaleString()}</span>}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Daily/Total Progress — each one bar, split into a compartment per
-          unit present (see UomProgressBar); "Overall Progress" isn't shown
-          here at all, it's the job dashboard's own header bar above. */}
-      <div className="mb-3">
-        <span className="text-xs text-muted font-medium block mb-1.5">Daily Progress</span>
-        <UomProgressBar groups={dailyGroups} />
-      </div>
-      <div>
-        <span className="text-xs text-muted font-medium block mb-1.5">Total Progress</span>
-        <UomProgressBar groups={totalGroups} />
-      </div>
+      {/* One line per unit (dot + unit + %) and its own bar underneath —
+          just enough to scan at a glance. Real numbers (actual vs. target,
+          daily vs. total) are a click away on the scope's own page, not
+          duplicated here. */}
+      <UomProgressRows groups={totalGroups} />
 
       <div className="mt-3 pt-3 border-t border-border">
         {/* No onClick here — a click bubbles up to the card's own onClick
@@ -898,7 +875,6 @@ export default function ProjectDetail() {
   // scope.id -> [{unit, value, target, pct}, ...] — one entry per distinct
   // unit_of_measure among that scope's own pages (Sheet Settings), rolled
   // up from every session on those pages.
-  const [dailyGroupsByScope, setDailyGroupsByScope] = useState({})
   const [totalGroupsByScope, setTotalGroupsByScope] = useState({})
   const [todaySessions, setTodaySessions] = useState([])
   const [recentSessions, setRecentSessions] = useState([])
@@ -911,6 +887,7 @@ export default function ProjectDetail() {
 
   const [showJobSettings, setShowJobSettings] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
+  const [showJobProgressDetail, setShowJobProgressDetail] = useState(false)
   const [showAddScope, setShowAddScope] = useState(false)
   const [scopeSettingsTarget, setScopeSettingsTarget] = useState(null)
 
@@ -1028,12 +1005,12 @@ export default function ProjectDetail() {
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
-        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
+        setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
         return
       }
 
       const [{ data: pages }, { data: memberRows }] = await Promise.all([
-        supabase.from('pages').select('id, project_id, name, unit_of_measure, daily_target, total_target').in('project_id', scopeIds),
+        supabase.from('pages').select('id, project_id, name, unit_of_measure, total_target').in('project_id', scopeIds),
         supabase.from('project_members').select('user_id, profiles(*)').in('project_id', scopeIds),
       ])
 
@@ -1048,7 +1025,7 @@ export default function ProjectDetail() {
       ;(pages || []).forEach(pg => { pageToScope[pg.id] = pg.project_id; pageToName[pg.id] = pg.name })
       const pageIds = Object.keys(pageToScope)
       if (pageIds.length === 0) {
-        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([])
+        setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([])
         return
       }
 
@@ -1063,18 +1040,16 @@ export default function ProjectDetail() {
 
       // Grouped by each page's OWN unit (Sheet Settings) — a scope's pages
       // can each track a different unit now, so this rolls up target/actual
-      // per unit, per scope, same math as ScopeDetail.jsx's own
-      // dailyGroups/totalGroups, computed here across every scope on this
-      // job at once.
+      // per unit, per scope, computed here across every scope on this job
+      // at once.
       const pageUnitById = {}
-      const groupByScope = {} // scopeId -> unit -> { dailyTarget, totalTarget, dailyValue, totalValue }
+      const groupByScope = {} // scopeId -> unit -> { totalTarget, totalValue }
       ;(pages || []).forEach(pg => {
         const u = pg.unit_of_measure || 'SF'
         pageUnitById[pg.id] = u
         const scopeId = pg.project_id
         if (!groupByScope[scopeId]) groupByScope[scopeId] = {}
-        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { dailyTarget: 0, totalTarget: 0, dailyValue: 0, totalValue: 0 }
-        groupByScope[scopeId][u].dailyTarget += pg.daily_target || 0
+        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { totalTarget: 0, totalValue: 0 }
         groupByScope[scopeId][u].totalTarget += pg.total_target || 0
       })
       const pageUnitValue = (s, uom) => uom === 'LF' ? (parseFloat(s.lf) || 0)
@@ -1084,23 +1059,15 @@ export default function ProjectDetail() {
         const u = pageUnitById[s.page_id]
         const g = groupByScope[pageToScope[s.page_id]]?.[u]
         if (!g) return
-        const value = pageUnitValue(s, u)
-        g.totalValue += value
-        if (s.work_date === today) g.dailyValue += value
+        g.totalValue += pageUnitValue(s, u)
       })
-      const dailyGroupsMap = {}
       const totalGroupsMap = {}
       Object.entries(groupByScope).forEach(([scopeId, units]) => {
-        dailyGroupsMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
-          unit, value: g.dailyValue, target: g.dailyTarget,
-          pct: g.dailyTarget > 0 ? Math.min(100, Math.round((g.dailyValue / g.dailyTarget) * 100)) : 0,
-        }))
         totalGroupsMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
           unit, value: g.totalValue, target: g.totalTarget,
           pct: g.totalTarget > 0 ? Math.min(100, Math.round((g.totalValue / g.totalTarget) * 100)) : 0,
         }))
       })
-      setDailyGroupsByScope(dailyGroupsMap)
       setTotalGroupsByScope(totalGroupsMap)
 
       const withNames = (sessions || []).map(s => ({
@@ -1126,7 +1093,6 @@ export default function ProjectDetail() {
           setJob(cached.job)
           setScopes(cached.scopes)
           setMembers([])
-          setDailyGroupsByScope(cached.dailyGroupsByScope)
           setTotalGroupsByScope(cached.totalGroupsByScope)
           setTodaySessions(cached.todaySessions)
           setRecentSessions(cached.recentSessions)
@@ -1272,18 +1238,22 @@ export default function ProjectDetail() {
           </div>
 
           <div className="max-w-[1600px] px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
-          {/* Overall job progress — every scope's every unit combined, the
-              one place "Overall Progress" is shown (not on a scope card). */}
-          <div className="card">
-            <div className="flex justify-between items-baseline mb-3">
-              <div>
-                <span className="text-sm font-semibold text-gray-900 dark:text-white block">Overall Job Progress</span>
-                <span className="text-xs text-muted">across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'}, all units</span>
-              </div>
-              {jobTotalGroups.length > 0 && <span className="text-lg font-bold text-blue-600 dark:text-blue-400">{jobOverallPct}%</span>}
+          {/* Overall job progress — every scope's every unit combined into
+              one plain bar; the one place "Overall Progress" is shown (not
+              on a scope card). Click it for the SF/LF/Each breakdown. */}
+          <button
+            onClick={() => setShowJobProgressDetail(true)}
+            className="card w-full text-left hover:bg-surface/80 transition-colors"
+          >
+            <div className="flex justify-between items-baseline mb-2">
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">Overall Job Progress</span>
+              <span className="text-lg font-bold text-blue-600 dark:text-blue-400">{jobOverallPct}%</span>
             </div>
-            <UomProgressBar groups={jobTotalGroups} size="lg" />
-          </div>
+            <div className="h-2.5 bg-surface-3 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${jobOverallPct}%` }} />
+            </div>
+            <p className="text-xs text-muted mt-1.5">across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'} · tap for SF/LF/Each detail</p>
+          </button>
 
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -1307,7 +1277,6 @@ export default function ProjectDetail() {
                   <ScopeCard
                     key={scope.id}
                     scope={scope}
-                    dailyGroups={dailyGroupsByScope[scope.id]}
                     totalGroups={totalGroupsByScope[scope.id]}
                     onClick={() => navigate(`/scopes/${scope.id}`)}
                     onUpdateStatus={updateScopeStatus}
@@ -1451,6 +1420,23 @@ export default function ProjectDetail() {
         >
           <GripIcon />
           {(() => { const s = scopes.find(s => s.id === dragScopeId); return s?.description || s?.name })()}
+        </div>
+      )}
+
+      {showJobProgressDetail && (
+        <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowJobProgressDetail(false)}>
+          <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-white">Overall Job Progress</h2>
+              <button onClick={() => setShowJobProgressDetail(false)} className="btn-ghost p-1.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-xs text-muted mb-4">Every scope's total, broken down by unit, across this job.</p>
+            <UomProgressBar groups={jobTotalGroups} size="lg" />
+          </div>
         </div>
       )}
 
