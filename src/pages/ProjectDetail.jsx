@@ -181,8 +181,59 @@ function useJobLocation(address) {
   return state
 }
 
+// "2024-06-01" -> a local Date at midnight on that calendar day. Open-Meteo
+// returns plain date strings (no time/offset); new Date(str) parses those
+// as UTC midnight, which can land on the PREVIOUS day once displayed in a
+// negative-UTC-offset timezone (most of the US) — splitting the parts out
+// and using the local Date constructor avoids that off-by-one.
+function parseForecastDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function forecastDayLabel(dateStr, idx) {
+  if (idx === 0) return 'Today'
+  return parseForecastDate(dateStr).toLocaleDateString(undefined, { weekday: 'short' })
+}
+
+function ForecastModal({ location, daily, onClose }) {
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">10-Day Forecast</h2>
+            <p className="text-xs text-muted truncate">{location.label}</p>
+          </div>
+          <button onClick={onClose} className="btn-ghost p-1.5 shrink-0">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="overflow-y-auto min-h-0 p-2">
+          {daily.time.map((dateStr, i) => (
+            <div key={dateStr} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-2">
+              <span className="w-10 text-sm font-medium text-gray-900 dark:text-white shrink-0">{forecastDayLabel(dateStr, i)}</span>
+              <WeatherIcon code={daily.weather_code[i]} />
+              <span className="flex-1 min-w-0 text-xs text-muted truncate">{weatherDescription(daily.weather_code[i])}</span>
+              {daily.precipitation_probability_max[i] > 10 && (
+                <span className="text-xs text-accent shrink-0">{daily.precipitation_probability_max[i]}%</span>
+              )}
+              <span className="text-sm text-gray-900 dark:text-white shrink-0 w-16 text-right">
+                {Math.round(daily.temperature_2m_max[i])}° <span className="text-muted">{Math.round(daily.temperature_2m_min[i])}°</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function WeatherWidget({ location }) {
   const [weather, setWeather] = useState({ status: 'loading' })
+  const [forecastOpen, setForecastOpen] = useState(false)
 
   useEffect(() => {
     if (location.status !== 'ready') return
@@ -190,11 +241,11 @@ function WeatherWidget({ location }) {
     async function load() {
       setWeather({ status: 'loading' })
       try {
-        const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`)
+        const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=10&timezone=auto&temperature_unit=fahrenheit&wind_speed_unit=mph`)
         const data = await weatherRes.json()
         if (cancelled) return
         if (!data?.current) { setWeather({ status: 'error' }); return }
-        setWeather({ status: 'ready', current: data.current })
+        setWeather({ status: 'ready', current: data.current, daily: data.daily })
       } catch (e) {
         console.warn('[JobDetail] Weather fetch failed:', e)
         if (!cancelled) setWeather({ status: 'error' })
@@ -215,22 +266,34 @@ function WeatherWidget({ location }) {
     )
   }
 
-  const { current } = weather
+  const { current, daily } = weather
   return (
-    <div className="card">
-      <div className="flex items-center gap-3">
-        <WeatherIcon code={current.weather_code} />
-        <div className="min-w-0">
-          <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">{Math.round(current.temperature_2m)}°F</p>
-          <p className="text-xs text-muted truncate">{weatherDescription(current.weather_code)} · {Math.round(current.wind_speed_10m)} mph</p>
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setForecastOpen(true)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setForecastOpen(true) } }}
+        aria-label="Open 10-day forecast"
+        className="card cursor-pointer hover:bg-surface-2 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <WeatherIcon code={current.weather_code} />
+          <div className="min-w-0">
+            <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">{Math.round(current.temperature_2m)}°F</p>
+            <p className="text-xs text-muted truncate">{weatherDescription(current.weather_code)} · {Math.round(current.wind_speed_10m)} mph</p>
+          </div>
         </div>
+        <p className="text-xs text-muted mt-2">
+          {location.usedDefault
+            ? <>No job address set — showing <span className="font-medium text-gray-700 dark:text-gray-300">{location.label}</span></>
+            : location.label}
+        </p>
       </div>
-      <p className="text-xs text-muted mt-2">
-        {location.usedDefault
-          ? <>No job address set — showing <span className="font-medium text-gray-700 dark:text-gray-300">{location.label}</span></>
-          : location.label}
-      </p>
-    </div>
+      {forecastOpen && daily && (
+        <ForecastModal location={location} daily={daily} onClose={() => setForecastOpen(false)} />
+      )}
+    </>
   )
 }
 
