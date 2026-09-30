@@ -6048,9 +6048,16 @@ export default function Canvas() {
 
     restoreFooter()
 
-    scaleSelectRef.current.addEventListener('change', onScaleChange)
-    cNumerRef.current.addEventListener('input', applyCustomScale)
-    cDenomRef.current.addEventListener('input', applyCustomScale)
+    // Foreman doesn't render the Scale group at all (see the JSX below) —
+    // these three refs are null for that role, and this setup effect runs
+    // unconditionally regardless of who's viewing, so an unguarded
+    // addEventListener here threw immediately and crashed the entire page
+    // for Foreman specifically (nothing else in this file skips this null
+    // check — every other scaleSelectRef/cNumerRef/cDenomRef access already
+    // does, per the comment on the Scale group's conditional render).
+    if (scaleSelectRef.current) scaleSelectRef.current.addEventListener('change', onScaleChange)
+    if (cNumerRef.current) cNumerRef.current.addEventListener('input', applyCustomScale)
+    if (cDenomRef.current) cDenomRef.current.addEventListener('input', applyCustomScale)
     brushRangeRef.current.addEventListener('input', updateBrush)
     ctxBrushRef.current.addEventListener('input', e => ctxBrushChange(e.target.value))
 
