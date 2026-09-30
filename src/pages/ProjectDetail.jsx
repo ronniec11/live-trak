@@ -476,7 +476,10 @@ function AddMemberModal({ directory, jobId, existingMemberIds, onClose, onAdded 
       const { error: mErr } = await supabase
         .from('job_members')
         .insert({ job_id: jobId, user_id: person.id })
-      if (mErr) throw mErr
+      // Already a member (e.g. the list was stale) — treat it as success
+      // rather than surfacing a raw constraint error for something that's
+      // already true.
+      if (mErr && !mErr.message.includes('duplicate key')) throw mErr
       setAdded(a => [...a, person.id])
       onAdded()
     } catch (err) {
@@ -1023,8 +1026,14 @@ export default function ProjectDetail() {
         // job_members is its own independent roster (see
         // supabase-migration-job-members.sql), not derived from scope
         // membership — someone stays a Project Member even if later
-        // removed from every scope under this job.
-        supabase.from('job_members').select('user_id, profiles(*)').eq('job_id', jobId),
+        // removed from every scope under this job. Plain user_id list,
+        // not an embedded profiles(*) join — job_members is a brand new
+        // table and PostgREST's schema cache doesn't always pick up a
+        // new table's relationships right away, which silently failed
+        // the embed (and so the whole member list) with no error surfaced.
+        // Matching against directoryData (already fetched above) instead
+        // sidesteps that entirely.
+        supabase.from('job_members').select('user_id').eq('job_id', jobId),
       ])
       if (jobErr) throw jobErr
       if (scopesRes.error) throw scopesRes.error
@@ -1038,7 +1047,9 @@ export default function ProjectDetail() {
       // (active is undefined on every row until then, which reads as
       // "not removed" here, same as PersonCard/Team.jsx's own check).
       setDirectory((directoryData || []).filter(p => p.active !== false))
-      setMembers((memberRes.data || []).map(m => m.profiles).filter(Boolean))
+      if (memberRes.error) console.error('[JobDetail] job_members fetch failed:', memberRes.error)
+      const memberUserIds = new Set((memberRes.data || []).map(m => m.user_id))
+      setMembers((directoryData || []).filter(p => memberUserIds.has(p.id)))
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
