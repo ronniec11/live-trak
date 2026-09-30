@@ -222,11 +222,22 @@ function PersonCard({ person, currentUserId, viewerIsAdmin, onClose, onEdit, onR
 
   useEffect(() => {
     let cancelled = false
-    supabase.from('project_members').select('projects(id, name, status)').eq('user_id', person.id)
+    // project_members rows are per-SCOPE (projects table), but now that
+    // scope membership always follows the whole job (every scope under a
+    // job, kept in sync automatically — see
+    // supabase-migration-scope-membership-sync.sql), listing one row per
+    // scope here just showed duplicate/confusing entries (two different
+    // jobs both happening to have a "Final Clean" scope, with no job name
+    // to tell them apart). Walking up to each scope's own job and
+    // deduping by job id shows what this actually means to a human: which
+    // JOBS this person is on, not which individual scopes.
+    supabase.from('project_members').select('projects(jobs(id, name, status))').eq('user_id', person.id)
       .then(({ data, error }) => {
         if (cancelled) return
         if (error) { console.error('[Team] load projects error:', error); setProjects([]); return }
-        setProjects((data || []).map(r => r.projects).filter(Boolean))
+        const jobMap = new Map()
+        ;(data || []).forEach(r => { const j = r.projects?.jobs; if (j) jobMap.set(j.id, j) })
+        setProjects([...jobMap.values()])
       })
     return () => { cancelled = true }
   }, [person.id])
