@@ -4458,7 +4458,12 @@ export default function Canvas() {
       pages.forEach(pg => pg.sessions.forEach(s => {
         if (!s.date) return
         if (!byDate[s.date]) byDate[s.date] = []
-        byDate[s.date].push({name: s.name, color: s.color, sf: s.sf, lf: s.lf || 0, pageName: pg.name, time: s.time, crewSize: s.crewSize || 0, hoursWorked: s.hoursWorked || 0})
+        byDate[s.date].push({
+          name: s.name, color: s.color, sf: s.sf, lf: s.lf || 0,
+          count: s.count ?? s.countMarkers?.length ?? 0,
+          pageName: pg.name, pageUnit: pg.unitOfMeasure || 'SF',
+          time: s.time, crewSize: s.crewSize || 0, hoursWorked: s.hoursWorked || 0,
+        })
       }))
       const oldTargets = {}
       dayRecords.forEach(r => { if (r.target) oldTargets[r.date] = r.target })
@@ -4514,6 +4519,31 @@ export default function Canvas() {
       })
       return cell
     }
+    // A history session's own page can be tracked in any unit (Sheet
+    // Settings), and a single day can span pages tracked in different
+    // units — these read whichever field that ONE session's own page
+    // actually tracks, rather than always assuming SF, so an Each- or
+    // LF-only day still shows its real numbers instead of "0 SF".
+    function calUnitLabel(u) { return u === 'each' ? 'Each' : (u || 'SF') }
+    function calSessionValue(s) {
+      const u = s.pageUnit || 'SF'
+      return u === 'LF' ? (s.lf || 0) : u === 'each' ? (s.count || 0) : (s.sf || 0)
+    }
+    // scopeId -> total across every unit present that day — used for the
+    // day-panel "amount" line per session and rolled up below for totals.
+    function calDayUnitTotals(sessions) {
+      const totals = {}
+      sessions.forEach(s => {
+        const u = s.pageUnit || 'SF'
+        totals[u] = (totals[u] || 0) + calSessionValue(s)
+      })
+      return totals
+    }
+    function calFormatUnitTotals(totals) {
+      const entries = Object.entries(totals).filter(([, v]) => v > 0)
+      if (entries.length === 0) return `0 ${calUnitLabel('SF')}`
+      return entries.map(([u, v]) => `${Math.round(v).toLocaleString()} ${calUnitLabel(u)}`).join(' · ')
+    }
     // SF Target and its progress bar are deliberately not shown/editable
     // here — the goal is only editable on the Projects page now, so it
     // can't get changed by accident while browsing history.
@@ -4525,8 +4555,6 @@ export default function Canvas() {
         const em = document.createElement('div'); em.className = 'ct-cal-day-empty'; em.textContent = 'No sessions recorded this day.'
         panel.appendChild(em); return
       }
-      const totalSF = rec.sessions.reduce((a,s)=>a+s.sf,0)
-      const totalLF = rec.sessions.reduce((a,s)=>a+(s.lf||0),0)
       const byPage = {}
       rec.sessions.forEach(s => { if (!byPage[s.pageName]) byPage[s.pageName]=[]; byPage[s.pageName].push(s) })
       Object.entries(byPage).forEach(([pname, sessions]) => {
@@ -4535,16 +4563,14 @@ export default function Canvas() {
         lbl.textContent = pname; panel.appendChild(lbl)
         sessions.forEach(s => {
           const d = document.createElement('div'); d.className = 'ct-cal-sess-item'
-          const amount = s.sf > 0
-            ? `${Math.round(s.sf).toLocaleString()} SF`
-            : (s.lf ? `${Math.round(s.lf).toLocaleString()} LF` : '0 SF')
+          const amount = `${Math.round(calSessionValue(s)).toLocaleString()} ${calUnitLabel(s.pageUnit)}`
           d.innerHTML = `<div class="ct-cal-sess-dot" style="background:${s.color}"></div><div><div class="ct-cal-sess-name">${s.name}</div><div class="ct-cal-sess-meta">${s.time}</div></div><div class="ct-cal-sess-sf">${amount}</div>`
           panel.appendChild(d)
         })
       })
       const tot = document.createElement('div')
       tot.style.cssText='margin-top:10px;padding-top:8px;border-top:1px solid var(--ct-border);display:flex;justify-content:space-between;'
-      const totLabel = totalLF > 0 ? `${Math.round(totalSF).toLocaleString()} SF · ${Math.round(totalLF).toLocaleString()} LF` : `${Math.round(totalSF).toLocaleString()} SF`
+      const totLabel = calFormatUnitTotals(calDayUnitTotals(rec.sessions))
       tot.innerHTML = `<span style="font-size:10px;color:var(--ct-muted);font-weight:700;text-transform:uppercase;letter-spacing:1px">Total</span><span style="font-size:16px;font-weight:800;color:var(--ct-accent)">${totLabel}</span>`
       panel.appendChild(tot)
     }
@@ -4552,13 +4578,14 @@ export default function Canvas() {
       const wrapEl = calBarsRef.current; wrapEl.innerHTML = ''
       const days = dayRecords.slice(0,30).reverse()
       if (!days.length) { wrapEl.innerHTML = '<div style="font-size:11px;color:var(--ct-muted)">No history yet</div>'; return }
-      const maxSF = Math.max(...days.map(h=>h.sessions.reduce((a,s)=>a+s.sf,0)),1)
+      const dayTotal = h => h.sessions.reduce((a,s)=>a+calSessionValue(s),0)
+      const maxVal = Math.max(...days.map(dayTotal),1)
       days.forEach(h => {
-        const sf = h.sessions.reduce((a,s)=>a+s.sf,0)
+        const v = dayTotal(h)
         const bw = document.createElement('div'); bw.className = 'ct-cal-bar-wrap'
         const bar = document.createElement('div'); bar.className = 'ct-cal-bar'
-        bar.style.cssText = `height:${Math.max((sf/maxSF)*92,2)}%;background:${h.dayColor||'#60a5fa'};`
-        bar.title = formatDate(h.date)+': '+Math.round(sf).toLocaleString()+' SF'
+        bar.style.cssText = `height:${Math.max((v/maxVal)*92,2)}%;background:${h.dayColor||'#60a5fa'};`
+        bar.title = formatDate(h.date)+': '+calFormatUnitTotals(calDayUnitTotals(h.sessions))
         bar.addEventListener('click', ()=>{ calSelectedDate=h.date; renderCalendar(); renderCalDayPanel(h.date,h) })
         const lbl = document.createElement('div'); lbl.className = 'ct-cal-bar-lbl'; lbl.textContent = h.date.slice(5)
         bw.append(bar,lbl); wrapEl.appendChild(bw)
@@ -4568,10 +4595,10 @@ export default function Canvas() {
       const el = calLegendRef.current; el.innerHTML = ''
       if (!dayRecords.length) { el.innerHTML = '<div style="font-size:12px;color:var(--ct-muted)">No days recorded yet</div>'; return }
       dayRecords.forEach(h => {
-        const sf  = h.sessions.reduce((a,s)=>a+s.sf,0)
-        const pct = h.target>0 ? Math.round((sf/h.target)*100) : null
+        const v   = h.sessions.reduce((a,s)=>a+calSessionValue(s),0)
+        const pct = h.target>0 ? Math.round((v/h.target)*100) : null
         const d   = document.createElement('div'); d.className = 'ct-cal-legend-item'
-        d.innerHTML = `<div class="ct-cal-legend-swatch" style="background:${h.dayColor||'var(--ct-muted)'}"></div><div class="ct-cal-legend-date">${formatDate(h.date)}</div><div class="ct-cal-legend-sf" style="color:${h.dayColor||'var(--ct-accent)'}">${Math.round(sf).toLocaleString()} SF</div>${pct!==null?`<div class="ct-cal-legend-pct" style="background:${pct>=100?'rgba(74,222,128,0.15)':'rgba(250,204,21,0.15)'};color:${pct>=100?'var(--ct-accent)':'#facc15'}">${pct}%</div>`:''}`
+        d.innerHTML = `<div class="ct-cal-legend-swatch" style="background:${h.dayColor||'var(--ct-muted)'}"></div><div class="ct-cal-legend-date">${formatDate(h.date)}</div><div class="ct-cal-legend-sf" style="color:${h.dayColor||'var(--ct-accent)'}">${calFormatUnitTotals(calDayUnitTotals(h.sessions))}</div>${pct!==null?`<div class="ct-cal-legend-pct" style="background:${pct>=100?'rgba(74,222,128,0.15)':'rgba(250,204,21,0.15)'};color:${pct>=100?'var(--ct-accent)':'#facc15'}">${pct}%</div>`:''}`
         d.addEventListener('click', ()=>{ calSelectedDate=h.date; renderCalendar(); renderCalDayPanel(h.date,h) })
         el.appendChild(d)
       })
@@ -4798,7 +4825,8 @@ export default function Canvas() {
         logoUrl: orgLogoUrl,
         rows: included.map(s => ({
           date: formatReportDate(s.date), name: s.name, color: s.color,
-          sf: s.sf, lf: s.lf || 0, crew: s.crewSize || 0, hours: s.hoursWorked || 0,
+          sf: s.sf, lf: s.lf || 0, count: s.count ?? s.countMarkers?.length ?? 0,
+          crew: s.crewSize || 0, hours: s.hoursWorked || 0,
           manHours: sessionManHours(s),
         })),
         lunchBreakMinutes,
@@ -4808,21 +4836,31 @@ export default function Canvas() {
         // every report photo pointing at a bare path instead of a usable
         // URL.
         photos,
-        totalSF:    included.reduce((a, s) => a + s.sf, 0),
-        totalLF:    included.reduce((a, s) => a + (s.lf || 0), 0),
         totalManHours,
-        // sfPerDay divides by DISTINCT calendar days actually worked in the
-        // included sessions (not the date range's span), so a report scoped
-        // to a week with only 2 working days in it isn't diluted by the
-        // other 5.
-        sfPerManHour: (() => {
-          const sf = included.reduce((a, s) => a + s.sf, 0)
-          return totalManHours > 0 ? sf / totalManHours : null
-        })(),
-        sfPerDay: (() => {
+        // Only the unit(s) actually present get a column/rate — a sheet
+        // tracked purely in 'each' shouldn't show an all-zero SF/LF column,
+        // and a normally-SF sheet that also picked up some LF tool use
+        // (e.g. corridor footage on an otherwise-SF floor) should show
+        // both. The sheet's own declared unit (Sheet Settings) always
+        // shows even if every included session happens to total zero in
+        // it — it's still what's being tracked here.
+        units: (() => {
+          const uom = activePage.unitOfMeasure || 'SF'
+          const rowsForTotals = included.map(s => ({
+            sf: s.sf, lf: s.lf || 0, count: s.count ?? s.countMarkers?.length ?? 0,
+          }))
           const days = new Set(included.map(s => s.date)).size
-          const sf = included.reduce((a, s) => a + s.sf, 0)
-          return days > 0 ? sf / days : null
+          const perManHour = v => totalManHours > 0 ? v / totalManHours : null
+          const perDay = v => days > 0 ? v / days : null
+          const defs = [
+            { key: 'sf', label: 'SF', show: uom === 'SF' || rowsForTotals.some(r => r.sf > 0) },
+            { key: 'lf', label: 'LF', show: uom === 'LF' || rowsForTotals.some(r => r.lf > 0) },
+            { key: 'count', label: 'Each', show: uom === 'each' || rowsForTotals.some(r => r.count > 0) },
+          ]
+          return defs.filter(d => d.show).map(d => {
+            const total = rowsForTotals.reduce((a, r) => a + r[d.key], 0)
+            return { key: d.key, label: d.label, total, perManHour: perManHour(total), perDay: perDay(total) }
+          })
         })(),
       }
       if (genBtn) { genBtn.textContent = 'Generate Report'; genBtn.style.pointerEvents = ''; genBtn.style.opacity = '' }
@@ -4835,20 +4873,25 @@ export default function Canvas() {
         <tr>
           <td>${r.date}</td>
           <td><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${r.color || '#4ade80'};margin-right:6px;vertical-align:middle;"></span>${r.name}</td>
-          <td class="${numClass}">${r.sf ? Math.round(r.sf).toLocaleString() : '–'}</td>
-          <td class="${numClass}">${r.lf ? Math.round(r.lf).toLocaleString() : '–'}</td>
+          ${data.units.map(u => `<td class="${numClass}">${r[u.key] ? Math.round(r[u.key]).toLocaleString() : '–'}</td>`).join('')}
           <td class="${numClass}">${r.crew || '–'}</td>
           <td class="${numClass}">${r.hours ? r.hours.toFixed(1) : '–'}</td>
           <td class="${numClass}">${r.manHours ? r.manHours.toFixed(1) : '–'}</td>
         </tr>`).join('')
     }
-    // Shared by the on-screen view and the printable version.
+    // Shared by the on-screen view and the printable version. One
+    // Man-Hour/Day segment per unit actually shown (see `units` in
+    // generateSheetReport) — a sheet tracked only in 'each' reads "Each /
+    // Man-Hour: X • Each / Day: Y" instead of a meaningless SF rate.
     function reportRatesHtml(data, cls) {
       const rate = v => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '–'
       const lunchNote = data.lunchBreakMinutes > 0
         ? ` &nbsp;&nbsp;•&nbsp;&nbsp; <span style="opacity:0.7;">${data.lunchBreakMinutes}-minute lunch/person deducted from man-hours</span>`
         : ''
-      return `<div class="${cls}">SF / Man-Hour: <strong>${rate(data.sfPerManHour)}</strong> &nbsp;&nbsp;•&nbsp;&nbsp; SF / Day: <strong>${rate(data.sfPerDay)}</strong>${lunchNote}</div>`
+      const segs = data.units.map(u =>
+        `${u.label} / Man-Hour: <strong>${rate(u.perManHour)}</strong> &nbsp;&nbsp;•&nbsp;&nbsp; ${u.label} / Day: <strong>${rate(u.perDay)}</strong>`
+      ).join(' &nbsp;&nbsp;•&nbsp;&nbsp; ')
+      return `<div class="${cls}">${segs}${lunchNote}</div>`
     }
     // Each photo's border is tinted with its own session's color, same
     // color used for that session's dot/snapshot markup, so it's still
@@ -4863,6 +4906,14 @@ export default function Canvas() {
       const data = lastReportData
       if (!data) return
       const rows = reportRowsHtml(data, 'ct-rep-num')
+      // Same allocation as before (Date 13%, first unit 11%, Crew/Hours
+      // 8% each, Total Hours 17%) just spread across however many unit
+      // columns are actually shown — Session picks up whatever's freed by
+      // a column that got dropped.
+      const unitColsHtml = data.units.map((u, i) => `<col style="width:${i === 0 ? 11 : 8}%">`).join('')
+      const sessionPct = data.units.length <= 1 ? 41 : data.units.length === 2 ? 33 : 25
+      const unitHeadHtml = data.units.map(u => `<th class="ct-rep-num">${u.label}</th>`).join('')
+      const unitFootHtml = data.units.map(u => `<td class="ct-rep-num">${u.total ? Math.round(u.total).toLocaleString() : '–'}</td>`).join('')
       const html = `
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
           <div>
@@ -4875,16 +4926,15 @@ export default function Canvas() {
         ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
         <table class="ct-rep-table">
           <colgroup>
-            <col style="width:13%"><col style="width:33%">
-            <col style="width:11%"><col style="width:8%"><col style="width:8%">
-            <col style="width:10%"><col style="width:17%">
+            <col style="width:13%"><col style="width:${sessionPct}%">
+            ${unitColsHtml}
+            <col style="width:8%"><col style="width:10%"><col style="width:17%">
           </colgroup>
           <thead>
             <tr>
               <th>Date</th>
               <th>Session</th>
-              <th class="ct-rep-num">SF</th>
-              <th class="ct-rep-num">LF</th>
+              ${unitHeadHtml}
               <th class="ct-rep-num">Crew</th>
               <th class="ct-rep-num">Hours</th>
               <th class="ct-rep-num">Total Hours</th>
@@ -4895,8 +4945,7 @@ export default function Canvas() {
             <tr>
               <td>Total</td>
               <td></td>
-              <td class="ct-rep-num">${Math.round(data.totalSF).toLocaleString()}</td>
-              <td class="ct-rep-num">${data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'}</td>
+              ${unitFootHtml}
               <td class="ct-rep-num"></td>
               <td class="ct-rep-num"></td>
               <td class="ct-rep-num">${data.totalManHours ? data.totalManHours.toFixed(1) : '–'}</td>
@@ -5048,35 +5097,34 @@ export default function Canvas() {
         // Table — Session gets the most width, same allocation as the
         // on-screen report's own colgroup, and for the same reason: it's
         // the field most likely to need room, everything else is short.
-        // LF only appears at all when at least one included session
-        // actually logged linear footage — a sheet that's purely SF work
-        // has nothing to show there, so the column (and its freed-up
-        // width, handed to Session) drops entirely rather than sit as a
-        // column of dashes.
-        const showLF = data.rows.some(r => r.lf > 0)
-        const sessionColWidth = showLF ? 0.33 : 0.41
-        const head = ['Date', 'Session', 'SF', ...(showLF ? ['LF'] : []), 'Crew', 'Hours', 'Total Hours']
+        // Only the unit(s) actually present (data.units — see
+        // generateSheetReport) get a column at all; a sheet tracked purely
+        // in 'each' has nothing to show in SF/LF, so those drop entirely
+        // rather than sit as a column of dashes, and Each shows in their
+        // place instead.
+        const unitCount = data.units.length
+        const sessionColWidth = unitCount <= 1 ? 0.41 : unitCount === 2 ? 0.33 : 0.25
+        const head = ['Date', 'Session', ...data.units.map(u => u.label), 'Crew', 'Hours', 'Total Hours']
         const body = data.rows.map(r => [
           r.date, r.name,
-          r.sf ? Math.round(r.sf).toLocaleString() : '–',
-          ...(showLF ? [r.lf ? Math.round(r.lf).toLocaleString() : '–'] : []),
+          ...data.units.map(u => r[u.key] ? Math.round(r[u.key]).toLocaleString() : '–'),
           r.crew || '–',
           r.hours ? r.hours.toFixed(1) : '–',
           r.manHours ? r.manHours.toFixed(1) : '–',
         ])
         const foot = ['Total', '',
-          Math.round(data.totalSF).toLocaleString(),
-          ...(showLF ? [data.totalLF ? Math.round(data.totalLF).toLocaleString() : '–'] : []),
+          ...data.units.map(u => u.total ? Math.round(u.total).toLocaleString() : '–'),
           '', '',
           data.totalManHours ? data.totalManHours.toFixed(1) : '–',
         ]
         const columnStyles = {
           0: { cellWidth: contentWidth * 0.13 },
           1: { cellWidth: contentWidth * sessionColWidth, cellPadding: { top: 0.06, right: 0.06, bottom: 0.06, left: 0.22 } },
-          2: { cellWidth: contentWidth * 0.11, halign: 'right' },
         }
-        let col = 3
-        if (showLF) columnStyles[col++] = { cellWidth: contentWidth * 0.08, halign: 'right' }
+        let col = 2
+        data.units.forEach((u, i) => {
+          columnStyles[col++] = { cellWidth: contentWidth * (i === 0 ? 0.11 : 0.08), halign: 'right' }
+        })
         columnStyles[col++] = { cellWidth: contentWidth * 0.08, halign: 'right' } // Crew
         columnStyles[col++] = { cellWidth: contentWidth * 0.10, halign: 'right' } // Hours
         columnStyles[col] = { cellWidth: contentWidth * 0.17, halign: 'right' }   // Total Hours
@@ -5125,10 +5173,13 @@ export default function Canvas() {
           doc.text(text, rx, y)
           rx += doc.getTextWidth(text)
         }
-        ratesSeg('SF / Man-Hour: ')
-        ratesSeg(rate(data.sfPerManHour), { bold: true, color: '#1c1c1a' })
-        ratesSeg('    SF / Day: ')
-        ratesSeg(rate(data.sfPerDay), { bold: true, color: '#1c1c1a' })
+        data.units.forEach((u, i) => {
+          if (i > 0) ratesSeg('    ')
+          ratesSeg(`${u.label} / Man-Hour: `)
+          ratesSeg(rate(u.perManHour), { bold: true, color: '#1c1c1a' })
+          ratesSeg(`    ${u.label} / Day: `)
+          ratesSeg(rate(u.perDay), { bold: true, color: '#1c1c1a' })
+        })
         if (data.lunchBreakMinutes > 0) {
           ratesSeg(`    ${data.lunchBreakMinutes}-minute lunch/person deducted from man-hours`, { color: '#9ca3af' })
         }
@@ -6641,7 +6692,7 @@ export default function Canvas() {
             </div>
             <div className="ct-cal-right">
               <div className="ct-cal-chart-wrap">
-                <div className="ct-cal-chart-title">SF per Day — last 30 days</div>
+                <div className="ct-cal-chart-title">Production per Day — last 30 days</div>
                 <div ref={calBarsRef} className="ct-cal-bars" />
               </div>
               <div className="ct-cal-legend">
