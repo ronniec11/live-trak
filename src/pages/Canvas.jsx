@@ -5670,13 +5670,31 @@ export default function Canvas() {
           ppi = pg.ppi || 72 * Math.max(3.0, DPR * 1.5)
         } else if (isPdf) {
           uzShow('', 'Loading floor plan…', 'Rendering PDF…')
-          const RENDER_SCALE = (isIPad || isSafari) ? Math.min(1.5, DPR) : Math.max(3.0, DPR * 1.5)
+          let RENDER_SCALE = (isIPad || isSafari) ? Math.min(1.5, DPR) : Math.max(3.0, DPR * 1.5)
           const pdfjsLib = await import('pdfjs-dist')
           const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
           pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
           const pdfDoc = await pdfjsLib.getDocument({ url, withCredentials: false }).promise
           const page = await pdfDoc.getPage(1)
-          const viewport = page.getViewport({ scale: RENDER_SCALE })
+          let viewport = page.getViewport({ scale: RENDER_SCALE })
+          // iOS Safari silently renders a canvas BLANK — no exception, no
+          // console error — once its area gets too large (informally,
+          // ~4096x4096/16.7M px is the commonly-hit ceiling). A full-size
+          // architectural sheet (e.g. 36x48 = ANSI E1) clears that easily at
+          // RENDER_SCALE 1.5 (3888x5184, ~20M px), unlike a 24x36 sheet
+          // (~10M px) or smaller, which is why this only ever showed up on
+          // the bigger sheets. The MAX_DIM downscale below (isIPad/isSafari)
+          // runs AFTER page.render() already happened, which is too late if
+          // the render itself came back blank — clamping the viewport
+          // BEFORE rendering keeps pdf.js's own draw call safely inside that
+          // ceiling from the start instead.
+          if (isIPad || isSafari) {
+            const MAX_RENDER_DIM = 4096
+            if (viewport.width > MAX_RENDER_DIM || viewport.height > MAX_RENDER_DIM) {
+              RENDER_SCALE *= MAX_RENDER_DIM / Math.max(viewport.width, viewport.height)
+              viewport = page.getViewport({ scale: RENDER_SCALE })
+            }
+          }
           ppi = 72 * RENDER_SCALE
           const offscreen = document.createElement('canvas')
           offscreen.width = viewport.width; offscreen.height = viewport.height
