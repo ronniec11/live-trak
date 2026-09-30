@@ -239,17 +239,28 @@ function WeatherWidget({ location }) {
 // warning — the "API KEY REQUIRED" watermark that broke both light AND
 // dark once that changed is exactly why this doesn't depend on a second
 // tile provider that could pull the same trick.) Dark mode reuses these
-// same tiles and fakes the look with a CSS filter on Leaflet's tile pane
-// only, so the marker/controls keep their real colors.
+// same tiles: a grayscale+invert filter on the tile pane gets them dark
+// with real tonal variation (roads vs. water vs. land), then a flat navy
+// overlay in 'color' blend mode recolors that grayscale into the app's own
+// --color-bg navy instead of a generic desaturated dark — blend-mode
+// 'color' takes hue/saturation from the overlay and keeps luminosity from
+// the tiles underneath, so it tints without flattening the map into a
+// single shade.
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-const DARK_TILE_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9)'
+const DARK_TILE_FILTER = 'grayscale(1) invert(1) brightness(1.05) contrast(1.05)'
+
+function appNavy() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--color-bg').trim()
+  return raw ? `rgb(${raw.replace(/\s+/g, ' ')})` : 'rgb(20 22 40)'
+}
 
 // Shared by the small sidebar preview and the enlarged modal — each gets
 // its own Leaflet instance (a map is bound to one DOM node for life).
 function LocationMapView({ location, theme, interactive, height }) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
+  const tintRef = useRef(null)
 
   useEffect(() => {
     if (location.status !== 'ready' || !elRef.current || mapRef.current) return
@@ -257,7 +268,7 @@ function LocationMapView({ location, theme, interactive, height }) {
     const map = L.map(elRef.current, {
       zoomControl: interactive,
       dragging: interactive,
-      scrollWheelZoom: false, // even enlarged, scroll-to-zoom is more surprise than help — buttons/pinch/double-click cover it
+      scrollWheelZoom: interactive, // only the enlarged/interactive map takes over the scroll wheel — the small preview shouldn't hijack page scroll
       doubleClickZoom: interactive,
       touchZoom: interactive,
       keyboard: interactive,
@@ -265,17 +276,25 @@ function LocationMapView({ location, theme, interactive, height }) {
     }).setView([lat, lon], 15)
     L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTRIBUTION }).addTo(map)
     L.circleMarker([lat, lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#4f46e5', fillOpacity: 1 }).addTo(map)
+    const tint = document.createElement('div')
+    tint.style.cssText = 'position:absolute;inset:0;pointer-events:none;mix-blend-mode:color;z-index:399;opacity:0'
+    map.getContainer().appendChild(tint)
+    tintRef.current = tint
     mapRef.current = map
     // The modal's map mounts while its open transition may still be
     // resolving layout, so its container can report a stale (often zero)
     // size at creation time — nudge Leaflet to re-measure after paint.
     requestAnimationFrame(() => map.invalidateSize())
-    return () => { map.remove(); mapRef.current = null }
+    return () => { map.remove(); mapRef.current = null; tintRef.current = null }
   }, [location.status, location.lat, location.lon])
 
   useEffect(() => {
     const pane = mapRef.current?.getPane('tilePane')
     if (pane) pane.style.filter = theme === 'dark' ? DARK_TILE_FILTER : ''
+    if (tintRef.current) {
+      tintRef.current.style.background = appNavy()
+      tintRef.current.style.opacity = theme === 'dark' ? '1' : '0'
+    }
   }, [theme, location.status])
 
   if (location.status !== 'ready') {
@@ -304,6 +323,13 @@ function LocationMap({ location }) {
         onClick={() => setExpanded(true)}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(true) } }}
         aria-label="Open map"
+        // Leaflet's tile layer runs on CSS transforms for panning, which
+        // puts it in its own compositing layer — in some browsers that
+        // layer paints in front of a fixed backdrop-blur overlay instead of
+        // getting blurred/dimmed with the rest of the page behind it.
+        // Hiding it outright while the modal's open (rather than relying on
+        // the backdrop to visually cover it) sidesteps that entirely.
+        style={{ visibility: expanded ? 'hidden' : 'visible' }}
         className="relative block w-full rounded-xl border border-border overflow-hidden elevated cursor-pointer group"
       >
         <LocationMapView location={location} theme={theme} interactive={false} height={160} />
