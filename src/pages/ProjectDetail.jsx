@@ -1380,8 +1380,9 @@ export default function ProjectDetail() {
             the team members, mirroring the layout of a scope's own
             dashboard (ScopeDetail.jsx). Its own overflow-auto panel (see
             the outer row above) rather than scrolling away with the main
-            content. */}
-        <div className="lg:w-72 shrink-0 overflow-auto">
+            content, plus a left border on lg so it reads as its own
+            column, same as the scope dashboard's sidebar. */}
+        <div className="lg:w-72 shrink-0 overflow-auto lg:border-l lg:border-border">
           <div className="p-4 sm:p-6 space-y-4">
             <WeatherWidget location={location} />
             <LocationMap location={location} />

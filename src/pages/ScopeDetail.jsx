@@ -1544,10 +1544,13 @@ export default function ScopeDetail() {
           <div className="p-4 sm:p-6 space-y-4">
             {/* Tags In This Scope — rolled up from whichever of this
                 scope's sheets are tagged (Sheet Settings), since tags
-                live per-sheet now, not on the scope itself. */}
-            {scopeTags.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Tags In This Scope</h3>
+                live per-sheet now, not on the scope itself. Always shown
+                (with an empty state) rather than disappearing when a
+                scope has no tagged sheets yet, so every scope's sidebar
+                has the same shape. */}
+            <div>
+              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Tags In This Scope</h3>
+              {scopeTags.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {scopeTags.map(t => (
                     <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
@@ -1560,16 +1563,18 @@ export default function ScopeDetail() {
                     </span>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-xs text-muted">No tags on this scope's sheets yet</p>
+              )}
+            </div>
 
             {/* Last Activity — the single most recent session across every
                 page in this scope, so a stalled scope is obvious at a
                 glance instead of requiring a scroll through Recent
                 Sessions to notice. */}
-            {lastSession && (
-              <div>
-                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Last Activity</h3>
+            <div>
+              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Last Activity</h3>
+              {lastSession ? (
                 <div className="bg-surface-2 rounded-lg p-2.5 flex items-center gap-2.5">
                   <div className="w-6 h-6 rounded-full shrink-0" style={{ backgroundColor: lastSession.color || '#facc15' }} />
                   <div className="flex-1 min-w-0">
@@ -1577,8 +1582,10 @@ export default function ScopeDetail() {
                     <p className="text-xs text-muted">{relativeDay(lastSession.work_date)} · {lastSession.profiles?.full_name || 'Unknown'}</p>
                   </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-xs text-muted">No sessions yet</p>
+              )}
+            </div>
 
             {/* This Week's Man-Hours — same crew x (hours - lunch break)
                 math as the Sheet Report/Reports.jsx, last 7 calendar days
