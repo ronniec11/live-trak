@@ -371,6 +371,29 @@ function LocationMapView({ location, theme, interactive, height }) {
   return <div ref={elRef} style={{ height, width: '100%' }} />
 }
 
+// Leaflet's tile layer runs on CSS transforms for panning, which puts it in
+// its own compositing layer — in some browsers that layer paints in front
+// of ANY fixed backdrop-blur overlay instead of getting blurred/dimmed with
+// the rest of the page behind it. That's not specific to the map's own
+// enlarge modal — it happens behind every modal in the app (profile,
+// project/scope settings, add member, ...), since they're all separate
+// component trees the map has no direct relationship with. Rather than
+// teach every modal about the map, this watches the DOM for the one thing
+// they all already share — the .modal-backdrop class (see index.css) —
+// and the widget hides itself whenever any of them is open, anywhere on
+// the page, present or future.
+function useAnyModalOpen() {
+  const [open, setOpen] = useState(() => !!document.querySelector('.modal-backdrop'))
+  useEffect(() => {
+    const check = () => setOpen(!!document.querySelector('.modal-backdrop'))
+    const observer = new MutationObserver(check)
+    observer.observe(document.body, { childList: true, subtree: true })
+    check()
+    return () => observer.disconnect()
+  }, [])
+  return open
+}
+
 // The sidebar widget is a static preview (no drag/zoom of its own — there's
 // no room to usefully pan around in 160px) that opens a full, interactive
 // map in a modal on click; clicking off the modal closes it, matching every
@@ -378,6 +401,7 @@ function LocationMapView({ location, theme, interactive, height }) {
 function LocationMap({ location }) {
   const { theme } = useTheme()
   const [expanded, setExpanded] = useState(false)
+  const anyModalOpen = useAnyModalOpen()
 
   if (location.status !== 'ready') {
     return <div className="rounded-xl border border-border overflow-hidden elevated h-40 bg-surface-2 animate-pulse" />
@@ -391,13 +415,10 @@ function LocationMap({ location }) {
         onClick={() => setExpanded(true)}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(true) } }}
         aria-label="Open map"
-        // Leaflet's tile layer runs on CSS transforms for panning, which
-        // puts it in its own compositing layer — in some browsers that
-        // layer paints in front of a fixed backdrop-blur overlay instead of
-        // getting blurred/dimmed with the rest of the page behind it.
-        // Hiding it outright while the modal's open (rather than relying on
-        // the backdrop to visually cover it) sidesteps that entirely.
-        style={{ visibility: expanded ? 'hidden' : 'visible' }}
+        // expanded covers this widget's own modal the instant it opens
+        // (synchronous with render); anyModalOpen covers every other modal
+        // via the MutationObserver above, which fires a beat later.
+        style={{ visibility: (expanded || anyModalOpen) ? 'hidden' : 'visible' }}
         className="relative block w-full rounded-xl border border-border overflow-hidden elevated cursor-pointer group"
       >
         <LocationMapView location={location} theme={theme} interactive={false} height={160} />
