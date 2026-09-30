@@ -828,6 +828,30 @@ export default function ScopeDetail() {
 
   useEffect(() => { loadData() }, [projectId])
 
+  // Server-side tiling (generateTilesServerSide) can genuinely take several
+  // minutes on a large sheet — long enough that iOS Safari has been seen
+  // suspending the backgrounded tab mid-request, which loses that fetch's
+  // response entirely. The server itself finishes and writes tile_status
+  // fine; without this, the banner is left showing "processing" forever
+  // (looking indistinguishable from a genuine hang) until something else
+  // happens to reload this page's data — a manual navigate-away-and-back.
+  // Polling here means the banner catches up on its own once the server
+  // actually finishes, independent of whatever happened to the original
+  // request/response in this tab.
+  useEffect(() => {
+    const processingIds = pages.filter(p => p.tile_status === 'processing').map(p => p.id)
+    if (processingIds.length === 0) return
+    const interval = setInterval(async () => {
+      const { data, error } = await supabase.from('pages').select('id, tile_status, tile_meta, tile_error').in('id', processingIds)
+      if (error || !data) return
+      setPages(ps => ps.map(p => {
+        const fresh = data.find(d => d.id === p.id)
+        return fresh && fresh.tile_status !== 'processing' ? { ...p, ...fresh } : p
+      }))
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [pages])
+
   const today = new Date().toLocaleDateString('en-CA')
 
   // Which unit this scope is actually tracked in (Scope Settings' Unit of
