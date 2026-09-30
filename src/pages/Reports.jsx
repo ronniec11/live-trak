@@ -78,9 +78,9 @@ export default function Reports() {
 
   const [projectOptions, setProjectOptions] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState('all')
-  // Tag mode pulls every scope across every job carrying a given Production
+  // Tag mode pulls every sheet across every job carrying a given Production
   // Rate line item (Company Hub), instead of every scope under one job —
-  // see supabase-migration-tags-production-rates.sql.
+  // see supabase-migration-page-tags.sql.
   const [filterMode, setFilterMode] = useState('project')
   const [tagOptions, setTagOptions] = useState([])
   const [selectedTagId, setSelectedTagId] = useState('')
@@ -115,30 +115,33 @@ export default function Reports() {
   async function runReport() {
     setLoading(true); setError(''); setHasRun(false)
     try {
-      let pageQuery = supabase.from('pages').select('id')
+      let pageIds
       if (filterMode === 'tag') {
         if (!selectedTagId) { setError('Pick a tag.'); setLoading(false); return }
-        // A tag can be on scopes across many different jobs — this is the
-        // whole point of tag mode (see Company Hub's Production Rates).
-        const { data: tagged, error: taggedErr } = await supabase.from('project_tags').select('project_id').eq('tag_id', selectedTagId)
+        // A tag now attaches directly to a sheet (page_tags), not a scope —
+        // a scope can span sheets doing different kinds of work, so tag
+        // mode goes straight to the pages that carry this tag.
+        const { data: tagged, error: taggedErr } = await supabase.from('page_tags').select('page_id').eq('tag_id', selectedTagId)
         if (taggedErr) throw taggedErr
-        const scopeIds = (tagged || []).map(r => r.project_id)
-        if (scopeIds.length === 0) { setRows([]); setHasRun(true); return }
-        pageQuery = pageQuery.in('project_id', scopeIds)
-      } else if (selectedProjectId !== 'all') {
-        // selectedProjectId is a job id (see the dropdown above) — a page
-        // belongs to a scope, not directly to a job, so resolve to every
-        // scope under this job first.
-        const { data: scopes, error: scopesErr } = await supabase.from('projects').select('id').eq('job_id', selectedProjectId)
-        if (scopesErr) throw scopesErr
-        const scopeIds = (scopes || []).map(s => s.id)
-        if (scopeIds.length === 0) { setRows([]); setHasRun(true); return }
-        pageQuery = pageQuery.in('project_id', scopeIds)
+        pageIds = (tagged || []).map(r => r.page_id)
+        if (pageIds.length === 0) { setRows([]); setHasRun(true); return }
+      } else {
+        let pageQuery = supabase.from('pages').select('id')
+        if (selectedProjectId !== 'all') {
+          // selectedProjectId is a job id (see the dropdown above) — a page
+          // belongs to a scope, not directly to a job, so resolve to every
+          // scope under this job first.
+          const { data: scopes, error: scopesErr } = await supabase.from('projects').select('id').eq('job_id', selectedProjectId)
+          if (scopesErr) throw scopesErr
+          const scopeIds = (scopes || []).map(s => s.id)
+          if (scopeIds.length === 0) { setRows([]); setHasRun(true); return }
+          pageQuery = pageQuery.in('project_id', scopeIds)
+        }
+        const { data: pgs, error: pgErr } = await pageQuery
+        if (pgErr) throw pgErr
+        pageIds = (pgs || []).map(p => p.id)
+        if (pageIds.length === 0) { setRows([]); setHasRun(true); return }
       }
-      const { data: pgs, error: pgErr } = await pageQuery
-      if (pgErr) throw pgErr
-      const pageIds = (pgs || []).map(p => p.id)
-      if (pageIds.length === 0) { setRows([]); setHasRun(true); return }
 
       // lf, crew_size/hours_worked, total_hours, and lunch_break_minutes are
       // independent migrations — any subset might not have been run yet, so
@@ -210,21 +213,21 @@ export default function Reports() {
   const showProjectColumn = filterMode === 'tag' || selectedProjectId === 'all'
 
   // Simple actual-vs-standard-rate comparison for tag mode — the whole
-  // point of tagging scopes with a company-wide rate in the first place.
+  // point of tagging sheets with a company-wide rate in the first place.
   // A tag's rate has no cumulative "total" concept (see
-  // ScopeSettingsModal's activeRateTag), only day/man-hour paces, so this
+  // PageSettingsModal's activeRateTag), only day/man-hour paces, so this
   // stays a pace comparison rather than a progress bar.
   const tagSummary = (() => {
     if (filterMode !== 'tag' || !selectedTag || rows.length === 0) return null
-    const uom = selectedTag.uom === 'lf' ? 'lf' : 'sf'
-    const actual = rows.reduce((sum, r) => sum + (uom === 'lf' ? r.lf : r.sf), 0)
+    const uom = selectedTag.uom === 'lf' ? 'lf' : selectedTag.uom === 'each' ? 'each' : 'sf'
+    const actual = rows.reduce((sum, r) => sum + (uom === 'lf' ? r.lf : uom === 'each' ? r.countItems : r.sf), 0)
     const distinctDays = new Set(rows.map(r => r.date).filter(Boolean)).size
     const distinctJobs = new Set(rows.map(r => r.jobId).filter(Boolean)).size
     const totalManHours = rows.reduce((sum, r) => sum + (parseFloat(r.totalHours) || 0), 0)
     const avgPerDay = distinctDays > 0 ? actual / distinctDays : 0
     const avgPerManHour = totalManHours > 0 ? actual / totalManHours : 0
     return {
-      uomLabel: uom.toUpperCase(),
+      uomLabel: uom === 'each' ? 'Each' : uom.toUpperCase(),
       actual,
       distinctDays,
       distinctJobs,

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import OfflineSyncButton from '../components/OfflineSyncButton'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
+import UomProgressBar from '../components/UomProgressBar'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
@@ -215,13 +216,87 @@ const pageUomLabel = u => u === 'each' ? 'Each' : u
 // see its "page overrides scope" comment). Opened from the small gear icon
 // on each page's thumbnail (bottom-left corner, alongside Rename/Delete/
 // Generate Tiles), same modal shape as AddPageModal above.
+//
+// Tags moved here from Scope Settings too (see
+// supabase-migration-page-tags.sql) — a scope can hold sheets doing
+// different kinds of work, so tagging (and the rate it can drive) is a
+// per-sheet thing now, matching this page's own Unit of Measure rather
+// than a scope-wide one. This tag picker/create/rate-match logic is a
+// direct port of the old ScopeSettingsModal's, just keyed off page_id and
+// this page's own uom instead of the scope's.
 function PageSettingsModal({ page, onClose, onSaved }) {
+  const { profile } = useAuth()
   const [name, setName] = useState(page.name || '')
   const [uom, setUom] = useState(page.unit_of_measure || 'SF')
   const [dailyTarget, setDailyTarget] = useState(page.daily_target ?? '')
   const [totalTarget, setTotalTarget] = useState(page.total_target ?? '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const [allTags, setAllTags] = useState([])
+  const [selectedTagIds, setSelectedTagIds] = useState([])
+  const [initialTagIds, setInitialTagIds] = useState([])
+  const [tagQuery, setTagQuery] = useState('')
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
+  const [creatingTag, setCreatingTag] = useState(false)
+  const [tagsError, setTagsError] = useState('')
+
+  useEffect(() => {
+    if (!profile?.organization_id) return
+    supabase.from('tags').select('*').order('name')
+      .then(({ data, error: err }) => { if (!err) setAllTags(data || []) })
+    supabase.from('page_tags').select('tag_id').eq('page_id', page.id)
+      .then(({ data, error: err }) => {
+        if (err) { setTagsError('Could not load this sheet\'s tags — run supabase-migration-page-tags.sql if you haven\'t yet.'); return }
+        const ids = (data || []).map(r => r.tag_id)
+        setSelectedTagIds(ids)
+        setInitialTagIds(ids)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.organization_id, page.id])
+
+  const uomLower = uom === 'each' ? 'each' : uom.toLowerCase()
+  const selectedTags = selectedTagIds.map(id => allTags.find(t => t.id === id)).filter(Boolean)
+  // A tag only drives the target if it actually has a rate for the unit
+  // this SHEET is tracked in — a purely descriptive tag (no rate set) or
+  // one whose rate is in a different unit is just a label here.
+  const rateTagsForUom = selectedTags.filter(t => t.uom === uomLower && (t.rate_per_day != null || t.rate_per_man_hour != null))
+  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
+  const tagRateConflict = rateTagsForUom.length > 1
+
+  const matchingTags = allTags.filter(t =>
+    !selectedTagIds.includes(t.id) && t.name.toLowerCase().includes(tagQuery.trim().toLowerCase())
+  )
+  const exactMatch = allTags.some(t => t.name.toLowerCase() === tagQuery.trim().toLowerCase())
+
+  function addTag(tagId) {
+    setSelectedTagIds(ids => [...ids, tagId])
+    setTagQuery('')
+    setTagDropdownOpen(false)
+  }
+
+  function removeTag(tagId) {
+    setSelectedTagIds(ids => ids.filter(id => id !== tagId))
+  }
+
+  async function createAndAddTag() {
+    const trimmed = tagQuery.trim()
+    if (!trimmed || !profile?.organization_id) return
+    setCreatingTag(true)
+    setTagsError('')
+    try {
+      const { data, error: err } = await supabase.from('tags')
+        .insert({ organization_id: profile.organization_id, name: trimmed, uom: uomLower })
+        .select().single()
+      if (err) throw err
+      setAllTags(t => [...t, data])
+      addTag(data.id)
+    } catch (err) {
+      setTagsError(err.code === '23505' ? 'A tag with this name already exists.' : (err.message || 'Failed to create tag.'))
+    } finally {
+      setCreatingTag(false)
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -237,7 +312,21 @@ function PageSettingsModal({ page, onClose, onSaved }) {
     try {
       const { error: upErr } = await supabase.from('pages').update(updates).eq('id', page.id)
       if (upErr) throw upErr
-      onSaved(updates)
+
+      const addedIds = selectedTagIds.filter(id => !initialTagIds.includes(id))
+      const removedIds = initialTagIds.filter(id => !selectedTagIds.includes(id))
+      if (addedIds.length > 0) {
+        const { error: insErr } = await supabase.from('page_tags')
+          .insert(addedIds.map(tag_id => ({ page_id: page.id, tag_id })))
+        if (insErr) throw insErr
+      }
+      if (removedIds.length > 0) {
+        const { error: delErr } = await supabase.from('page_tags')
+          .delete().eq('page_id', page.id).in('tag_id', removedIds)
+        if (delErr) throw delErr
+      }
+
+      onSaved({ ...updates, tags: selectedTags })
       onClose()
     } catch (err) {
       console.error('[PageSettings] save failed:', err)
@@ -249,7 +338,8 @@ function PageSettingsModal({ page, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !loading && onClose()}>
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-6 overflow-y-auto min-h-0">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Sheet Settings</h2>
           <button onClick={onClose} disabled={loading} className="btn-ghost p-1.5">
@@ -270,10 +360,79 @@ function PageSettingsModal({ page, onClose, onSaved }) {
               {PAGE_UOM_OPTIONS.map(u => <option key={u} value={u}>{pageUomLabel(u)}</option>)}
             </select>
           </div>
+
+          <div>
+            <label className="label">Tags</label>
+            <p className="text-xs text-muted mb-1.5">
+              Tag this sheet with a line item from Company Hub to compare its production against your company's standard rate.
+            </p>
+            {selectedTags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {selectedTags.map(t => (
+                  <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
+                    {t.name}
+                    <button type="button" onClick={() => removeTag(t.id)} className="hover:text-red-500">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="relative">
+              <input
+                className="input" placeholder="Search or create a tag..."
+                value={tagQuery}
+                onChange={e => { setTagQuery(e.target.value); setTagDropdownOpen(true) }}
+                onFocus={() => setTagDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setTagDropdownOpen(false), 150)}
+              />
+              {tagDropdownOpen && tagQuery.trim() && (
+                <div className="absolute z-10 top-full mt-1 w-full bg-surface border border-border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                  {matchingTags.map(t => (
+                    <button
+                      key={t.id} type="button" onMouseDown={() => addTag(t.id)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-surface-2 flex items-center justify-between"
+                    >
+                      <span>{t.name}</span>
+                      <span className="text-xs text-muted uppercase">{t.uom}</span>
+                    </button>
+                  ))}
+                  {!exactMatch && (
+                    <button
+                      type="button" onMouseDown={createAndAddTag} disabled={creatingTag}
+                      className="w-full text-left px-3 py-2 text-sm text-accent hover:bg-surface-2"
+                    >
+                      {creatingTag ? 'Creating...' : `+ Create "${tagQuery.trim()}"`}
+                    </button>
+                  )}
+                  {matchingTags.length === 0 && exactMatch && (
+                    <div className="px-3 py-2 text-sm text-muted">Already added.</div>
+                  )}
+                </div>
+              )}
+            </div>
+            {tagsError && <p className="text-xs text-red-500 mt-1.5">{tagsError}</p>}
+          </div>
+
+          {activeRateTag && (
+            <div className="bg-accent/10 border border-accent/30 rounded-lg px-3 py-2 text-accent text-sm">
+              Following "{activeRateTag.name}"'s rate:{' '}
+              {activeRateTag.rate_per_day != null && <>{activeRateTag.rate_per_day.toLocaleString()} {pageUomLabel(uom)}/day</>}
+              {activeRateTag.rate_per_day != null && activeRateTag.rate_per_man_hour != null && ' · '}
+              {activeRateTag.rate_per_man_hour != null && <>{activeRateTag.rate_per_man_hour.toLocaleString()} {pageUomLabel(uom)}/man-hr</>}
+              . Leave the daily target below blank to use it, or set a number to override just this sheet.
+            </div>
+          )}
+          {tagRateConflict && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-400 text-sm">
+              This sheet has more than one {pageUomLabel(uom)} tag with a rate ({rateTagsForUom.map(t => t.name).join(', ')}) — remove one, or set a manual target below to make it explicit.
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Daily Target</label>
-              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder="e.g. 5000" />
+              <input className="input" type="number" min="0" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} placeholder={activeRateTag?.rate_per_day ? `${activeRateTag.rate_per_day} (from tag)` : 'e.g. 5000'} />
             </div>
             <div>
               <label className="label">Total Target</label>
@@ -290,6 +449,7 @@ function PageSettingsModal({ page, onClose, onSaved }) {
             <button type="submit" disabled={loading} className="btn-primary flex-1">{loading ? 'Saving...' : 'Save'}</button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   )
@@ -624,12 +784,6 @@ export default function ScopeDetail() {
   const [showImportAutodesk, setShowImportAutodesk] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [pageSettingsTarget, setPageSettingsTarget] = useState(null) // the page currently open in Sheet Settings, or null
-  const [editingTarget, setEditingTarget] = useState(false)
-  const [targetInput, setTargetInput] = useState('')
-  const [savingTarget, setSavingTarget] = useState(false)
-  const [editingTotalTarget, setEditingTotalTarget] = useState(false)
-  const [totalTargetInput, setTotalTargetInput] = useState('')
-  const [savingTotalTarget, setSavingTotalTarget] = useState(false)
   const [showScopeSettings, setShowScopeSettings] = useState(false)
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false)
   const [editingPageId, setEditingPageId] = useState(null)
@@ -858,31 +1012,19 @@ export default function ScopeDetail() {
     setLoading(true)
     try {
       const [projRes, pgsRes, memsRes] = await Promise.all([
-        supabase.from('projects').select('*, project_tags(tags(*))').eq('id', projectId).single(),
+        supabase.from('projects').select('*').eq('id', projectId).single(),
         supabase.from('pages').select('*').eq('project_id', projectId).order('created_at'),
         supabase.from('project_members').select('user_id, profiles(*)').eq('project_id', projectId),
       ])
-      // project_tags(tags(*)) may fail until
-      // supabase-migration-tags-production-rates.sql has been run — falls
-      // back to a plain projects fetch so the whole page doesn't break for
-      // scopes created before then.
-      let proj = projRes.data
-      if (projRes.error) {
-        const fallback = await supabase.from('projects').select('*').eq('id', projectId).single()
-        if (fallback.error) throw fallback.error
-        proj = fallback.data
-      }
+      if (projRes.error) throw projRes.error
+      const proj = projRes.data
       const { data: pgs, error: pgsErr } = pgsRes
       const { data: mems } = memsRes
       if (pgsErr) throw pgsErr
 
-      proj.tags = (proj.project_tags || []).map(pt => pt.tags).filter(Boolean)
-
       setProject(proj)
       setPages(pgs || [])
       setMembers((mems || []).map(m => m.profiles))
-      setTargetInput(proj?.daily_sf_target || 0)
-      setTotalTargetInput(proj?.total_sf_target || 0)
       if (pgs && pgs.length > 0) setActivePage(pgs[0])
       setOfflineMode(false)
       setNotCachedOffline(false)
@@ -901,8 +1043,6 @@ export default function ScopeDetail() {
           setProject(cached)
           setPages(cached.pages || [])
           setMembers([])
-          setTargetInput(cached.daily_sf_target || 0)
-          setTotalTargetInput(cached.total_sf_target || 0)
           if (cached.pages?.length > 0) setActivePage(cached.pages[0])
           setOfflineMode(true)
         } else {
@@ -959,89 +1099,39 @@ export default function ScopeDetail() {
 
   const today = new Date().toLocaleDateString('en-CA')
 
-  // Which unit this scope is actually tracked in (Scope Settings' Unit of
-  // Measure) — a pre-existing field (SF/LF/Count) that ProjectDetail.jsx's
-  // scope cards already used for the exact same purpose, so this matches
-  // that instead of introducing a second, separate unit concept. Sessions
-  // already compute sf/lf/count_data depending on which tools were used;
-  // this just picks which one counts here, same three-way branch
-  // ProjectDetail.jsx's own per-scope totals use.
-  const unitLabel = project?.uom || 'SF'
-  const uomLower = unitLabel.toLowerCase()
-  const sessionValue = s => uomLower === 'lf' ? (parseFloat(s.lf) || 0)
-    : uomLower === 'count' ? (s.count_data?.length ?? s.count_data?.markers?.length ?? 0)
-    : (parseFloat(s.sf) || 0)
-  // Only a tag with a rate for THIS unit can drive the daily target, and
-  // only if there's exactly one such tag — see ScopeSettingsModal's
-  // tagRateConflict for why more than one is left ambiguous rather than
-  // guessed at here. Tags only ever carry sf/lf rates, so a Count scope
-  // never has one (rateTagsForUom is always empty), which is fine — it
-  // just always uses a manual target like before tags existed.
-  const rateTagsForUom = (project?.tags || []).filter(t => t.uom === uomLower && (t.rate_per_day != null || t.rate_per_man_hour != null))
-  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
-  const manualDailyTarget = project?.daily_sf_target || 0
-  const effectiveTotalTarget = project?.total_sf_target || 0
-  // A manually-set target always wins; otherwise fall back to the tag's
-  // daily rate (a tag has no concept of a cumulative "total", so total
-  // target stays manual-only).
-  const effectiveDailyTarget = manualDailyTarget > 0 ? manualDailyTarget : (activeRateTag?.rate_per_day || 0)
-  const dailyTargetFromTag = manualDailyTarget <= 0 && activeRateTag?.rate_per_day > 0
-
-  const todaySF = todaySessions.filter(s => s.work_date === today).reduce((sum, s) => sum + sessionValue(s), 0)
-  const totalSF = todaySessions.reduce((sum, s) => sum + sessionValue(s), 0)
-  const dailyBarColor = todaySF >= effectiveDailyTarget && effectiveDailyTarget > 0 ? '#4ade80' : '#facc15'
-  const pct = effectiveDailyTarget > 0
-    ? Math.min(100, Math.round((todaySF / effectiveDailyTarget) * 100))
-    : 0
-  const totalPct = effectiveTotalTarget > 0
-    ? Math.min(100, Math.round((totalSF / effectiveTotalTarget) * 100))
-    : 0
-
-  // Per-page UOM breakdown — a scope's pages can now each carry their own
-  // unit of measure (Sheet Settings), independent of the scope's own uom
-  // above. Groups pages by their own unit_of_measure (defaulting an unset
-  // page to 'SF', same default Canvas.jsx/PageSettingsModal use), summing
-  // each group's sessions against that group's own pages' total_target —
-  // same sessionValue three-way split as above, just keyed per-page
-  // instead of by the scope's single uom.
+  // Per-page UOM breakdown — replaces the old scope-wide Unit of
+  // Measure/target entirely (see ScopeSettingsModal.jsx's comment on why:
+  // a scope's sheets can now track different kinds of work in different
+  // units). Groups pages by their own unit_of_measure (defaulting an unset
+  // page to 'SF'), summing each group's sessions against that group's
+  // pages' own daily_target/total_target — same three-way sf/lf/each
+  // split ProjectDetail.jsx's own per-scope totals use.
   const pageUnitValue = (s, uom) => uom === 'LF' ? (parseFloat(s.lf) || 0)
     : uom === 'each' ? (s.count_data?.length ?? s.count_data?.markers?.length ?? 0)
     : (parseFloat(s.sf) || 0)
-  const uomBreakdown = (() => {
+  const uomGroups = (() => {
     const groups = {}
     pages.forEach(pg => {
       const u = pg.unit_of_measure || 'SF'
-      if (!groups[u]) groups[u] = { unit: u, pageIds: new Set(), target: 0 }
+      if (!groups[u]) groups[u] = { unit: u, pageIds: new Set(), dailyTarget: 0, totalTarget: 0 }
       groups[u].pageIds.add(pg.id)
-      groups[u].target += pg.total_target || 0
+      groups[u].dailyTarget += pg.daily_target || 0
+      groups[u].totalTarget += pg.total_target || 0
     })
-    return Object.values(groups).map(g => {
-      const total = todaySessions
-        .filter(s => g.pageIds.has(s.page_id))
-        .reduce((sum, s) => sum + pageUnitValue(s, g.unit), 0)
-      return { ...g, total, pct: g.target > 0 ? Math.min(100, Math.round((total / g.target) * 100)) : 0 }
-    })
+    return Object.values(groups)
   })()
-
-  async function saveTarget() {
-    setSavingTarget(true)
-    try {
-      await supabase.from('projects').update({ daily_sf_target: parseFloat(targetInput) || 0 }).eq('id', projectId)
-      setProject(p => ({ ...p, daily_sf_target: parseFloat(targetInput) || 0 }))
-      setEditingTarget(false)
-    } catch (err) { console.error(err) }
-    finally { setSavingTarget(false) }
-  }
-
-  async function saveTotalTarget() {
-    setSavingTotalTarget(true)
-    try {
-      await supabase.from('projects').update({ total_sf_target: parseFloat(totalTargetInput) || 0 }).eq('id', projectId)
-      setProject(p => ({ ...p, total_sf_target: parseFloat(totalTargetInput) || 0 }))
-      setEditingTotalTarget(false)
-    } catch (err) { console.error(err) }
-    finally { setSavingTotalTarget(false) }
-  }
+  const dailyGroups = uomGroups.map(g => {
+    const value = todaySessions
+      .filter(s => g.pageIds.has(s.page_id) && s.work_date === today)
+      .reduce((sum, s) => sum + pageUnitValue(s, g.unit), 0)
+    return { unit: g.unit, value, target: g.dailyTarget, pct: g.dailyTarget > 0 ? Math.min(100, Math.round((value / g.dailyTarget) * 100)) : 0 }
+  })
+  const totalGroups = uomGroups.map(g => {
+    const value = todaySessions
+      .filter(s => g.pageIds.has(s.page_id))
+      .reduce((sum, s) => sum + pageUnitValue(s, g.unit), 0)
+    return { unit: g.unit, value, target: g.totalTarget, pct: g.totalTarget > 0 ? Math.min(100, Math.round((value / g.totalTarget) * 100)) : 0 }
+  })
 
   if (loading) {
     return (
@@ -1323,108 +1413,14 @@ export default function ScopeDetail() {
               </button>
             </div>
             <div className="card space-y-4">
-              {/* Daily progress bar (green) — matches ProjectDetail.jsx's
-                  scope cards, which have always shown Daily above Total. */}
               <div>
-                <div className="flex justify-between items-baseline mb-2">
-                  <span className="text-xs text-muted font-medium">Daily Progress</span>
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                    {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {effectiveDailyTarget > 0 && (
-                      <span className="text-muted font-normal"> / {effectiveDailyTarget.toLocaleString()} {unitLabel}{dailyTargetFromTag && ` (${activeRateTag.name})`}</span>
-                    )}
-                  </span>
-                </div>
-                {effectiveDailyTarget > 0 && (
-                  <>
-                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: dailyBarColor }} />
-                    </div>
-                    <div className="flex justify-between text-xs mt-1">
-                      <span className="text-muted">{pct}% complete</span>
-                      {pct >= 100 && <span className="text-accent font-medium">Target reached!</span>}
-                    </div>
-                  </>
-                )}
+                <span className="text-xs text-muted font-medium block mb-2">Daily Progress</span>
+                <UomProgressBar groups={dailyGroups} />
               </div>
-
-              {/* Total progress bar (blue) */}
               <div>
-                <div className="flex justify-between items-baseline mb-2">
-                  <span className="text-xs text-muted font-medium">Total Progress</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                      {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      {effectiveTotalTarget > 0 && (
-                        <span className="text-muted font-normal"> / {effectiveTotalTarget.toLocaleString()} {unitLabel}</span>
-                      )}
-                    </span>
-                    {canEditFinancials && !editingTotalTarget && (
-                      <button onClick={() => { setTotalTargetInput(effectiveTotalTarget || ''); setEditingTotalTarget(true) }} className="btn-ghost p-1 ml-1">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {editingTotalTarget && (
-                  <div className="flex items-center gap-1 mb-2">
-                    <input
-                      type="number"
-                      value={totalTargetInput}
-                      onChange={e => setTotalTargetInput(e.target.value)}
-                      className="input w-28 text-xs py-1"
-                      min="0"
-                      placeholder={`Total ${unitLabel} target`}
-                    />
-                    <button onClick={saveTotalTarget} disabled={savingTotalTarget} className="btn-primary text-xs py-1 px-2">
-                      {savingTotalTarget ? '...' : 'Save'}
-                    </button>
-                    <button onClick={() => setEditingTotalTarget(false)} className="btn-ghost text-xs py-1 px-2">Cancel</button>
-                  </div>
-                )}
-                {effectiveTotalTarget > 0 && (
-                  <>
-                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
-                    </div>
-                    <div className="flex justify-between text-xs mt-1">
-                      <span className="text-muted">{totalPct}% complete</span>
-                      {totalPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Building complete!</span>}
-                    </div>
-                  </>
-                )}
+                <span className="text-xs text-muted font-medium block mb-2">Total Progress</span>
+                <UomProgressBar groups={totalGroups} />
               </div>
-
-              {/* Progress by unit of measure — each page's own Sheet
-                  Settings target, rolled up per unit. Only shown once a
-                  scope actually has pages tracked in more than the default
-                  single unit; a single-unit scope already has its answer
-                  in the Total Progress bar above. */}
-              {uomBreakdown.length > 1 && (
-                <div className="pt-2 border-t border-border">
-                  <span className="text-xs text-muted font-medium block mb-2">Progress by Unit of Measure</span>
-                  <div className="space-y-3">
-                    {uomBreakdown.map(g => (
-                      <div key={g.unit}>
-                        <div className="flex justify-between items-baseline mb-1">
-                          <span className="text-xs text-muted">{pageUomLabel(g.unit)} Progress</span>
-                          <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                            {g.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            {g.target > 0 && <span className="text-muted font-normal"> / {g.target.toLocaleString()} {pageUomLabel(g.unit)}</span>}
-                          </span>
-                        </div>
-                        {g.target > 0 && (
-                          <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
-                            <div className="h-full bg-accent rounded-full transition-all duration-700" style={{ width: `${g.pct}%` }} />
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
@@ -1503,113 +1499,14 @@ export default function ScopeDetail() {
             <div>
               <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Progress</h3>
               <div className="bg-surface-2 rounded-xl p-3 space-y-4 elevated">
-
-                {/* Daily progress (green) — matches ProjectDetail.jsx's
-                    scope cards, which have always shown Daily above Total. */}
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <p className="text-xs text-muted font-medium">Daily Progress</p>
-                    <div className="flex items-center gap-1">
-                      <p className="text-xs text-gray-700 dark:text-gray-300">
-                        {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        {effectiveDailyTarget > 0 && <span className="text-muted"> / {effectiveDailyTarget.toLocaleString()}</span>}
-                        {` ${unitLabel}`}
-                        {dailyTargetFromTag && <span className="text-muted"> ({activeRateTag.name})</span>}
-                      </p>
-                      {canEditFinancials && !editingTarget && (
-                        <button onClick={() => { setTargetInput(manualDailyTarget || ''); setEditingTarget(true) }} className="btn-ghost p-0.5">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {editingTarget && (
-                    <div className="flex items-center gap-1 mb-1.5">
-                      <input
-                        type="number"
-                        value={targetInput}
-                        onChange={e => setTargetInput(e.target.value)}
-                        className="input w-24 text-xs py-1"
-                        min="0"
-                        placeholder={`Daily ${unitLabel}`}
-                      />
-                      <button onClick={saveTarget} disabled={savingTarget} className="btn-primary text-xs py-1 px-2">
-                        {savingTarget ? '...' : 'Save'}
-                      </button>
-                      <button onClick={() => setEditingTarget(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
-                    </div>
-                  )}
-                  {effectiveDailyTarget > 0 ? (
-                    <>
-                      <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: dailyBarColor }} />
-                      </div>
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-muted">{pct}%</span>
-                        {pct >= 100 && <span className="text-accent font-medium">Target reached!</span>}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                      <div className="h-full bg-accent/30 rounded-full" style={{ width: '0%' }} />
-                    </div>
-                  )}
+                  <p className="text-xs text-muted font-medium mb-2">Daily Progress</p>
+                  <UomProgressBar groups={dailyGroups} size="sm" />
                 </div>
-
-                {/* Total progress (blue) */}
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <p className="text-xs text-muted font-medium">Total Progress</p>
-                    <div className="flex items-center gap-1">
-                      <p className="text-xs text-gray-700 dark:text-gray-300">
-                        {totalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        {effectiveTotalTarget > 0 && <span className="text-muted"> / {effectiveTotalTarget.toLocaleString()}</span>}
-                        {` ${unitLabel}`}
-                      </p>
-                      {canEditFinancials && !editingTotalTarget && (
-                        <button onClick={() => { setTotalTargetInput(effectiveTotalTarget || ''); setEditingTotalTarget(true) }} className="btn-ghost p-0.5">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {editingTotalTarget && (
-                    <div className="flex items-center gap-1 mb-1.5">
-                      <input
-                        type="number"
-                        value={totalTargetInput}
-                        onChange={e => setTotalTargetInput(e.target.value)}
-                        className="input w-24 text-xs py-1"
-                        min="0"
-                        placeholder={`Total ${unitLabel}`}
-                      />
-                      <button onClick={saveTotalTarget} disabled={savingTotalTarget} className="btn-primary text-xs py-1 px-2">
-                        {savingTotalTarget ? '...' : 'Save'}
-                      </button>
-                      <button onClick={() => setEditingTotalTarget(false)} className="btn-ghost text-xs py-1 px-1">✕</button>
-                    </div>
-                  )}
-                  {effectiveTotalTarget > 0 ? (
-                    <>
-                      <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
-                      </div>
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-muted">{totalPct}%</span>
-                        {totalPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Complete!</span>}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500/30 rounded-full" style={{ width: '0%' }} />
-                    </div>
-                  )}
+                  <p className="text-xs text-muted font-medium mb-2">Total Progress</p>
+                  <UomProgressBar groups={totalGroups} size="sm" />
                 </div>
-
               </div>
             </div>
 

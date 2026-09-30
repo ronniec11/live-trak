@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import Layout from '../components/Layout'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
+import UomProgressBar, { pageUomDisplay } from '../components/UomProgressBar'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { supabase } from '../lib/supabase'
@@ -11,16 +12,6 @@ import { getCachedJobDetail } from '../lib/offlineCache'
 import { limitError } from '../lib/planLimits'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
-// A scope's default unit of measure — not every scope is measured in SF
-// (e.g. base installation is tracked in linear feet, fixture counts in
-// units), so this is what a scope is expected to be tracked in unless a
-// given session's markup says otherwise.
-const UOM_OPTIONS = ['SF', 'LF', 'Count']
-// Display-only capitalization for a page's own unit_of_measure (stored
-// lowercase 'each' — matches ScopeDetail.jsx's identical helper, see its
-// PAGE_UOM_OPTIONS comment for why pages use their own SF/LF/each
-// vocabulary instead of this scope-level UOM_OPTIONS one).
-const pageUomLabel = u => u === 'each' ? 'Each' : u
 // Austin, TX — used for the weather widget whenever a job has no address
 // set yet, so the widget always has something to show rather than an empty
 // box.
@@ -547,7 +538,7 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
 }
 
 function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberIds, onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', status: 'active', uom: 'SF', daily_sf_target: '', total_sf_target: '', cost: '' })
+  const [form, setForm] = useState({ name: '', status: 'active', cost: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -574,9 +565,6 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
           name: trimmedName,
           description: trimmedName,
           status: form.status,
-          uom: form.uom,
-          daily_sf_target: parseFloat(form.daily_sf_target) || 0,
-          total_sf_target: parseFloat(form.total_sf_target) || 0,
           cost: form.cost === '' ? null : parseFloat(form.cost) || null,
           created_by: userId,
         })
@@ -621,29 +609,11 @@ function AddScopeModal({ jobId, job, currentScopeCount, userId, existingMemberId
             <label className="label">Scope Name *</label>
             <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Final Clean, Under Floor Cleaning" required />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Status</label>
-              <select className="input capitalize" value={form.status} onChange={e => set('status', e.target.value)}>
-                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Unit of Measure</label>
-              <select className="input" value={form.uom} onChange={e => set('uom', e.target.value)}>
-                {UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Daily {form.uom} Target</label>
-              <input className="input" type="number" min="0" value={form.daily_sf_target} onChange={e => set('daily_sf_target', e.target.value)} placeholder="5000" />
-            </div>
-            <div>
-              <label className="label">Total {form.uom} Target</label>
-              <input className="input" type="number" min="0" value={form.total_sf_target} onChange={e => set('total_sf_target', e.target.value)} placeholder="e.g. 250000" />
-            </div>
+          <div>
+            <label className="label">Status</label>
+            <select className="input capitalize" value={form.status} onChange={e => set('status', e.target.value)}>
+              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
           </div>
           <div>
             <label className="label">Contract Cost ($)</label>
@@ -768,7 +738,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function ScopeCard({ scope, todaySF, allTimeSF, uomBreakdown, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
+function ScopeCard({ scope, dailyGroups, totalGroups, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same pattern as the
@@ -818,21 +788,6 @@ function ScopeCard({ scope, todaySF, allTimeSF, uomBreakdown, onClick, onUpdateS
     }
     onClick?.(e)
   }
-
-  const uom = scope.uom || 'SF'
-  // A manual daily_sf_target always wins; otherwise fall back to a tagged
-  // Company Hub line item's rate for this scope's unit, same resolution
-  // ScopeDetail.jsx's own Progress card uses (a tag has no "total" concept,
-  // so the total target stays manual-only either way).
-  const rateTagsForUom = (scope.tags || []).filter(t => t.uom === uom.toLowerCase() && (t.rate_per_day != null || t.rate_per_man_hour != null))
-  const activeRateTag = rateTagsForUom.length === 1 ? rateTagsForUom[0] : null
-  const effectiveDailyTarget = scope.daily_sf_target > 0 ? scope.daily_sf_target : (activeRateTag?.rate_per_day || 0)
-  const dailyPct = effectiveDailyTarget > 0
-    ? Math.min(100, Math.round((todaySF / effectiveDailyTarget) * 100))
-    : 0
-  const totalPct = scope.total_sf_target > 0
-    ? Math.min(100, Math.round((allTimeSF / scope.total_sf_target) * 100))
-    : 0
 
   return (
     <div
@@ -888,67 +843,34 @@ function ScopeCard({ scope, todaySF, allTimeSF, uomBreakdown, onClick, onUpdateS
         </div>
       </div>
 
-      <div className="bg-surface-2 rounded-lg p-3 mb-3">
-        <p className="text-xs text-muted mb-0.5">Total {uom}</p>
-        <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">
-          {allTimeSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          {scope.total_sf_target > 0 && (
-            <span className="text-sm font-normal text-muted"> / {scope.total_sf_target.toLocaleString()}</span>
-          )}
-          <span className="text-xs font-normal text-muted"> {uom}</span>
-        </p>
-      </div>
-
-      {/* Daily progress bar (green) */}
-      <div className="mb-2">
-        <div className="flex justify-between text-xs mb-1">
-          <span className="text-muted">Daily progress · {todaySF.toLocaleString(undefined, { maximumFractionDigits: 0 })} {uom}</span>
-          <span className={dailyPct >= 100 ? 'text-accent font-medium' : 'text-gray-500 dark:text-gray-400'}>
-            {effectiveDailyTarget > 0 ? `${dailyPct}%` : '—'}
-          </span>
-        </div>
-        <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
-          <div className="h-full bg-accent rounded-full transition-all duration-700" style={{ width: `${dailyPct}%` }} />
-        </div>
-      </div>
-
-      {/* Total progress bar (blue) */}
-      <div>
-        <div className="flex justify-between text-xs mb-1">
-          <span className="text-muted">Total progress</span>
-          <span className={totalPct >= 100 ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-500 dark:text-gray-400'}>
-            {scope.total_sf_target > 0 ? `${totalPct}%` : 'Total target not set'}
-          </span>
-        </div>
-        <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
-          <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${totalPct}%` }} />
-        </div>
-      </div>
-
-      {/* Per-page UOM breakdown — only shown once this scope's own pages
-          span more than one unit (Sheet Settings, set per-page in
-          ScopeDetail.jsx); a single-unit scope's answer is already the
-          Total progress bar above. */}
-      {uomBreakdown && uomBreakdown.length > 1 && (
-        <div className="mt-3 pt-3 border-t border-border space-y-2">
-          {uomBreakdown.map(g => (
-            <div key={g.unit}>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="text-muted">{pageUomLabel(g.unit)} progress</span>
-                <span className="text-gray-700 dark:text-gray-300">
-                  {g.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  {g.target > 0 && <span className="text-muted"> / {g.target.toLocaleString()} {pageUomLabel(g.unit)}</span>}
-                </span>
-              </div>
-              {g.target > 0 && (
-                <div className="h-1 bg-surface-3 rounded-full overflow-hidden">
-                  <div className="h-full bg-accent rounded-full transition-all duration-700" style={{ width: `${g.pct}%` }} />
-                </div>
-              )}
+      {/* Per-unit mini-stat row — replaces the old single "Total {uom}"
+          box now that a scope's pages can each track a different unit
+          (Sheet Settings, per-page). One tile per unit present. */}
+      {totalGroups && totalGroups.length > 0 && (
+        <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${totalGroups.length}, 1fr)` }}>
+          {totalGroups.map(g => (
+            <div key={g.unit} className="bg-surface-2 rounded-lg p-2.5 min-w-0">
+              <p className="text-[10px] font-bold tracking-wide text-muted mb-0.5">{pageUomDisplay(g.unit)}</p>
+              <p className="text-base font-extrabold text-gray-900 dark:text-white leading-tight truncate">
+                {g.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                {g.target > 0 && <span className="text-xs font-medium text-muted"> / {g.target.toLocaleString()}</span>}
+              </p>
             </div>
           ))}
         </div>
       )}
+
+      {/* Daily/Total Progress — each one bar, split into a compartment per
+          unit present (see UomProgressBar); "Overall Progress" isn't shown
+          here at all, it's the job dashboard's own header bar above. */}
+      <div className="mb-3">
+        <span className="text-xs text-muted font-medium block mb-1.5">Daily Progress</span>
+        <UomProgressBar groups={dailyGroups} />
+      </div>
+      <div>
+        <span className="text-xs text-muted font-medium block mb-1.5">Total Progress</span>
+        <UomProgressBar groups={totalGroups} />
+      </div>
 
       <div className="mt-3 pt-3 border-t border-border">
         {/* No onClick here — a click bubbles up to the card's own onClick
@@ -973,9 +895,11 @@ export default function ProjectDetail() {
 
   const [job, setJob] = useState(null)
   const [scopes, setScopes] = useState([])
-  const [sfTodayByScope, setSfTodayByScope] = useState({})
-  const [sfTotalByScope, setSfTotalByScope] = useState({})
-  const [uomBreakdownByScope, setUomBreakdownByScope] = useState({}) // scope.id -> [{unit, total, target, pct}, ...], per-page Sheet Settings rolled up per scope
+  // scope.id -> [{unit, value, target, pct}, ...] — one entry per distinct
+  // unit_of_measure among that scope's own pages (Sheet Settings), rolled
+  // up from every session on those pages.
+  const [dailyGroupsByScope, setDailyGroupsByScope] = useState({})
+  const [totalGroupsByScope, setTotalGroupsByScope] = useState({})
   const [todaySessions, setTodaySessions] = useState([])
   const [recentSessions, setRecentSessions] = useState([])
   const [members, setMembers] = useState([])
@@ -1086,20 +1010,12 @@ export default function ProjectDetail() {
       // there's no reason to make "+ Add" wait on a fresh fetch every time.
       const [{ data: jobData, error: jobErr }, scopesRes, { data: directoryData }] = await Promise.all([
         supabase.from('jobs').select('*, organizations(name, plan, unlimited_until)').eq('id', jobId).single(),
-        // project_tags(tags(*)) may fail until
-        // supabase-migration-tags-production-rates.sql has been run — falls
-        // back to a plain scopes fetch so the page doesn't break before then.
-        supabase.from('projects').select('*, project_tags(tags(*))').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
+        supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').order('full_name'),
       ])
       if (jobErr) throw jobErr
-      let scopesData = scopesRes.data
-      if (scopesRes.error) {
-        const fallback = await supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false })
-        if (fallback.error) throw fallback.error
-        scopesData = fallback.data
-      }
-      scopesData = (scopesData || []).map(s => ({ ...s, tags: (s.project_tags || []).map(pt => pt.tags).filter(Boolean) }))
+      if (scopesRes.error) throw scopesRes.error
+      const scopesData = scopesRes.data
 
       setJob(jobData)
       setScopes(scopesData || [])
@@ -1112,12 +1028,12 @@ export default function ProjectDetail() {
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
-        setSfTodayByScope({}); setSfTotalByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
+        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
         return
       }
 
       const [{ data: pages }, { data: memberRows }] = await Promise.all([
-        supabase.from('pages').select('id, project_id, name, unit_of_measure, total_target').in('project_id', scopeIds),
+        supabase.from('pages').select('id, project_id, name, unit_of_measure, daily_target, total_target').in('project_id', scopeIds),
         supabase.from('project_members').select('user_id, profiles(*)').in('project_id', scopeIds),
       ])
 
@@ -1132,7 +1048,7 @@ export default function ProjectDetail() {
       ;(pages || []).forEach(pg => { pageToScope[pg.id] = pg.project_id; pageToName[pg.id] = pg.name })
       const pageIds = Object.keys(pageToScope)
       if (pageIds.length === 0) {
-        setSfTodayByScope({}); setSfTotalByScope({}); setUomBreakdownByScope({}); setTodaySessions([]); setRecentSessions([])
+        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([])
         return
       }
 
@@ -1143,42 +1059,23 @@ export default function ProjectDetail() {
         .order('created_at', { ascending: false })
 
       const scopeNameById = Object.fromEntries((scopesData || []).map(s => [s.id, s.name]))
-      // Each scope tracks whatever its own uom is (see Scope Settings) —
-      // a session logged against an LF or Count scope has its real number
-      // in sf/lf/count_data respectively, so the totals below have to read
-      // the field matching that scope's uom, not always sf.
-      const scopeUomById = Object.fromEntries((scopesData || []).map(s => [s.id, s.uom || 'SF']))
       const today = new Date().toLocaleDateString('en-CA')
-      const todayMap = {}
-      const totalMap = {}
-      ;(sessions || []).forEach(s => {
-        const scopeId = pageToScope[s.page_id]
-        if (!scopeId) return
-        const uom = scopeUomById[scopeId] || 'SF'
-        const value = uom === 'LF' ? (parseFloat(s.lf) || 0)
-          : uom === 'Count' ? countItemsFor(s.count_data)
-          : (parseFloat(s.sf) || 0)
-        totalMap[scopeId] = (totalMap[scopeId] || 0) + value
-        if (s.work_date === today) todayMap[scopeId] = (todayMap[scopeId] || 0) + value
-      })
-      setSfTodayByScope(todayMap)
-      setSfTotalByScope(totalMap)
 
-      // Per-page UOM breakdown (Sheet Settings) — independent of the
-      // scope's own uom above; a scope's pages can each be tracked in a
-      // different unit now, so this groups by each page's OWN unit and
-      // sums target/actual per group, same math as ScopeDetail.jsx's own
-      // uomBreakdown, computed here across every scope on this job at once.
+      // Grouped by each page's OWN unit (Sheet Settings) — a scope's pages
+      // can each track a different unit now, so this rolls up target/actual
+      // per unit, per scope, same math as ScopeDetail.jsx's own
+      // dailyGroups/totalGroups, computed here across every scope on this
+      // job at once.
       const pageUnitById = {}
-      const groupByScope = {} // scopeId -> unit -> { pageIds:Set, target, total }
+      const groupByScope = {} // scopeId -> unit -> { dailyTarget, totalTarget, dailyValue, totalValue }
       ;(pages || []).forEach(pg => {
         const u = pg.unit_of_measure || 'SF'
         pageUnitById[pg.id] = u
         const scopeId = pg.project_id
         if (!groupByScope[scopeId]) groupByScope[scopeId] = {}
-        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { pageIds: new Set(), target: 0, total: 0 }
-        groupByScope[scopeId][u].pageIds.add(pg.id)
-        groupByScope[scopeId][u].target += pg.total_target || 0
+        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { dailyTarget: 0, totalTarget: 0, dailyValue: 0, totalValue: 0 }
+        groupByScope[scopeId][u].dailyTarget += pg.daily_target || 0
+        groupByScope[scopeId][u].totalTarget += pg.total_target || 0
       })
       const pageUnitValue = (s, uom) => uom === 'LF' ? (parseFloat(s.lf) || 0)
         : uom === 'each' ? countItemsFor(s.count_data)
@@ -1186,16 +1083,25 @@ export default function ProjectDetail() {
       ;(sessions || []).forEach(s => {
         const u = pageUnitById[s.page_id]
         const g = groupByScope[pageToScope[s.page_id]]?.[u]
-        if (g) g.total += pageUnitValue(s, u)
+        if (!g) return
+        const value = pageUnitValue(s, u)
+        g.totalValue += value
+        if (s.work_date === today) g.dailyValue += value
       })
-      const uomBreakdownMap = {}
+      const dailyGroupsMap = {}
+      const totalGroupsMap = {}
       Object.entries(groupByScope).forEach(([scopeId, units]) => {
-        uomBreakdownMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
-          unit, total: g.total, target: g.target,
-          pct: g.target > 0 ? Math.min(100, Math.round((g.total / g.target) * 100)) : 0,
+        dailyGroupsMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
+          unit, value: g.dailyValue, target: g.dailyTarget,
+          pct: g.dailyTarget > 0 ? Math.min(100, Math.round((g.dailyValue / g.dailyTarget) * 100)) : 0,
+        }))
+        totalGroupsMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
+          unit, value: g.totalValue, target: g.totalTarget,
+          pct: g.totalTarget > 0 ? Math.min(100, Math.round((g.totalValue / g.totalTarget) * 100)) : 0,
         }))
       })
-      setUomBreakdownByScope(uomBreakdownMap)
+      setDailyGroupsByScope(dailyGroupsMap)
+      setTotalGroupsByScope(totalGroupsMap)
 
       const withNames = (sessions || []).map(s => ({
         ...s,
@@ -1220,8 +1126,8 @@ export default function ProjectDetail() {
           setJob(cached.job)
           setScopes(cached.scopes)
           setMembers([])
-          setSfTodayByScope(cached.sfTodayByScope)
-          setSfTotalByScope(cached.sfTotalByScope)
+          setDailyGroupsByScope(cached.dailyGroupsByScope)
+          setTotalGroupsByScope(cached.totalGroupsByScope)
           setTodaySessions(cached.todaySessions)
           setRecentSessions(cached.recentSessions)
           setOfflineMode(true)
@@ -1268,9 +1174,25 @@ export default function ProjectDetail() {
     setJob(j => ({ ...j, status }))
   }
 
-  const overallTotalSF = Object.values(sfTotalByScope).reduce((sum, sf) => sum + sf, 0)
-  const overallTargetSF = scopes.reduce((sum, s) => sum + (parseFloat(s.total_sf_target) || 0), 0)
-  const overallPct = overallTargetSF > 0 ? Math.min(100, Math.round((overallTotalSF / overallTargetSF) * 100)) : 0
+  // "Overall Progress" lives here, once per job, not on any one scope card
+  // — every scope's every unit combined, same segmented-bar treatment as a
+  // scope's own Daily/Total Progress.
+  const jobTotalGroups = (() => {
+    const byUnit = {}
+    Object.values(totalGroupsByScope).forEach(groups => {
+      (groups || []).forEach(g => {
+        if (!byUnit[g.unit]) byUnit[g.unit] = { unit: g.unit, value: 0, target: 0 }
+        byUnit[g.unit].value += g.value
+        byUnit[g.unit].target += g.target
+      })
+    })
+    return Object.values(byUnit).map(g => ({
+      ...g, pct: g.target > 0 ? Math.min(100, Math.round((g.value / g.target) * 100)) : 0,
+    }))
+  })()
+  const jobOverallPct = jobTotalGroups.length > 0
+    ? Math.round(jobTotalGroups.reduce((sum, g) => sum + g.pct, 0) / jobTotalGroups.length)
+    : 0
   const todayTotalSF = todaySessions.reduce((sum, s) => sum + (parseFloat(s.sf) || 0), 0)
 
   if (loading) {
@@ -1350,25 +1272,17 @@ export default function ProjectDetail() {
           </div>
 
           <div className="max-w-[1600px] px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
-          {/* Overall job progress — every scope's total SF vs every scope's total target */}
+          {/* Overall job progress — every scope's every unit combined, the
+              one place "Overall Progress" is shown (not on a scope card). */}
           <div className="card">
-            <div className="flex justify-between items-baseline mb-2">
-              <span className="text-sm font-semibold text-gray-900 dark:text-white">Overall Job Progress</span>
-              <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                {overallTotalSF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                {overallTargetSF > 0 && <span className="text-muted font-normal"> / {overallTargetSF.toLocaleString()} SF</span>}
-                {overallTargetSF === 0 && <span className="text-muted font-normal"> SF</span>}
-              </span>
-            </div>
-            <div className="h-2.5 bg-surface-3 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${overallPct}%` }} />
-            </div>
-            {overallTargetSF > 0 && (
-              <div className="flex justify-between text-xs mt-1">
-                <span className="text-muted">{overallPct}% complete across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'}</span>
-                {overallPct >= 100 && <span className="text-blue-600 dark:text-blue-400 font-medium">Job complete!</span>}
+            <div className="flex justify-between items-baseline mb-3">
+              <div>
+                <span className="text-sm font-semibold text-gray-900 dark:text-white block">Overall Job Progress</span>
+                <span className="text-xs text-muted">across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'}, all units</span>
               </div>
-            )}
+              {jobTotalGroups.length > 0 && <span className="text-lg font-bold text-blue-600 dark:text-blue-400">{jobOverallPct}%</span>}
+            </div>
+            <UomProgressBar groups={jobTotalGroups} size="lg" />
           </div>
 
           <div>
@@ -1393,9 +1307,8 @@ export default function ProjectDetail() {
                   <ScopeCard
                     key={scope.id}
                     scope={scope}
-                    todaySF={sfTodayByScope[scope.id] || 0}
-                    allTimeSF={sfTotalByScope[scope.id] || 0}
-                    uomBreakdown={uomBreakdownByScope[scope.id]}
+                    dailyGroups={dailyGroupsByScope[scope.id]}
+                    totalGroups={totalGroupsByScope[scope.id]}
                     onClick={() => navigate(`/scopes/${scope.id}`)}
                     onUpdateStatus={updateScopeStatus}
                     onOpenSettings={setScopeSettingsTarget}

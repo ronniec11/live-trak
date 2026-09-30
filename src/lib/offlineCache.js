@@ -462,10 +462,11 @@ function countItemsFor(countData) {
 }
 
 // Rebuilds what ProjectDetail.jsx's loadJobDetail() computes from Supabase
-// (per-scope SF totals, today's activity, recent sessions), but from the
-// local cache — used when that fetch fails with no connection. Every
-// cached scope's own pages (see cachePage) already carry their sessions,
-// so nothing extra needs to be cached just for this.
+// (per-scope per-unit daily/total groups, today's activity, recent
+// sessions), but from the local cache — used when that fetch fails with no
+// connection. Every cached scope's own pages (see cachePage) already carry
+// their own unit_of_measure/daily_target/total_target and sessions, so
+// nothing extra needs to be cached just for this.
 export async function getCachedJobDetail(jobId) {
   const job = await getCachedJob(jobId)
   if (!job) return null
@@ -475,24 +476,28 @@ export async function getCachedJobDetail(jobId) {
     .sort((a, b) => (a.sort_order ?? Infinity) - (b.sort_order ?? Infinity))
   const today = new Date().toLocaleDateString('en-CA')
 
-  const sfTodayByScope = {}
-  const sfTotalByScope = {}
+  const groupByScope = {} // scopeId -> unit -> { dailyTarget, totalTarget, dailyValue, totalValue }
   const todaySessions = []
   const recentSessions = []
 
   for (const scope of scopes) {
-    const uom = scope.uom || 'SF'
     for (const pg of (scope.pages || [])) {
       const cachedPage = await getCachedPage(pg.id)
+      const u = cachedPage?.unit_of_measure || 'SF'
+      if (!groupByScope[scope.id]) groupByScope[scope.id] = {}
+      if (!groupByScope[scope.id][u]) groupByScope[scope.id][u] = { dailyTarget: 0, totalTarget: 0, dailyValue: 0, totalValue: 0 }
+      const g = groupByScope[scope.id][u]
+      g.dailyTarget += cachedPage?.daily_target || 0
+      g.totalTarget += cachedPage?.total_target || 0
       for (const s of (cachedPage?.sessions || [])) {
-        const value = uom === 'LF' ? (parseFloat(s.lf) || 0)
-          : uom === 'Count' ? countItemsFor(s.count_data)
+        const value = u === 'LF' ? (parseFloat(s.lf) || 0)
+          : u === 'each' ? countItemsFor(s.count_data)
           : (parseFloat(s.sf) || 0)
-        sfTotalByScope[scope.id] = (sfTotalByScope[scope.id] || 0) + value
+        g.totalValue += value
         const withNames = { ...s, scopeName: scope.name, pageName: pg.name }
         recentSessions.push(withNames)
         if (s.work_date === today) {
-          sfTodayByScope[scope.id] = (sfTodayByScope[scope.id] || 0) + value
+          g.dailyValue += value
           todaySessions.push(withNames)
         }
       }
@@ -500,13 +505,25 @@ export async function getCachedJobDetail(jobId) {
   }
   recentSessions.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
 
+  const dailyGroupsByScope = {}
+  const totalGroupsByScope = {}
+  Object.entries(groupByScope).forEach(([scopeId, units]) => {
+    dailyGroupsByScope[scopeId] = Object.entries(units).map(([unit, g]) => ({
+      unit, value: g.dailyValue, target: g.dailyTarget,
+      pct: g.dailyTarget > 0 ? Math.min(100, Math.round((g.dailyValue / g.dailyTarget) * 100)) : 0,
+    }))
+    totalGroupsByScope[scopeId] = Object.entries(units).map(([unit, g]) => ({
+      unit, value: g.totalValue, target: g.totalTarget,
+      pct: g.totalTarget > 0 ? Math.min(100, Math.round((g.totalValue / g.totalTarget) * 100)) : 0,
+    }))
+  })
+
   return {
     job,
     scopes: scopes.map(s => ({
-      id: s.id, name: s.name, description: s.description, status: s.status, uom: s.uom,
-      daily_sf_target: s.daily_sf_target, total_sf_target: s.total_sf_target,
+      id: s.id, name: s.name, description: s.description, status: s.status,
     })),
-    sfTodayByScope, sfTotalByScope,
+    dailyGroupsByScope, totalGroupsByScope,
     todaySessions, recentSessions: recentSessions.slice(0, 15),
   }
 }

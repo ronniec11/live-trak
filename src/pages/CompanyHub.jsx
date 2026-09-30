@@ -400,7 +400,7 @@ function ProductionRatesCard({ orgId }) {
     const row = rows.find(r => r.id === id)
     if (!row) return
     if (row._isNew) { setRows(rs => rs.filter(r => r.id !== id)); return }
-    if (!confirm(`Delete the "${row.name}" tag? Scopes tagged with it will lose this tag and its rate.`)) return
+    if (!confirm(`Delete the "${row.name}" tag? Sheets tagged with it will lose this tag and its rate.`)) return
     setRows(rs => rs.map(r => r.id === id ? { ...r, _saving: true } : r))
     try {
       const { error } = await supabase.from('tags').delete().eq('id', id)
@@ -416,7 +416,7 @@ function ProductionRatesCard({ orgId }) {
       <div className="mb-1">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Production Rates</h2>
         <p className="text-xs text-muted mt-0.5">
-          Tag scopes in Scope Settings with these line items to track actual production against your company's standard rate.
+          Tag sheets in Sheet Settings with these line items to track actual production against your company's standard rate.
         </p>
       </div>
 
@@ -451,6 +451,7 @@ function ProductionRatesCard({ orgId }) {
                 >
                   <option value="sf">SF</option>
                   <option value="lf">LF</option>
+                  <option value="each">Each</option>
                 </select>
                 <input
                   className="input w-full sm:w-28 shrink-0" type="number" min="0" placeholder="Per man-hr"
