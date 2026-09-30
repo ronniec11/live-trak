@@ -234,25 +234,22 @@ function WeatherWidget({ location }) {
   )
 }
 
-// CartoDB's free basemaps (no API key, same usage terms as raw OSM tiles —
-// they're OSM data, just pre-styled for light/dark UI use) instead of OSM's
-// own mapnik tiles, which only ever render light. Positron/Dark Matter are
-// the standard free choice for a themed embedded map.
-function tilesForTheme(theme) {
-  const style = theme === 'dark' ? 'dark_all' : 'light_all'
-  return {
-    url: `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  }
-}
+// Raw OSM tiles — no API key, ever. (CartoDB's free anonymous basemap
+// tiles, used here briefly, started demanding a Carto API key with no
+// warning — the "API KEY REQUIRED" watermark that broke both light AND
+// dark once that changed is exactly why this doesn't depend on a second
+// tile provider that could pull the same trick.) Dark mode reuses these
+// same tiles and fakes the look with a CSS filter on Leaflet's tile pane
+// only, so the marker/controls keep their real colors.
+const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+const DARK_TILE_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9)'
 
 // Shared by the small sidebar preview and the enlarged modal — each gets
-// its own Leaflet instance (a map is bound to one DOM node for life), and
-// re-tiles in place if the theme flips while either is on screen.
+// its own Leaflet instance (a map is bound to one DOM node for life).
 function LocationMapView({ location, theme, interactive, height }) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
-  const tilesRef = useRef(null)
 
   useEffect(() => {
     if (location.status !== 'ready' || !elRef.current || mapRef.current) return
@@ -266,23 +263,20 @@ function LocationMapView({ location, theme, interactive, height }) {
       keyboard: interactive,
       attributionControl: interactive,
     }).setView([lat, lon], 15)
-    const { url, attribution } = tilesForTheme(theme)
-    tilesRef.current = L.tileLayer(url, { maxZoom: 19, attribution, subdomains: 'abcd' }).addTo(map)
+    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTRIBUTION }).addTo(map)
     L.circleMarker([lat, lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#4f46e5', fillOpacity: 1 }).addTo(map)
     mapRef.current = map
     // The modal's map mounts while its open transition may still be
     // resolving layout, so its container can report a stale (often zero)
     // size at creation time — nudge Leaflet to re-measure after paint.
     requestAnimationFrame(() => map.invalidateSize())
-    return () => { map.remove(); mapRef.current = null; tilesRef.current = null }
+    return () => { map.remove(); mapRef.current = null }
   }, [location.status, location.lat, location.lon])
 
   useEffect(() => {
-    if (!mapRef.current) return
-    if (tilesRef.current) mapRef.current.removeLayer(tilesRef.current)
-    const { url, attribution } = tilesForTheme(theme)
-    tilesRef.current = L.tileLayer(url, { maxZoom: 19, attribution, subdomains: 'abcd' }).addTo(mapRef.current)
-  }, [theme])
+    const pane = mapRef.current?.getPane('tilePane')
+    if (pane) pane.style.filter = theme === 'dark' ? DARK_TILE_FILTER : ''
+  }, [theme, location.status])
 
   if (location.status !== 'ready') {
     return <div className="bg-surface-2 animate-pulse" style={{ height, width: '100%' }} />
