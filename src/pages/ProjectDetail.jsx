@@ -446,15 +446,11 @@ function LocationMap({ location }) {
   )
 }
 
-// Adding someone to a job means adding them to every scope under it —
-// jobs.jsx/JobDetail's "Team Members" is an aggregate view (see
-// loadJobDetail's memberMap dedup), not a table of its own, so there's no
-// single job-level membership row to insert. scopeIds is always the full
-// set for this job; the directory already excludes anyone who's a member
-// of at least one scope (existingMemberIds), so this only ever runs for
-// someone with zero scopes on the job — never a partial-membership case
-// that could conflict with project_members' one-row-per-(project,user)
-// constraint.
+// Adding someone here inserts one job_members row (see
+// supabase-migration-job-members.sql) — an independent job-level roster,
+// not derived from scope membership. A DB trigger fans that out to every
+// one of the job's scopes, same as the reverse direction (adding someone
+// to a scope adds them to the job too).
 // directory is prefetched by JobDetail's loadJobDetail() alongside
 // everything else this page needs, rather than fetched fresh the moment
 // this modal opens — the fetch-then-render gap was exactly the "lag then
@@ -462,7 +458,7 @@ function LocationMap({ location }) {
 // but sat on a bare "Loading..." for a beat, then the whole list snapped
 // in and pushed the modal's height out all at once. With the directory
 // already in hand, the modal opens already populated.
-function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdded }) {
+function AddMemberModal({ directory, jobId, existingMemberIds, onClose, onAdded }) {
   const [search, setSearch] = useState('')
   const [addingId, setAddingId] = useState(null)
   const [error, setError] = useState('')
@@ -473,8 +469,8 @@ function AddMemberModal({ directory, scopeIds, existingMemberIds, onClose, onAdd
     setError('')
     try {
       const { error: mErr } = await supabase
-        .from('project_members')
-        .insert(scopeIds.map(project_id => ({ project_id, user_id: person.id })))
+        .from('job_members')
+        .insert({ job_id: jobId, user_id: person.id })
       if (mErr) throw mErr
       setAdded(a => [...a, person.id])
       onAdded()
@@ -992,10 +988,15 @@ export default function ProjectDetail() {
       // front with everything else this page needs, rather than only once
       // that modal opens — an org's directory doesn't change mid-visit, so
       // there's no reason to make "+ Add" wait on a fresh fetch every time.
-      const [{ data: jobData, error: jobErr }, scopesRes, { data: directoryData }] = await Promise.all([
+      const [{ data: jobData, error: jobErr }, scopesRes, { data: directoryData }, memberRes] = await Promise.all([
         supabase.from('jobs').select('*, organizations(name, plan, unlimited_until)').eq('id', jobId).single(),
         supabase.from('projects').select('*').eq('job_id', jobId).order('sort_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').order('full_name'),
+        // job_members is its own independent roster (see
+        // supabase-migration-job-members.sql), not derived from scope
+        // membership — someone stays a Project Member even if later
+        // removed from every scope under this job.
+        supabase.from('job_members').select('user_id, profiles(*)').eq('job_id', jobId),
       ])
       if (jobErr) throw jobErr
       if (scopesRes.error) throw scopesRes.error
@@ -1009,23 +1010,16 @@ export default function ProjectDetail() {
       // (active is undefined on every row until then, which reads as
       // "not removed" here, same as PersonCard/Team.jsx's own check).
       setDirectory((directoryData || []).filter(p => p.active !== false))
+      setMembers((memberRes.data || []).map(m => m.profiles).filter(Boolean))
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
-        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
+        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([])
         return
       }
 
-      const [{ data: pages }, { data: memberRows }] = await Promise.all([
-        supabase.from('pages').select('id, project_id, name, unit_of_measure, daily_target, total_target').in('project_id', scopeIds),
-        supabase.from('project_members').select('user_id, profiles(*)').in('project_id', scopeIds),
-      ])
-
-      // Dedupe team members across scopes — the same person is often on
-      // more than one scope for the same job.
-      const memberMap = new Map()
-      ;(memberRows || []).forEach(m => { if (m.profiles) memberMap.set(m.profiles.id, m.profiles) })
-      setMembers([...memberMap.values()])
+      const { data: pages } = await supabase
+        .from('pages').select('id, project_id, name, unit_of_measure, daily_target, total_target').in('project_id', scopeIds)
 
       const pageToScope = {}
       const pageToName = {}
@@ -1155,6 +1149,16 @@ export default function ProjectDetail() {
     if (error) { alert('Failed to update status: ' + error.message); return }
     if (!data) { alert('Nothing was saved — you may not have permission to edit this job.'); return }
     setJob(j => ({ ...j, status }))
+  }
+
+  // job_members is its own independent roster (see
+  // supabase-migration-job-members.sql) — removing someone here never
+  // touches any scope's own Scope Members, and vice versa.
+  async function removeMember(member) {
+    if (!confirm(`Remove ${member.full_name || 'this person'} from this project?`)) return
+    const { error } = await supabase.from('job_members').delete().eq('job_id', jobId).eq('user_id', member.id)
+    if (error) { alert('Failed to remove: ' + error.message); return }
+    setMembers(ms => ms.filter(m => m.id !== member.id))
   }
 
   // "Overall Progress" lives here, once per job, not on any one scope card
@@ -1397,7 +1401,7 @@ export default function ProjectDetail() {
               </div>
               <div className="space-y-2">
                 {members.map(member => (
-                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5">
+                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group">
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
                       style={{ backgroundColor: member.avatar_color || '#4ade80' }}
@@ -1408,6 +1412,17 @@ export default function ProjectDetail() {
                       <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
                       <p className="text-xs text-muted capitalize">{member.role}</p>
                     </div>
+                    {canManageMembers && (
+                      <button
+                        onClick={() => removeMember(member)}
+                        className="btn-ghost p-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        title="Remove from project"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 ))}
                 {members.length === 0 && (
@@ -1462,7 +1477,7 @@ export default function ProjectDetail() {
       {showAddMember && (
         <AddMemberModal
           directory={directory}
-          scopeIds={scopes.map(s => s.id)}
+          jobId={jobId}
           existingMemberIds={members.map(m => m.id)}
           onClose={() => setShowAddMember(false)}
           onAdded={loadJobDetail}

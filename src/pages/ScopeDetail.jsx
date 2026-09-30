@@ -1644,7 +1644,7 @@ export default function ScopeDetail() {
                       <button
                         onClick={() => removeMember(member)}
                         className="btn-ghost p-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                        title="Remove from project"
+                        title="Remove from scope"
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
