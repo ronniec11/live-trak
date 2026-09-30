@@ -1198,6 +1198,10 @@ export default function ScopeDetail() {
 
   return (
     <Layout>
+      {/* Main column and sidebar scroll independently of each other (same
+          technique as the job dashboard, ProjectDetail.jsx) — each is its
+          own overflow-auto panel inside a fixed-height row, instead of the
+          whole page scrolling as one. */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
         {/* Main area */}
         <div className="flex-1 overflow-auto">
@@ -1293,7 +1297,7 @@ export default function ScopeDetail() {
             </div>
           </div>
 
-          <div className="max-w-[1600px] px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
+          <div className="px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
           {/* Floor plans — a card, same as every other section here and on
               the job dashboard, instead of a bottom-border strip. */}
           <div>
@@ -1533,8 +1537,10 @@ export default function ScopeDetail() {
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="lg:w-72 shrink-0 overflow-auto">
+        {/* Sidebar — its own scroll panel (see the row's comment above),
+            plus a left border on lg so it reads as its own column rather
+            than an extension of the main content it sits beside. */}
+        <div className="lg:w-72 shrink-0 overflow-auto lg:border-l lg:border-border">
           <div className="p-4 sm:p-6 space-y-4">
             {/* Tags In This Scope — rolled up from whichever of this
                 scope's sheets are tagged (Sheet Settings), since tags
