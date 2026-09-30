@@ -230,6 +230,13 @@ async function renderPdfToPngBlob(url) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
   const pdfDoc = await pdfjsLib.getDocument({ url, withCredentials: false }).promise
   const page = await pdfDoc.getPage(1)
+  // Some CAD/BIM exports embed PDF "layers" (optional content groups) that
+  // default to hidden per the file's own /OCProperties — pdf.js honors
+  // that by default unless told otherwise, which can render an entire
+  // sheet blank if its drawing content lives on a layer the export marked
+  // off (see Canvas.jsx/tileGenerator.js's own copies of this fix).
+  const ocgConfig = await pdfDoc.getOptionalContentConfig()
+  for (const [groupId] of ocgConfig) ocgConfig.setVisibility(groupId, true)
   const RENDER_SCALE = isIPadOrSafari ? 2.0 : 3.0
   let viewport = page.getViewport({ scale: RENDER_SCALE })
   if (viewport.width > MAX_CACHED_DIM || viewport.height > MAX_CACHED_DIM) {
@@ -238,7 +245,7 @@ async function renderPdfToPngBlob(url) {
   }
   const canvas = document.createElement('canvas')
   canvas.width = viewport.width; canvas.height = viewport.height
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport, optionalContentConfigPromise: Promise.resolve(ocgConfig) }).promise
   return new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
 }
 

@@ -178,6 +178,16 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
 
   const pdfDoc = await pdfjsLib.getDocument({ url: pdfUrl, withCredentials: false }).promise
   const page = await pdfDoc.getPage(1)
+  // Some CAD/BIM exports (Revit, AutoCAD, Bluebeam) embed PDF "layers"
+  // (optional content groups) that default to hidden per the file's own
+  // /OCProperties — pdf.js honors that by default unless told otherwise,
+  // which can tile an entire sheet completely blank if its actual drawing
+  // content happens to live on a layer the export marked off. A floor plan
+  // should always show everything on it regardless of the exporting
+  // software's own default layer state (see Canvas.jsx's own copy of this
+  // fix for the non-tiled quick-view render path).
+  const ocgConfig = await pdfDoc.getOptionalContentConfig()
+  for (const [groupId] of ocgConfig) ocgConfig.setVisibility(groupId, true)
   const baseViewport = page.getViewport({ scale: TILE_BASE_SCALE })
   const fullW = Math.round(baseViewport.width)
   const fullH = Math.round(baseViewport.height)
@@ -245,6 +255,7 @@ export async function generatePdfTiles(pdfUrl, { projectId, pageId, format = 'pn
           canvasContext: canvas.getContext('2d'),
           viewport: baseViewport,
           transform: [1, 0, 0, 1, -x, -y],
+          optionalContentConfigPromise: Promise.resolve(ocgConfig),
         }).promise,
         RENDER_TIMEOUT_MS,
         `Render of ${label}`,

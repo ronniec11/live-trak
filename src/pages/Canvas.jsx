@@ -5676,6 +5676,16 @@ export default function Canvas() {
           pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
           const pdfDoc = await pdfjsLib.getDocument({ url, withCredentials: false }).promise
           const page = await pdfDoc.getPage(1)
+          // Some CAD/BIM exports (Revit, AutoCAD, Bluebeam) embed PDF
+          // "layers" (optional content groups) that default to hidden per
+          // the file's own /OCProperties — pdf.js honors that by default
+          // unless told otherwise, which can render an entire sheet
+          // completely blank (no error at all) if its actual drawing
+          // content happens to live on a layer the export marked off. A
+          // floor plan should always show everything on it regardless of
+          // the exporting software's own default layer state.
+          const ocgConfig = await pdfDoc.getOptionalContentConfig()
+          for (const [groupId] of ocgConfig) ocgConfig.setVisibility(groupId, true)
           let viewport = page.getViewport({ scale: RENDER_SCALE })
           // iOS Safari silently renders a canvas BLANK — no exception, no
           // console error — once its area gets too large (informally,
@@ -5698,7 +5708,7 @@ export default function Canvas() {
           ppi = 72 * RENDER_SCALE
           const offscreen = document.createElement('canvas')
           offscreen.width = viewport.width; offscreen.height = viewport.height
-          await page.render({ canvasContext: offscreen.getContext('2d'), viewport }).promise
+          await page.render({ canvasContext: offscreen.getContext('2d'), viewport, optionalContentConfigPromise: Promise.resolve(ocgConfig) }).promise
           img = offscreen
         } else {
           img = new Image()
