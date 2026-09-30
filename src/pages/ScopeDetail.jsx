@@ -1542,24 +1542,20 @@ export default function ScopeDetail() {
             than an extension of the main content it sits beside. */}
         <div className="lg:w-72 shrink-0 overflow-auto lg:border-l lg:border-border">
           <div className="p-4 sm:p-6 space-y-4">
-            {/* Tags In This Scope — rolled up from whichever of this
-                scope's sheets are tagged (Sheet Settings), since tags
-                live per-sheet now, not on the scope itself. Always shown
+            {/* Scope Tags — rolled up from whichever of this scope's
+                sheets are tagged (Sheet Settings), since tags live
+                per-sheet now, not on the scope itself. Always shown
                 (with an empty state) rather than disappearing when a
                 scope has no tagged sheets yet, so every scope's sidebar
-                has the same shape. */}
+                has the same shape. Just the tag name — its rate lives in
+                Sheet Settings/Company Hub, not repeated here. */}
             <div>
-              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Tags In This Scope</h3>
+              <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Scope Tags</h3>
               {scopeTags.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {scopeTags.map(t => (
                     <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
                       {t.name}
-                      {(t.rate_per_day != null || t.rate_per_man_hour != null) && (
-                        <span className="text-muted font-normal">
-                          · {t.rate_per_day != null ? `${t.rate_per_day.toLocaleString()}/day` : `${t.rate_per_man_hour.toLocaleString()}/man-hr`}
-                        </span>
-                      )}
                     </span>
                   ))}
                 </div>
