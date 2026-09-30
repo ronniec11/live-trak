@@ -12,6 +12,7 @@
     "@supabase/supabase-js": "^2.39.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
+    "leaflet": "^1.9.4",
     "mupdf": "^1.28.1",
     "openseadragon": "^6.1.0",
     "pdfjs-dist": "5.4.624",

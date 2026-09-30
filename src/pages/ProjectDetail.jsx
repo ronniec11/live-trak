@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import Layout from '../components/Layout'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import { useAuth } from '../contexts/AuthContext'
@@ -231,24 +233,43 @@ function WeatherWidget({ location }) {
   )
 }
 
-// Free embed, no API key — OpenStreetMap's own export/embed endpoint takes
-// a bounding box + marker and returns an iframe-able map page directly.
+// Renders straight onto OpenStreetMap's raw tiles via Leaflet — no API key
+// needed, same as the old iframe embed, but without OSM's own site chrome
+// (search bar, "Report a problem" link, footer) eating most of a 160px-tall
+// sidebar widget. Leaflet still shows the required attribution, just as one
+// small corner label instead of a full header/footer.
 function LocationMap({ location }) {
+  const elRef = useRef(null)
+  const mapRef = useRef(null)
+
+  useEffect(() => {
+    if (location.status !== 'ready' || !elRef.current) return
+    const { lat, lon } = location
+    if (!mapRef.current) {
+      const map = L.map(elRef.current, {
+        scrollWheelZoom: false, // a small embedded map shouldn't hijack page-scroll on hover
+      }).setView([lat, lon], 15)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(map)
+      L.circleMarker([lat, lon], {
+        radius: 8, color: '#fff', weight: 2, fillColor: '#4f46e5', fillOpacity: 1,
+      }).addTo(map)
+      mapRef.current = map
+    } else {
+      mapRef.current.setView([lat, lon], 15)
+    }
+  }, [location.status, location.lat, location.lon])
+
+  useEffect(() => () => { mapRef.current?.remove(); mapRef.current = null }, [])
+
   if (location.status !== 'ready') {
     return <div className="rounded-xl border border-border overflow-hidden elevated h-40 bg-surface-2 animate-pulse" />
   }
-  const { lat, lon } = location
-  const delta = 0.01
-  const bbox = [lon - delta, lat - delta, lon + delta, lat + delta].join(',')
   return (
     <div className="rounded-xl border border-border overflow-hidden elevated">
-      <iframe
-        title="Job location"
-        width="100%"
-        height="160"
-        style={{ border: 0, display: 'block' }}
-        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lon}`}
-      />
+      <div ref={elRef} style={{ height: 160, width: '100%' }} />
     </div>
   )
 }
