@@ -4,7 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import Layout from '../components/Layout'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
-import UomProgressBar, { UomProgressRows } from '../components/UomProgressBar'
+import UomProgressBar from '../components/UomProgressBar'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { supabase } from '../lib/supabase'
@@ -738,7 +738,7 @@ const GripIcon = () => (
   </svg>
 )
 
-function ScopeCard({ scope, totalGroups, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
+function ScopeCard({ scope, dailyGroups, totalGroups, onClick, onUpdateStatus, onOpenSettings, canManageScope, canReorder, isDragging, isDropTarget, onDragStart }) {
   const [pressing, setPressing] = useState(false)
 
   // Long-press-anywhere-on-the-card reorder trigger, same pattern as the
@@ -843,11 +843,17 @@ function ScopeCard({ scope, totalGroups, onClick, onUpdateStatus, onOpenSettings
         </div>
       </div>
 
-      {/* One line per unit (dot + unit + %) and its own bar underneath —
-          just enough to scan at a glance. Real numbers (actual vs. target,
-          daily vs. total) are a click away on the scope's own page, not
-          duplicated here. */}
-      <UomProgressRows groups={totalGroups} />
+      {/* Daily/Total Progress — each one bar, split into a compartment per
+          unit present, percentage only (no actual/target numbers — those
+          are a click away on the scope's own page). */}
+      <div className="mb-3">
+        <span className="text-xs text-muted font-medium block mb-1.5">Daily Progress</span>
+        <UomProgressBar groups={dailyGroups} showValues={false} />
+      </div>
+      <div>
+        <span className="text-xs text-muted font-medium block mb-1.5">Total Progress</span>
+        <UomProgressBar groups={totalGroups} showValues={false} />
+      </div>
 
       <div className="mt-3 pt-3 border-t border-border">
         {/* No onClick here — a click bubbles up to the card's own onClick
@@ -875,6 +881,7 @@ export default function ProjectDetail() {
   // scope.id -> [{unit, value, target, pct}, ...] — one entry per distinct
   // unit_of_measure among that scope's own pages (Sheet Settings), rolled
   // up from every session on those pages.
+  const [dailyGroupsByScope, setDailyGroupsByScope] = useState({})
   const [totalGroupsByScope, setTotalGroupsByScope] = useState({})
   const [todaySessions, setTodaySessions] = useState([])
   const [recentSessions, setRecentSessions] = useState([])
@@ -1005,12 +1012,12 @@ export default function ProjectDetail() {
 
       const scopeIds = (scopesData || []).map(s => s.id)
       if (scopeIds.length === 0) {
-        setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
+        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([]); setMembers([])
         return
       }
 
       const [{ data: pages }, { data: memberRows }] = await Promise.all([
-        supabase.from('pages').select('id, project_id, name, unit_of_measure, total_target').in('project_id', scopeIds),
+        supabase.from('pages').select('id, project_id, name, unit_of_measure, daily_target, total_target').in('project_id', scopeIds),
         supabase.from('project_members').select('user_id, profiles(*)').in('project_id', scopeIds),
       ])
 
@@ -1025,7 +1032,7 @@ export default function ProjectDetail() {
       ;(pages || []).forEach(pg => { pageToScope[pg.id] = pg.project_id; pageToName[pg.id] = pg.name })
       const pageIds = Object.keys(pageToScope)
       if (pageIds.length === 0) {
-        setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([])
+        setDailyGroupsByScope({}); setTotalGroupsByScope({}); setTodaySessions([]); setRecentSessions([])
         return
       }
 
@@ -1043,13 +1050,14 @@ export default function ProjectDetail() {
       // per unit, per scope, computed here across every scope on this job
       // at once.
       const pageUnitById = {}
-      const groupByScope = {} // scopeId -> unit -> { totalTarget, totalValue }
+      const groupByScope = {} // scopeId -> unit -> { dailyTarget, totalTarget, dailyValue, totalValue }
       ;(pages || []).forEach(pg => {
         const u = pg.unit_of_measure || 'SF'
         pageUnitById[pg.id] = u
         const scopeId = pg.project_id
         if (!groupByScope[scopeId]) groupByScope[scopeId] = {}
-        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { totalTarget: 0, totalValue: 0 }
+        if (!groupByScope[scopeId][u]) groupByScope[scopeId][u] = { dailyTarget: 0, totalTarget: 0, dailyValue: 0, totalValue: 0 }
+        groupByScope[scopeId][u].dailyTarget += pg.daily_target || 0
         groupByScope[scopeId][u].totalTarget += pg.total_target || 0
       })
       const pageUnitValue = (s, uom) => uom === 'LF' ? (parseFloat(s.lf) || 0)
@@ -1059,15 +1067,23 @@ export default function ProjectDetail() {
         const u = pageUnitById[s.page_id]
         const g = groupByScope[pageToScope[s.page_id]]?.[u]
         if (!g) return
-        g.totalValue += pageUnitValue(s, u)
+        const value = pageUnitValue(s, u)
+        g.totalValue += value
+        if (s.work_date === today) g.dailyValue += value
       })
+      const dailyGroupsMap = {}
       const totalGroupsMap = {}
       Object.entries(groupByScope).forEach(([scopeId, units]) => {
+        dailyGroupsMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
+          unit, value: g.dailyValue, target: g.dailyTarget,
+          pct: g.dailyTarget > 0 ? Math.min(100, Math.round((g.dailyValue / g.dailyTarget) * 100)) : 0,
+        }))
         totalGroupsMap[scopeId] = Object.entries(units).map(([unit, g]) => ({
           unit, value: g.totalValue, target: g.totalTarget,
           pct: g.totalTarget > 0 ? Math.min(100, Math.round((g.totalValue / g.totalTarget) * 100)) : 0,
         }))
       })
+      setDailyGroupsByScope(dailyGroupsMap)
       setTotalGroupsByScope(totalGroupsMap)
 
       const withNames = (sessions || []).map(s => ({
@@ -1093,6 +1109,7 @@ export default function ProjectDetail() {
           setJob(cached.job)
           setScopes(cached.scopes)
           setMembers([])
+          setDailyGroupsByScope(cached.dailyGroupsByScope)
           setTotalGroupsByScope(cached.totalGroupsByScope)
           setTodaySessions(cached.todaySessions)
           setRecentSessions(cached.recentSessions)
@@ -1277,6 +1294,7 @@ export default function ProjectDetail() {
                   <ScopeCard
                     key={scope.id}
                     scope={scope}
+                    dailyGroups={dailyGroupsByScope[scope.id]}
                     totalGroups={totalGroupsByScope[scope.id]}
                     onClick={() => navigate(`/scopes/${scope.id}`)}
                     onUpdateStatus={updateScopeStatus}
