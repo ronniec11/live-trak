@@ -739,7 +739,7 @@ function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
         <div className="flex-1 overflow-auto space-y-1 -mx-2 px-2">
           {directory === null && <p className="text-sm text-muted">Loading...</p>}
           {directory !== null && filtered.length === 0 && (
-            <p className="text-sm text-muted">{directory.length === 0 ? 'Everyone in the directory is already on this project.' : 'No matches.'}</p>
+            <p className="text-sm text-muted">{directory.length === 0 ? 'Everyone in the directory is already on this scope.' : 'No matches.'}</p>
           )}
           {filtered.map(p => (
             <button
@@ -940,7 +940,7 @@ export default function ScopeDetail() {
   }
 
   async function removeMember(member) {
-    if (!confirm(`Remove ${member.full_name || 'this person'} from this project?`)) return
+    if (!confirm(`Remove ${member.full_name || 'this person'} from this scope?`)) return
     const { error } = await supabase.from('project_members').delete().eq('project_id', projectId).eq('user_id', member.id)
     if (error) { alert('Failed to remove: ' + error.message); return }
     setMembers(ms => ms.filter(m => m?.id !== member.id))
