@@ -277,7 +277,12 @@ function LocationMapView({ location, theme, interactive, height }) {
     L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTRIBUTION }).addTo(map)
     L.circleMarker([lat, lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#4f46e5', fillOpacity: 1 }).addTo(map)
     const tint = document.createElement('div')
-    tint.style.cssText = 'position:absolute;inset:0;pointer-events:none;mix-blend-mode:color;z-index:399;opacity:0'
+    // z-index 450: Leaflet's own .leaflet-map-pane carries z-index 400 (via
+    // its .leaflet-pane class) — a lower value here renders invisibly
+    // behind the whole map instead of tinting it, confirmed with a local
+    // repro against real Leaflet DOM output. 450 clears that but stays
+    // below the marker/tooltip/popup/control panes (500-800).
+    tint.style.cssText = 'position:absolute;inset:0;pointer-events:none;mix-blend-mode:color;z-index:450;opacity:0'
     map.getContainer().appendChild(tint)
     tintRef.current = tint
     mapRef.current = map
