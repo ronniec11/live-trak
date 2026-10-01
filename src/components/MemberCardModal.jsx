@@ -1,3 +1,5 @@
+import { downloadVCard } from '../lib/vcard'
+
 // A quick "business card" for a Project/Scope Member — tap their row to
 // see it, tap email/phone to actually call or email them straight from
 // the app via mailto:/tel: links (the OS/browser handles what opens).
@@ -5,27 +7,11 @@
 // touch devices a hover-styled button needs a first tap just to show
 // before a second tap actually hits it, which read as "nothing happened"
 // on a single tap). The corner slot that used to be the close X is now a
-// download-contact button (a .vcf file) — some people want this person's
-// real contact card saved to their phone/iPad's own Contacts app, not
-// just a tap-to-call/email link inside Live-Trak. Close already lives at
-// the bottom, so there isn't a second close control to confuse it with.
-function downloadVCard(person) {
-  const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${person.full_name || person.email || 'Contact'}`]
-  if (person.company) lines.push(`ORG:${person.company}`)
-  if (person.phone) lines.push(`TEL;TYPE=CELL,VOICE:${person.phone}`)
-  if (person.email) lines.push(`EMAIL;TYPE=INTERNET:${person.email}`)
-  lines.push('END:VCARD')
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/vcard;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${(person.full_name || 'contact').trim().replace(/[^a-z0-9]+/gi, '-')}.vcf`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
+// download-contact button (a .vcf file, see lib/vcard.js) — some people
+// want this person's real contact card saved to their phone/iPad's own
+// Contacts app, not just a tap-to-call/email link inside Live-Trak. Close
+// already lives at the bottom, so there isn't a second close control to
+// confuse it with. Team.jsx's own PersonCard mirrors this same layout.
 export default function MemberCardModal({ person, onClose, onRemove }) {
   const hasContact = person.email || person.phone || person.company
 
