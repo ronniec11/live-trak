@@ -41,56 +41,84 @@ function escapeHtml(s) {
 // surfacing as a 422 "validation_error" with a blank field name — exactly
 // what this hook hit). Sending the same design as plain html instead
 // sidesteps that bug entirely. Keep this in sync by hand if the Resend
-// template's design changes — this card's styling matches the app's own
-// dark-mode tokens (src/index.css's :root.dark block), not arbitrary
-// colors.
+// template's design changes.
+//
+// Genuinely themed both ways (not just a fixed dark card forced on every
+// viewer) — inline styles below are the light-mode look, used as-is by
+// clients with no dark-mode awareness at all; the <style> block overrides
+// them under prefers-color-scheme (modern clients) and Gmail's own
+// [data-ogsc] attribute hack (Gmail doesn't reliably honor the media
+// query in every one of its apps) for everyone else. Every color pair
+// mirrors the app's own two palettes exactly — src/index.css's :root
+// (light) and :root.dark blocks — not arbitrary choices. The logo swaps
+// the same way: logo-light.png (dark wordmark) by default, logo-dark.png
+// (light wordmark) shown instead once dark mode is detected.
 function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
   return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- This card's colors are a deliberate, fixed dark design (the app's
-     own dark-mode tokens), not "whatever looks right in light mode" —
-     without these, Gmail auto-dark-modes any email that doesn't declare
-     its own scheme, repainting our navy/green into a washed-out
-     light-lavender/dark-green mess that doesn't match the app at all. -->
-<meta name="color-scheme" content="light">
-<meta name="supported-color-schemes" content="light">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<style>
+  .ea-logo-dark { display: none; }
+  @media (prefers-color-scheme: dark) {
+    .ea-page { background: #141628 !important; }
+    .ea-card { background: #1c1f36 !important; border-color: #333a5c !important; }
+    .ea-heading, .ea-strong { color: #e8eaf6 !important; }
+    .ea-muted { color: #8b90b3 !important; }
+    .ea-btn { background: #4ade80 !important; color: #141628 !important; }
+    .ea-link { color: #4ade80 !important; }
+    .ea-hr { border-top-color: #333a5c !important; }
+    .ea-logo-light { display: none !important; }
+    .ea-logo-dark { display: inline-block !important; }
+  }
+  [data-ogsc] .ea-page { background: #141628 !important; }
+  [data-ogsc] .ea-card { background: #1c1f36 !important; border-color: #333a5c !important; }
+  [data-ogsc] .ea-heading, [data-ogsc] .ea-strong { color: #e8eaf6 !important; }
+  [data-ogsc] .ea-muted { color: #8b90b3 !important; }
+  [data-ogsc] .ea-btn { background: #4ade80 !important; color: #141628 !important; }
+  [data-ogsc] .ea-link { color: #4ade80 !important; }
+  [data-ogsc] .ea-hr { border-top-color: #333a5c !important; }
+  [data-ogsc] .ea-logo-light { display: none !important; }
+  [data-ogsc] .ea-logo-dark { display: inline-block !important; }
+</style>
 </head>
-<body style="margin:0;padding:0;background:#141628;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#141628;padding:40px 0;">
+<body style="margin:0;padding:0;background:#f7f7f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="ea-page" style="background:#f7f7f5;padding:40px 0;">
   <tr>
     <td align="center">
-      <div style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;background:#1c1f36;color:#e8eaf6;padding:40px;border-radius:12px;border:1px solid #333a5c;">
+      <div class="ea-card" style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;padding:40px;border-radius:12px;border:1px solid #d8d8d4;">
 
-        <img src="https://live-trak.ai/logo.png" width="200" style="margin-bottom:32px;" alt="Live-Trak">
+        <img src="https://live-trak.ai/logo-light.png" width="200" class="ea-logo-light" style="margin-bottom:32px;" alt="Live-Trak">
+        <img src="https://live-trak.ai/logo-dark.png" width="200" class="ea-logo-dark" style="margin-bottom:32px;" alt="Live-Trak">
 
-        <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;color:#e8eaf6;">
+        <h1 class="ea-heading" style="font-size:24px;font-weight:700;margin-bottom:8px;color:#1c1c1a;">
           You've been invited to Live-Trak
         </h1>
 
-        <p style="color:#8b90b3;font-size:16px;margin-bottom:32px;line-height:1.5;">
+        <p class="ea-muted" style="color:#6b7280;font-size:16px;margin-bottom:32px;line-height:1.5;">
           ${escapeHtml(inviterName)} has invited you to join
-          <strong style="color:#e8eaf6;">${escapeHtml(organizationName)}</strong>
+          <strong class="ea-strong" style="color:#1c1c1a;">${escapeHtml(organizationName)}</strong>
           on Live-Trak — the production tracking platform for construction trades.
         </p>
 
-        <a href="${confirmationUrl}"
-           style="background:#4ade80;color:#141628;font-size:16px;font-weight:700;padding:14px 32px;border-radius:8px;text-decoration:none;display:inline-block;margin-bottom:32px;">
+        <a href="${confirmationUrl}" class="ea-btn"
+           style="background:#16a34a;color:#f7f7f5;font-size:16px;font-weight:700;padding:14px 32px;border-radius:8px;text-decoration:none;display:inline-block;margin-bottom:32px;">
           Accept Invitation
         </a>
 
-        <p style="color:#8b90b3;font-size:13px;">
+        <p class="ea-muted" style="color:#6b7280;font-size:13px;">
           This link expires in 24 hours. If you didn't expect this invitation contact
-          <a href="mailto:hello@live-trak.ai" style="color:#4ade80;">hello@live-trak.ai</a>
+          <a href="mailto:hello@live-trak.ai" class="ea-link" style="color:#16a34a;">hello@live-trak.ai</a>
         </p>
 
-        <hr style="border:none;border-top:1px solid #333a5c;margin:32px 0;">
+        <hr class="ea-hr" style="border:none;border-top:1px solid #d8d8d4;margin:32px 0;">
 
-        <p style="color:#8b90b3;font-size:12px;">
+        <p class="ea-muted" style="color:#6b7280;font-size:12px;">
           Live-Trak by Calderon Technologies ·
-          <a href="https://live-trak.ai" style="color:#4ade80;">live-trak.ai</a>
+          <a href="https://live-trak.ai" class="ea-link" style="color:#16a34a;">live-trak.ai</a>
         </p>
 
       </div>
