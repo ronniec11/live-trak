@@ -451,7 +451,7 @@ function ProductionRatesCard({ orgId }) {
                 >
                   <option value="sf">SF</option>
                   <option value="lf">LF</option>
-                  <option value="each">Each</option>
+                  <option value="each">EA</option>
                 </select>
                 <input
                   className="input w-full sm:w-28 shrink-0" type="number" min="0" placeholder="Per man-hr"

@@ -3130,7 +3130,7 @@ export default function Canvas() {
     // between saves the way the numbers do.
     function applyUnitLabels() {
       const uom = activePage?.unitOfMeasure || 'SF'
-      const suffix = uom === 'LF' ? 'LF' : uom === 'each' ? 'Items' : 'SF'
+      const suffix = uom === 'LF' ? 'LF' : uom === 'each' ? 'EA' : 'SF'
       if (hdrSessionLblRef.current) hdrSessionLblRef.current.textContent = `Session ${suffix}`
       if (hdrTotalLblRef.current)   hdrTotalLblRef.current.textContent   = `Total ${suffix}`
       if (sbUnitSuffixRef.current)  sbUnitSuffixRef.current.textContent  = suffix
@@ -4524,7 +4524,7 @@ export default function Canvas() {
     // units — these read whichever field that ONE session's own page
     // actually tracks, rather than always assuming SF, so an Each- or
     // LF-only day still shows its real numbers instead of "0 SF".
-    function calUnitLabel(u) { return u === 'each' ? 'Each' : (u || 'SF') }
+    function calUnitLabel(u) { return u === 'each' ? 'EA' : (u || 'SF') }
     function calSessionValue(s) {
       const u = s.pageUnit || 'SF'
       return u === 'LF' ? (s.lf || 0) : u === 'each' ? (s.count || 0) : (s.sf || 0)
@@ -4884,7 +4884,7 @@ export default function Canvas() {
           const defs = [
             { key: 'sf', label: 'SF', show: uom === 'SF' || rowsForTotals.some(r => r.sf > 0) },
             { key: 'lf', label: 'LF', show: uom === 'LF' || rowsForTotals.some(r => r.lf > 0) },
-            { key: 'count', label: 'Each', show: uom === 'each' || rowsForTotals.some(r => r.count > 0) },
+            { key: 'count', label: 'EA', show: uom === 'each' || rowsForTotals.some(r => r.count > 0) },
           ]
           return defs.filter(d => d.show).map(d => {
             const total = rowsForTotals.reduce((a, r) => a + r[d.key], 0)

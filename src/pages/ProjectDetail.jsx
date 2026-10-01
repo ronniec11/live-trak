@@ -1309,7 +1309,7 @@ export default function ProjectDetail() {
             </div>
           </div>
 
-          <div className="max-w-[1600px] px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
+          <div className="px-6 sm:px-10 lg:px-16 pb-8 space-y-6">
           {/* Overall job progress — every scope's every unit combined into
               one plain bar; the one place "Overall Progress" is shown (not
               on a scope card). Click it for the SF/LF/Each breakdown. */}
@@ -1324,7 +1324,7 @@ export default function ProjectDetail() {
             <div className="h-2.5 bg-surface-3 rounded-full overflow-hidden">
               <div className="h-full bg-blue-500 rounded-full transition-all duration-700" style={{ width: `${jobOverallPct}%` }} />
             </div>
-            <p className="text-xs text-muted mt-1.5">across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'} · tap for SF/LF/Each detail</p>
+            <p className="text-xs text-muted mt-1.5">across {scopes.length} {scopes.length === 1 ? 'scope' : 'scopes'} · tap for SF/LF/EA detail</p>
           </button>
 
           <div>

@@ -8,7 +8,7 @@
 const UOM_COLOR = { SF: 'bg-accent', LF: 'bg-yellow-400', each: 'bg-purple-400' }
 
 export function pageUomDisplay(u) {
-  return u === 'each' ? 'Each' : u
+  return u === 'each' ? 'EA' : u
 }
 
 // groups: [{ unit: 'SF'|'LF'|'each', value, target, pct }] — value/target

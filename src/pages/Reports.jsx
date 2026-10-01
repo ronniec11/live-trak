@@ -227,7 +227,7 @@ export default function Reports() {
     const avgPerDay = distinctDays > 0 ? actual / distinctDays : 0
     const avgPerManHour = totalManHours > 0 ? actual / totalManHours : 0
     return {
-      uomLabel: uom === 'each' ? 'Each' : uom.toUpperCase(),
+      uomLabel: uom === 'each' ? 'EA' : uom.toUpperCase(),
       actual,
       distinctDays,
       distinctJobs,

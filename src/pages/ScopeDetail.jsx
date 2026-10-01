@@ -210,7 +210,7 @@ const PAGE_UOM_OPTIONS = ['SF', 'LF', 'each']
 // The stored value stays lowercase 'each' (matches the DB value and every
 // uom === 'each' check elsewhere) — this is display-only, for the dropdown
 // and the Progress-by-Unit labels below.
-const pageUomLabel = u => u === 'each' ? 'Each' : u
+const pageUomLabel = u => u === 'each' ? 'EA' : u
 
 // A sheet's own unit of measure + daily/total target, overriding the
 // scope-level target for just this one page (read by Canvas.jsx on load —
