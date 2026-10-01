@@ -240,6 +240,56 @@ export default function Reports() {
     doc.text(`${filterLabel}    •    ${rangeLabel}    •    Generated ${new Date().toLocaleString()}`, margin, y + 0.42)
     y += 0.65
 
+    // Same "actual vs. standard rate" summary shown on-screen above the
+    // table in tag mode — the whole point of tagging sheets with a
+    // company-wide rate, so it belongs on the printed page too, not just
+    // the live view.
+    if (tagSummary) {
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const boxH = 0.85
+      doc.setDrawColor('#e5e7eb')
+      doc.setLineWidth(0.01)
+      doc.roundedRect(margin, y, pageWidth - margin * 2, boxH, 0.05, 0.05)
+
+      doc.setFont(undefined, 'bold')
+      doc.setFontSize(11)
+      doc.setTextColor('#1c1c1a')
+      doc.text(`"${selectedTag.name}" — Actual vs. Standard Rate`, margin + 0.18, y + 0.24)
+
+      const stats = [
+        { label: 'Jobs', value: String(tagSummary.distinctJobs) },
+        { label: 'Total Production', value: `${Math.round(tagSummary.actual).toLocaleString()} ${tagSummary.uomLabel}` },
+        { label: 'Days', value: String(tagSummary.distinctDays) },
+        {
+          label: `Per Man-Hour${tagSummary.ratePerManHour != null ? ' (avg vs. target)' : ''}`,
+          value: tagSummary.avgPerManHour != null
+            ? `${tagSummary.avgPerManHour.toFixed(1)}${tagSummary.ratePerManHour != null ? ` / ${tagSummary.ratePerManHour.toLocaleString()}` : ''}`
+            : 'No crew/hours logged',
+          good: tagSummary.avgPerManHour != null && tagSummary.ratePerManHour != null ? tagSummary.avgPerManHour >= tagSummary.ratePerManHour : null,
+        },
+        {
+          label: `Avg ${tagSummary.uomLabel}/Day${tagSummary.ratePerDay != null ? ' (vs. target)' : ''}`,
+          value: `${Math.round(tagSummary.avgPerDay).toLocaleString()}${tagSummary.ratePerDay != null ? ` / ${tagSummary.ratePerDay.toLocaleString()}` : ''}`,
+          good: tagSummary.ratePerDay != null ? tagSummary.avgPerDay >= tagSummary.ratePerDay : null,
+        },
+      ]
+
+      const colW = (pageWidth - margin * 2 - 0.3) / stats.length
+      stats.forEach((s, i) => {
+        const cx = margin + 0.18 + colW * i
+        doc.setFont(undefined, 'normal')
+        doc.setFontSize(7)
+        doc.setTextColor('#6b7280')
+        doc.text(s.label, cx, y + 0.44)
+        doc.setFont(undefined, 'bold')
+        doc.setFontSize(s.value.length > 10 ? 10 : 14)
+        doc.setTextColor(s.good === true ? '#16a34a' : s.good === false ? '#ca8a04' : '#1c1c1a')
+        doc.text(s.value, cx, y + 0.68)
+      })
+
+      y += boxH + 0.2
+    }
+
     const head = ['Person']
     if (showProjectColumn) head.push('Project')
     head.push('Floor Plan', 'Date', 'Time', 'SF', 'LF', 'Count', 'Crew', 'Hours', 'Total Hours', 'SF/Person-Hr')
