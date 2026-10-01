@@ -4,15 +4,44 @@
 // Remove lives here now (not a hover-reveal icon on the row itself — on
 // touch devices a hover-styled button needs a first tap just to show
 // before a second tap actually hits it, which read as "nothing happened"
-// on a single tap). No corner X either — Close already does that job,
-// and two ways to close the same modal is one too many.
+// on a single tap). The corner slot that used to be the close X is now a
+// download-contact button (a .vcf file) — some people want this person's
+// real contact card saved to their phone/iPad's own Contacts app, not
+// just a tap-to-call/email link inside Live-Trak. Close already lives at
+// the bottom, so there isn't a second close control to confuse it with.
+function downloadVCard(person) {
+  const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${person.full_name || person.email || 'Contact'}`]
+  if (person.company) lines.push(`ORG:${person.company}`)
+  if (person.phone) lines.push(`TEL;TYPE=CELL,VOICE:${person.phone}`)
+  if (person.email) lines.push(`EMAIL;TYPE=INTERNET:${person.email}`)
+  lines.push('END:VCARD')
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/vcard;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${(person.full_name || 'contact').trim().replace(/[^a-z0-9]+/gi, '-')}.vcf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export default function MemberCardModal({ person, onClose, onRemove }) {
   const hasContact = person.email || person.phone || person.company
 
   return (
     <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-5">Profile</h2>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Profile</h2>
+          {hasContact && (
+            <button onClick={() => downloadVCard(person)} className="btn-ghost p-1.5" title="Save to Contacts">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 12m0 0l4.5-4.5M12 12V3" />
+              </svg>
+            </button>
+          )}
+        </div>
 
         <div className="flex items-center gap-3 mb-5">
           <div
