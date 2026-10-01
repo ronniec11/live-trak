@@ -50,9 +50,13 @@ function escapeHtml(s) {
 // [data-ogsc] attribute hack (Gmail doesn't reliably honor the media
 // query in every one of its apps) for everyone else. Every color pair
 // mirrors the app's own two palettes exactly — src/index.css's :root
-// (light) and :root.dark blocks — not arbitrary choices. The logo swaps
-// the same way: logo-light.png (dark wordmark) by default, logo-dark.png
-// (light wordmark) shown instead once dark mode is detected.
+// (light) and :root.dark blocks — not arbitrary choices. The logo is
+// the icon mark alone, no wordmark baked in (the heading right below it
+// already says "Live-Trak") — deliberately: swapping between a light-
+// text and dark-text PNG via CSS turned out not to be reliably honored
+// by every client (confirmed on-device — the card/text/button colors
+// swapped correctly, the logo image didn't), where a plain colored icon
+// with no text needs no swapping at all to stay legible either way.
 function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
   return `<!doctype html>
 <html>
@@ -62,7 +66,6 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
 <meta name="color-scheme" content="light dark">
 <meta name="supported-color-schemes" content="light dark">
 <style>
-  .ea-logo-dark { display: none; }
   @media (prefers-color-scheme: dark) {
     .ea-page { background: #141628 !important; }
     .ea-card { background: #1c1f36 !important; border-color: #333a5c !important; }
@@ -71,8 +74,6 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
     .ea-btn { background: #4ade80 !important; color: #141628 !important; }
     .ea-link { color: #4ade80 !important; }
     .ea-hr { border-top-color: #333a5c !important; }
-    .ea-logo-light { display: none !important; }
-    .ea-logo-dark { display: inline-block !important; }
   }
   [data-ogsc] .ea-page { background: #141628 !important; }
   [data-ogsc] .ea-card { background: #1c1f36 !important; border-color: #333a5c !important; }
@@ -81,8 +82,6 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
   [data-ogsc] .ea-btn { background: #4ade80 !important; color: #141628 !important; }
   [data-ogsc] .ea-link { color: #4ade80 !important; }
   [data-ogsc] .ea-hr { border-top-color: #333a5c !important; }
-  [data-ogsc] .ea-logo-light { display: none !important; }
-  [data-ogsc] .ea-logo-dark { display: inline-block !important; }
 </style>
 </head>
 <body style="margin:0;padding:0;background:#f7f7f5;">
@@ -91,8 +90,7 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
     <td align="center">
       <div class="ea-card" style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;padding:40px;border-radius:12px;border:1px solid #d8d8d4;">
 
-        <img src="https://live-trak.ai/logo-light.png" width="200" class="ea-logo-light" style="margin-bottom:32px;" alt="Live-Trak">
-        <img src="https://live-trak.ai/logo-dark.png" width="200" class="ea-logo-dark" style="margin-bottom:32px;display:none;" alt="Live-Trak">
+        <img src="https://live-trak.ai/logo-icon.png" width="72" style="margin-bottom:24px;border-radius:14px;" alt="Live-Trak">
 
         <h1 class="ea-heading" style="font-size:24px;font-weight:700;margin-bottom:8px;color:#1c1c1a;">
           You've been invited to Live-Trak
