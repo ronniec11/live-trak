@@ -38,7 +38,7 @@ const ROLE_OPTIONS = [
 
 const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map(r => [r.value, r.label]))
 
-function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserCount, onClose, onSaved }) {
+function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, organizationName, org, activeUserCount, onClose, onSaved }) {
   const isEdit = !!person
   const isSelf = isEdit && person.id === currentUserId
   const [form, setForm] = useState({
@@ -115,11 +115,24 @@ function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserC
         // this flow once (see the comment on that update). Without this,
         // every newly invited teammate would land with no organization at
         // all once profiles.organization_id is enforced.
+        // inviter_name/organization_name: not used by handle_new_user at
+        // all — these exist purely so api/auth/send-email.js (Supabase's
+        // Send Email Hook) can show "so-and-so invited you to join
+        // such-and-such" in the actual invite email. That hook only ever
+        // sees the INVITEE's own user record, never who triggered the
+        // invite, so this is the only way that information reaches it —
+        // baked onto the invited person's own metadata, once, here.
         const { error: authErr } = await supabase.auth.signInWithOtp({
           email,
           options: {
             shouldCreateUser: true,
-            data: { full_name: form.full_name.trim(), role: form.role, organization_id: currentUserOrgId },
+            data: {
+              full_name: form.full_name.trim(),
+              role: form.role,
+              organization_id: currentUserOrgId,
+              inviter_name: inviterName || null,
+              organization_name: organizationName || null,
+            },
             emailRedirectTo: INVITE_REDIRECT_URL,
           },
         })
@@ -406,7 +419,7 @@ export default function Team() {
 
   useEffect(() => {
     if (!profile?.organization_id) return
-    supabase.from('organizations').select('plan, unlimited_until').eq('id', profile.organization_id).single()
+    supabase.from('organizations').select('name, plan, unlimited_until').eq('id', profile.organization_id).single()
       .then(({ data }) => setOrg(data || { plan: 'free' }))
   }, [profile?.organization_id])
 
@@ -645,6 +658,7 @@ export default function Team() {
       {showAdd && (
         <PersonModal
           currentUserOrgId={profile?.organization_id} org={org} activeUserCount={activePeople.length}
+          inviterName={profile?.full_name} organizationName={org?.name}
           onClose={() => setShowAdd(false)} onSaved={loadPeople}
         />
       )}
