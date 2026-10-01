@@ -724,9 +724,8 @@ export default function ProjectDetail() {
   const [showAddScope, setShowAddScope] = useState(false)
   const [scopeSettingsTarget, setScopeSettingsTarget] = useState(null)
 
-  const canManage = profile?.role === 'admin'
-  // Broader than canManage above (job editing stays admin-only) — matches
-  // ProjectDetail.jsx's own gate for adding/removing a scope's members.
+  const canManage = profile?.role === 'admin' || profile?.role === 'pm'
+  // Matches canManage above — a PM can also see/edit Project Settings now.
   const canManageMembers = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
   // Matches Projects.jsx's own gate for creating a project — a scope is a
   // projects row under the hood, same permission level applies.

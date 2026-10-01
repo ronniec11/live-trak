@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -210,6 +212,61 @@ export default function Reports() {
     downloadCsv(`production-report-${label}.csv`, rowsToCsv(rows, REPORT_COLUMNS))
   }
 
+  // Builds the PDF ourselves (jsPDF + autoTable) rather than going through
+  // the OS print dialog via window.print()/@media print — Safari/WebKit's
+  // print engine (confirmed on iPadOS for the Sheet Report, Canvas.jsx's
+  // own printDailyReportPDF) doesn't reliably apply in-page print CSS, so
+  // generating the document directly is the proven approach in this
+  // codebase. Landscape, since this table runs up to 12 columns wide.
+  function handlePrint() {
+    const label = `${startDate || 'all'}_to_${endDate || 'all'}`
+    const doc = new jsPDF({ unit: 'in', format: 'letter', orientation: 'landscape' })
+    const margin = 0.5
+    let y = margin
+
+    doc.setFont(undefined, 'bold')
+    doc.setFontSize(16)
+    doc.setTextColor('#1c1c1a')
+    doc.text('Production Report', margin, y + 0.2)
+
+    const filterLabel = filterMode === 'tag'
+      ? `Tag: ${selectedTag?.name || '—'}`
+      : `Project: ${selectedProjectId === 'all' ? 'All Projects' : (projectOptions.find(p => p.id === selectedProjectId)?.name || '—')}`
+    const rangeLabel = `${startDate || 'All time'} to ${endDate || 'Today'}`
+
+    doc.setFont(undefined, 'normal')
+    doc.setFontSize(9)
+    doc.setTextColor('#6b7280')
+    doc.text(`${filterLabel}    •    ${rangeLabel}    •    Generated ${new Date().toLocaleString()}`, margin, y + 0.42)
+    y += 0.65
+
+    const head = ['Person']
+    if (showProjectColumn) head.push('Project')
+    head.push('Floor Plan', 'Date', 'Time', 'SF', 'LF', 'Count', 'Crew', 'Hours', 'Total Hours', 'SF/Person-Hr')
+
+    const body = rows.map(r => {
+      const row = [r.person]
+      if (showProjectColumn) row.push(r.project)
+      row.push(
+        r.floorPlan, r.date, r.time,
+        r.sf.toLocaleString(), r.lf ? r.lf.toLocaleString() : '–', r.countItems || '–',
+        r.crewSize || '–', r.hoursWorked || '–', r.totalHours || '–', r.sfPerPersonHour || '–',
+      )
+      return row
+    })
+
+    autoTable(doc, {
+      startY: y,
+      margin: { top: margin, right: margin, bottom: margin, left: margin },
+      head: [head],
+      body,
+      styles: { fontSize: 8, cellPadding: 0.06, textColor: '#1c1c1a', lineColor: '#e5e7eb', lineWidth: 0.005 },
+      headStyles: { fontSize: 7, textColor: '#6b7280', fontStyle: 'bold', fillColor: false },
+    })
+
+    doc.save(`production-report-${label}.pdf`)
+  }
+
   const showProjectColumn = filterMode === 'tag' || selectedProjectId === 'all'
 
   // Simple actual-vs-standard-rate comparison for tag mode — the whole
@@ -391,12 +448,20 @@ export default function Reports() {
           <>
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm text-muted">{rows.length} session{rows.length === 1 ? '' : 's'}</p>
-              <button onClick={handleDownload} className="btn-secondary flex items-center gap-1.5">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
-                Download CSV
-              </button>
+              <div className="flex gap-2">
+                <button onClick={handlePrint} className="btn-secondary flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" />
+                  </svg>
+                  Print / Save as PDF
+                </button>
+                <button onClick={handleDownload} className="btn-secondary flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  Download CSV
+                </button>
+              </div>
             </div>
             <div className="card overflow-x-auto">
               <table className="w-full text-sm">
