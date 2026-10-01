@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import Layout from '../components/Layout'
+import MemberCardModal from '../components/MemberCardModal'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import UomProgressBar from '../components/UomProgressBar'
 import { useAuth } from '../contexts/AuthContext'
@@ -932,6 +933,7 @@ export default function ProjectDetail() {
   const [showJobSettings, setShowJobSettings] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [showJobProgressDetail, setShowJobProgressDetail] = useState(false)
+  const [memberCardTarget, setMemberCardTarget] = useState(null)
   const [showAddScope, setShowAddScope] = useState(false)
   const [scopeSettingsTarget, setScopeSettingsTarget] = useState(null)
 
@@ -1450,7 +1452,11 @@ export default function ProjectDetail() {
               </div>
               <div className="space-y-2">
                 {members.map(member => (
-                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group">
+                  <div
+                    key={member.id}
+                    onClick={() => setMemberCardTarget(member)}
+                    className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group cursor-pointer hover:bg-surface-3 transition-colors"
+                  >
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
                       style={{ backgroundColor: member.avatar_color || '#4ade80' }}
@@ -1463,7 +1469,7 @@ export default function ProjectDetail() {
                     </div>
                     {canManageMembers && (
                       <button
-                        onClick={() => removeMember(member)}
+                        onClick={e => { e.stopPropagation(); removeMember(member) }}
                         className="btn-ghost p-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                         title="Remove from project"
                       >
@@ -1521,6 +1527,10 @@ export default function ProjectDetail() {
             <UomProgressBar groups={jobTotalGroups} size="lg" />
           </div>
         </div>
+      )}
+
+      {memberCardTarget && (
+        <MemberCardModal person={memberCardTarget} onClose={() => setMemberCardTarget(null)} />
       )}
 
       {showAddMember && (

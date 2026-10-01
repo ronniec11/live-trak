@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
+import MemberCardModal from '../components/MemberCardModal'
 import OfflineSyncButton from '../components/OfflineSyncButton'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import UomProgressBar from '../components/UomProgressBar'
@@ -784,6 +785,7 @@ export default function ScopeDetail() {
   const [showAddPage, setShowAddPage] = useState(false)
   const [showImportAutodesk, setShowImportAutodesk] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
+  const [memberCardTarget, setMemberCardTarget] = useState(null)
   const [pageSettingsTarget, setPageSettingsTarget] = useState(null) // the page currently open in Sheet Settings, or null
   const [showScopeSettings, setShowScopeSettings] = useState(false)
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false)
@@ -1629,7 +1631,11 @@ export default function ScopeDetail() {
               </div>
               <div className="space-y-2">
                 {members.map(member => member && (
-                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group">
+                  <div
+                    key={member.id}
+                    onClick={() => setMemberCardTarget(member)}
+                    className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group cursor-pointer hover:bg-surface-3 transition-colors"
+                  >
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
                       style={{ backgroundColor: member.avatar_color || '#4ade80' }}
@@ -1642,7 +1648,7 @@ export default function ScopeDetail() {
                     </div>
                     {canManage && (
                       <button
-                        onClick={() => removeMember(member)}
+                        onClick={e => { e.stopPropagation(); removeMember(member) }}
                         className="btn-ghost p-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                         title="Remove from scope"
                       >
@@ -1706,6 +1712,10 @@ export default function ScopeDetail() {
           }}
         />
       )}
+      {memberCardTarget && (
+        <MemberCardModal person={memberCardTarget} onClose={() => setMemberCardTarget(null)} />
+      )}
+
       {showAddMember && (
         <AddMemberModal
           projectId={projectId}
