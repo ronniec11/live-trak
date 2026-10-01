@@ -5,6 +5,43 @@ import { useEffect, useState } from 'react'
 // box.
 export const DEFAULT_WEATHER_LOCATION = { lat: 30.26, lon: -97.74, label: 'Austin, TX' }
 
+// Every scope under the same job re-geocodes and re-fetches weather from
+// scratch on its own mount, and switching between scopes or back to the
+// Project page remounts this all over again — on a slow jobsite
+// connection, two sequential external round-trips (geocode, THEN weather)
+// before anything paints is exactly what reads as "takes a while to load".
+// A street address doesn't move, so its geocoded coordinates are cached
+// indefinitely in localStorage (survives app restarts, not just
+// navigation); weather is cached in sessionStorage with a short TTL (it
+// does change, just not minute to minute) so bouncing between a job's
+// scopes in one sitting doesn't refetch it every single time. Wrapped in
+// try/catch throughout — private browsing / a full quota can make either
+// storage throw, and caching is an optimization here, never a requirement.
+const GEOCODE_CACHE_KEY = 'livetrak_geocode_cache_v1'
+const WEATHER_CACHE_KEY = 'livetrak_weather_cache_v1'
+const WEATHER_CACHE_TTL_MS = 10 * 60 * 1000
+
+function readCache(storage, key) {
+  try { return JSON.parse(storage.getItem(key) || '{}') } catch { return {} }
+}
+function writeCache(storage, key, value) {
+  try { storage.setItem(key, JSON.stringify(value)) } catch { /* ignore */ }
+}
+
+// Guards against a slow/hung geocode or weather call stalling the widget
+// indefinitely on a flaky jobsite connection — fails fast instead, so the
+// default-location fallback (or the "unavailable" state) kicks in promptly
+// rather than leaving the loading skeleton spinning.
+async function fetchWithTimeout(url, ms = 8000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // Open-Meteo's WMO weather codes collapsed to a short human label — see
 // https://open-meteo.com/en/docs for the full table.
 function weatherDescription(code) {
@@ -49,11 +86,25 @@ function WeatherIcon({ code }) {
 // (ProjectDetail.jsx) so the sidebar only geocodes the address a single
 // time instead of each widget doing its own redundant lookup.
 export function useJobLocation(address) {
-  const [state, setState] = useState({ status: 'loading' })
+  const cacheKey = address ? address.trim() : null
+  // Lazy initializer runs synchronously on first render — a cache hit
+  // means the widget can skip the loading skeleton entirely instead of
+  // flashing it while a network geocode it doesn't actually need resolves.
+  const [state, setState] = useState(() => {
+    const hit = cacheKey ? readCache(localStorage, GEOCODE_CACHE_KEY)[cacheKey] : null
+    return hit ? { status: 'ready', ...hit, usedDefault: false } : { status: 'loading' }
+  })
 
   useEffect(() => {
     let cancelled = false
     async function load() {
+      if (cacheKey) {
+        const hit = readCache(localStorage, GEOCODE_CACHE_KEY)[cacheKey]
+        if (hit) {
+          if (!cancelled) setState({ status: 'ready', ...hit, usedDefault: false })
+          return
+        }
+      }
       setState({ status: 'loading' })
       let { lat, lon, label } = DEFAULT_WEATHER_LOCATION
       let usedDefault = true
@@ -67,7 +118,7 @@ export function useJobLocation(address) {
           // default, which is exactly why the weather/map never matched
           // the address actually set in Project Settings. Nominatim
           // geocodes full street addresses correctly.
-          const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&addressdetails=1`)
+          const geoRes = await fetchWithTimeout(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&addressdetails=1`)
           const results = await geoRes.json()
           const match = results?.[0]
           if (match) {
@@ -81,6 +132,11 @@ export function useJobLocation(address) {
         }
       }
       if (!cancelled) setState({ status: 'ready', lat, lon, label, usedDefault })
+      if (cacheKey && !usedDefault) {
+        const cache = readCache(localStorage, GEOCODE_CACHE_KEY)
+        cache[cacheKey] = { lat, lon, label }
+        writeCache(localStorage, GEOCODE_CACHE_KEY, cache)
+      }
     }
     load()
     return () => { cancelled = true }
@@ -139,21 +195,44 @@ function ForecastModal({ location, daily, onClose }) {
   )
 }
 
+// Rounded to ~1.1km — plenty of precision for weather, and keeps scopes on
+// the same job (same geocoded address) sharing one cache entry instead of
+// each spawning its own despite wanting the identical forecast.
+function weatherCacheKey(lat, lon) {
+  return `${lat.toFixed(2)},${lon.toFixed(2)}`
+}
+
 export default function WeatherWidget({ location }) {
-  const [weather, setWeather] = useState({ status: 'loading' })
+  const [weather, setWeather] = useState(() => {
+    if (location.status !== 'ready') return { status: 'loading' }
+    const hit = readCache(sessionStorage, WEATHER_CACHE_KEY)[weatherCacheKey(location.lat, location.lon)]
+    if (hit && Date.now() - hit.fetchedAt < WEATHER_CACHE_TTL_MS) {
+      return { status: 'ready', current: hit.current, daily: hit.daily }
+    }
+    return { status: 'loading' }
+  })
   const [forecastOpen, setForecastOpen] = useState(false)
 
   useEffect(() => {
     if (location.status !== 'ready') return
     let cancelled = false
     async function load() {
+      const key = weatherCacheKey(location.lat, location.lon)
+      const cache = readCache(sessionStorage, WEATHER_CACHE_KEY)
+      const hit = cache[key]
+      if (hit && Date.now() - hit.fetchedAt < WEATHER_CACHE_TTL_MS) {
+        if (!cancelled) setWeather({ status: 'ready', current: hit.current, daily: hit.daily })
+        return
+      }
       setWeather({ status: 'loading' })
       try {
-        const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=10&timezone=auto&temperature_unit=fahrenheit&wind_speed_unit=mph`)
+        const weatherRes = await fetchWithTimeout(`https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=10&timezone=auto&temperature_unit=fahrenheit&wind_speed_unit=mph`)
         const data = await weatherRes.json()
         if (cancelled) return
         if (!data?.current) { setWeather({ status: 'error' }); return }
         setWeather({ status: 'ready', current: data.current, daily: data.daily })
+        cache[key] = { current: data.current, daily: data.daily, fetchedAt: Date.now() }
+        writeCache(sessionStorage, WEATHER_CACHE_KEY, cache)
       } catch (e) {
         console.warn('[JobDetail] Weather fetch failed:', e)
         if (!cancelled) setWeather({ status: 'error' })
