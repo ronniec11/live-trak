@@ -64,7 +64,7 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
     <td align="center">
       <div style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;background:#1c1f36;color:#e8eaf6;padding:40px;border-radius:12px;border:1px solid #333a5c;">
 
-        <img src="https://live-trak.ai/logo.png" width="120" style="margin-bottom:32px;" alt="Live-Trak">
+        <img src="https://live-trak.ai/logo.png" width="200" style="margin-bottom:32px;" alt="Live-Trak">
 
         <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;color:#e8eaf6;">
           You've been invited to Live-Trak
