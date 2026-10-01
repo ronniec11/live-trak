@@ -162,6 +162,13 @@ export default async function handler(req, res) {
 
   try {
     const { token_hash, redirect_to, email_action_type } = email_data
+    // Logged unconditionally (not just on error) — 'magiclink' and
+    // 'signup' turned out not to be the only two values this app
+    // actually sees in practice (handling both still produced the plain
+    // fallback once), so the fastest way to find the real value for a
+    // given attempt is reading it straight from here instead of guessing
+    // a third one blind.
+    console.log('[auth/send-email] email_action_type:', email_action_type)
     // Same link GoTrue's own default templates build from
     // {{ .ConfirmationURL }} — hitting this verifies the token, then
     // 302-redirects the browser to redirect_to (Team.jsx's
