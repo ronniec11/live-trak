@@ -54,15 +54,15 @@ function toTitleCase(s) {
   return s.replace(/(^|\s)([a-z])/g, (_, pre, ch) => pre + ch.toUpperCase())
 }
 
-// (xxx)xxx-xxxx regardless of how it's typed — strips everything but
+// (xxx) xxx-xxxx regardless of how it's typed — strips everything but
 // digits first, so pasting "555.123.4567" or "+1 (555) 123-4567" lands on
 // the same format as typing it digit by digit.
 function formatPhone(raw) {
   const digits = raw.replace(/\D/g, '').slice(0, 10)
   if (digits.length === 0) return ''
   if (digits.length < 4) return `(${digits}`
-  if (digits.length < 7) return `(${digits.slice(0, 3)})${digits.slice(3)}`
-  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`
+  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
 }
 
 function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, organizationName, org, activeUserCount, onClose, onSaved }) {
@@ -244,7 +244,7 @@ function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, org
             <div>
               <label className="label">Phone</label>
               <input
-                className="input" type="tel" value={form.phone} placeholder="(555)123-4567"
+                className="input" type="tel" value={form.phone} placeholder="(555) 123-4567"
                 onChange={e => set('phone', formatPhone(e.target.value))}
               />
             </div>
