@@ -348,7 +348,7 @@ export default function Projects() {
   // mirrors).
   const [downloadBanner, setDownloadBanner] = useState({ text: '', isError: false })
 
-  const canCreate = profile?.role === 'admin'
+  const canCreate = profile?.role === 'admin' || profile?.role === 'pm'
   const canReorderRole = profile?.role === 'admin' || profile?.role === 'pm' || profile?.role === 'superintendent'
 
   const [dragId, setDragId] = useState(null)
