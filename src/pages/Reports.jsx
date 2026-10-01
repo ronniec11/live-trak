@@ -254,7 +254,7 @@ export default function Reports() {
       doc.setFont(undefined, 'bold')
       doc.setFontSize(11)
       doc.setTextColor('#1c1c1a')
-      doc.text(`"${selectedTag.name}" — Actual vs. Standard Rate`, margin + 0.18, y + 0.24)
+      doc.text(`${selectedTag.name} — Actual vs. Standard Rate`, margin + 0.18, y + 0.24)
 
       const stats = [
         { label: 'Jobs', value: String(tagSummary.distinctJobs) },
@@ -455,7 +455,7 @@ export default function Reports() {
         {!error && hasRun && tagSummary && (
           <div className="card mb-4">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-              "{selectedTag.name}" — Actual vs. Standard Rate
+              {selectedTag.name} — Actual vs. Standard Rate
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-6">
               <div className="text-center">
