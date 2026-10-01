@@ -1455,7 +1455,7 @@ export default function ProjectDetail() {
                   <div
                     key={member.id}
                     onClick={() => setMemberCardTarget(member)}
-                    className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group cursor-pointer hover:bg-surface-3 transition-colors"
+                    className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 cursor-pointer hover:bg-surface-3 transition-colors"
                   >
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
@@ -1467,17 +1467,6 @@ export default function ProjectDetail() {
                       <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{member.full_name}</p>
                       <p className="text-xs text-muted capitalize">{member.role}</p>
                     </div>
-                    {canManageMembers && (
-                      <button
-                        onClick={e => { e.stopPropagation(); removeMember(member) }}
-                        className="btn-ghost p-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                        title="Remove from project"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    )}
                   </div>
                 ))}
                 {members.length === 0 && (
@@ -1530,7 +1519,11 @@ export default function ProjectDetail() {
       )}
 
       {memberCardTarget && (
-        <MemberCardModal person={memberCardTarget} onClose={() => setMemberCardTarget(null)} />
+        <MemberCardModal
+          person={memberCardTarget}
+          onClose={() => setMemberCardTarget(null)}
+          onRemove={canManageMembers ? removeMember : undefined}
+        />
       )}
 
       {showAddMember && (

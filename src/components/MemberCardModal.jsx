@@ -1,23 +1,18 @@
 // A quick "business card" for a Project/Scope Member — tap their row to
 // see it, tap email/phone to actually call or email them straight from
 // the app via mailto:/tel: links (the OS/browser handles what opens).
-// Deliberately read-only (no edit/remove here) — Team.jsx's own
-// PersonCard already owns account-level management; this is just contact
-// info for whoever's on this job/scope.
-export default function MemberCardModal({ person, onClose }) {
+// Remove lives here now (not a hover-reveal icon on the row itself — on
+// touch devices a hover-styled button needs a first tap just to show
+// before a second tap actually hits it, which read as "nothing happened"
+// on a single tap). No corner X either — Close already does that job,
+// and two ways to close the same modal is one too many.
+export default function MemberCardModal({ person, onClose, onRemove }) {
   const hasContact = person.email || person.phone || person.company
 
   return (
     <div className="modal-backdrop fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="modal-panel bg-surface border border-border rounded-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Profile</h2>
-          <button onClick={onClose} className="btn-ghost p-1.5">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-5">Profile</h2>
 
         <div className="flex items-center gap-3 mb-5">
           <div
@@ -60,7 +55,17 @@ export default function MemberCardModal({ person, onClose }) {
           {!hasContact && <p className="text-sm text-muted">No contact info on file.</p>}
         </div>
 
-        <button onClick={onClose} className="btn-secondary w-full">Close</button>
+        <div className="flex gap-2">
+          {onRemove && (
+            <button
+              onClick={() => { onRemove(person); onClose() }}
+              className="btn-ghost flex-1 text-red-500 hover:bg-red-500/10"
+            >
+              Remove
+            </button>
+          )}
+          <button onClick={onClose} className="btn-secondary flex-1">Close</button>
+        </div>
       </div>
     </div>
   )
