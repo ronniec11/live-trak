@@ -126,22 +126,33 @@ function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserC
         if (authErr) throw authErr
         // The trigger may not know about every field (phone/company/
         // avatar_color, and possibly not full_name/role either, depending on
-        // its exact metadata keys) — set them directly regardless.
-        // .select().single() on purpose — a plain .update() with no
-        // .select() reports success even if this raced the trigger above
-        // and matched zero rows, which is exactly the kind of silent no-op
-        // that leaves an admin unsure whether the invite actually worked
-        // and re-doing it "just in case" (see supabase-migration-jobs-
-        // write-policies.sql's note on this same failure mode elsewhere).
-        const { data: updated, error: uErr } = await supabase.from('profiles').update({
-          full_name: form.full_name.trim(),
-          phone: form.phone.trim() || null,
-          company: form.company.trim() || null,
-          role: form.role,
-          avatar_color: form.avatar_color,
-          organization_id: currentUserOrgId,
-        }).eq('email', email).select().single()
-        if (uErr) throw uErr
+        // its exact metadata keys) — set them directly regardless, via a
+        // SECURITY DEFINER RPC rather than an .update().eq('email', ...).
+        // That plain update raced handle_new_user (the trigger that's
+        // supposed to have already created this profiles row off the
+        // signInWithOtp call above) and could match zero rows two different
+        // ways: a genuine timing race (the trigger just hadn't landed yet),
+        // or — the one a retry can't fix — signInWithOtp silently no-ops
+        // on an email that already has an auth.users row (see the comment
+        // above on the same quirk), which means no INSERT ever fires and
+        // the trigger never runs at all, permanently. The RPC sidesteps
+        // both: it looks up the auth user directly and upserts the profile
+        // itself, instead of waiting on a trigger it has no control over.
+        const { data: updated, error: uErr } = await supabase.rpc('upsert_invited_profile', {
+          p_email: email,
+          p_full_name: form.full_name.trim(),
+          p_phone: form.phone.trim() || null,
+          p_company: form.company.trim() || null,
+          p_role: form.role,
+          p_avatar_color: form.avatar_color,
+          p_organization_id: currentUserOrgId,
+        })
+        if (uErr) {
+          if (/no auth user found/i.test(uErr.message)) {
+            throw new Error('The invite email was sent, but the directory entry for it was not found to finish setting up — check back in a moment and edit them once it appears.')
+          }
+          throw uErr
+        }
         if (!updated) throw new Error('The invite email was sent, but the directory entry for it was not found to finish setting up — check back in a moment and edit them once it appears.')
       }
       onSaved()
