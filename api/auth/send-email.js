@@ -171,15 +171,23 @@ export default async function handler(req, res) {
 
     const resend = new Resend(requireEnv('RESEND_API_KEY'))
 
-    if (email_action_type === 'magiclink') {
-      // The only auth email this app sends today — both the initial
-      // invite and "Resend Invite" in Team.jsx call signInWithOtp, which
-      // always fires as 'magiclink'. inviter_name/organization_name come
-      // from the invited person's own user_metadata (set once, at invite
-      // time, by PersonModal's signInWithOtp call) — this hook has no
-      // other way to know who invited them or what company they're
-      // joining, since Supabase's payload only ever describes the
-      // invitee, never the admin who triggered the invite.
+    if (email_action_type === 'magiclink' || email_action_type === 'signup') {
+      // Both of these come from Team.jsx's own signInWithOtp calls —
+      // confirmed on-device that Supabase fires 'signup' for a genuinely
+      // brand-new email (first-ever invite to that address, the
+      // shouldCreateUser:true path actually creating the auth user) and
+      // 'magiclink' once that person already exists (every "Resend
+      // Invite" after that first one) — a quirk of signInWithOtp, not
+      // something this app controls (see github.com/orgs/supabase/
+      // discussions/28947). Missing 'signup' here was exactly why a
+      // first-time invite sent the plain fallback link below instead of
+      // this styled template, while a resend to an existing invitee
+      // looked correct. inviter_name/organization_name come from the
+      // invited person's own user_metadata (set once, at invite time, by
+      // PersonModal's signInWithOtp call) — this hook has no other way to
+      // know who invited them or what company they're joining, since
+      // Supabase's payload only ever describes the invitee, never the
+      // admin who triggered the invite.
       const { error } = await resend.emails.send({
         from: requireEnv('INVITE_EMAIL_FROM'),
         to: [user.email],
