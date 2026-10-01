@@ -1,7 +1,16 @@
-// Builds a standard vCard (.vcf) from a profile-shaped object (full_name/
-// company/phone/email) and triggers a browser download — shared by every
-// "download this person's contact" button (MemberCardModal, Team.jsx's
-// PersonCard) so the format/behavior can't drift between them.
+// Builds a standard vCard from a profile-shaped object (full_name/
+// company/phone/email) and opens it — shared by every "download this
+// person's contact" button (MemberCardModal, Team.jsx's PersonCard) so
+// the format/behavior can't drift between them.
+//
+// Deliberately NOT a forced file download (no `download` attribute) —
+// that saves a bare .vcf into Files, leaving the person to go find it and
+// hit Share -> Add to Contacts themselves. Navigating straight to a
+// text/vcard blob URL instead lets iOS/iPadOS Safari's own built-in
+// handling kick in: it recognizes the MIME type and shows the native
+// "Add to Contacts" card directly, no Files/Share detour. target="_blank"
+// keeps that in its own tab/sheet rather than navigating the app itself
+// away from wherever the person was.
 export function downloadVCard(person) {
   const displayName = person.full_name || person.email || 'Contact'
   const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${displayName}`]
@@ -21,9 +30,13 @@ export function downloadVCard(person) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${(person.full_name || 'contact').trim().replace(/[^a-z0-9]+/gi, '-')}.vcf`
+  a.target = '_blank'
+  a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  // Longer-lived than the old download's 1s — a new tab/sheet opening
+  // the blob URL needs it to still be valid by the time that tab
+  // actually loads it, not just by the time .click() returns.
+  setTimeout(() => URL.revokeObjectURL(url), 30000)
 }
