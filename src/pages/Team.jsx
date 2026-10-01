@@ -46,6 +46,25 @@ const ROLE_OPTIONS = [
 
 const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map(r => [r.value, r.label]))
 
+// Capitalizes the first letter of each word as it's typed (Full Name,
+// Company) — only the letter right after the start or a space, so
+// anything already typed elsewhere in the word (an existing capital, an
+// intentional lowercase) is left alone rather than being forced one way.
+function toTitleCase(s) {
+  return s.replace(/(^|\s)([a-z])/g, (_, pre, ch) => pre + ch.toUpperCase())
+}
+
+// (xxx)xxx-xxxx regardless of how it's typed — strips everything but
+// digits first, so pasting "555.123.4567" or "+1 (555) 123-4567" lands on
+// the same format as typing it digit by digit.
+function formatPhone(raw) {
+  const digits = raw.replace(/\D/g, '').slice(0, 10)
+  if (digits.length === 0) return ''
+  if (digits.length < 4) return `(${digits}`
+  if (digits.length < 7) return `(${digits.slice(0, 3)})${digits.slice(3)}`
+  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`
+}
+
 function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, organizationName, org, activeUserCount, onClose, onSaved }) {
   const isEdit = !!person
   const isSelf = isEdit && person.id === currentUserId
@@ -77,7 +96,12 @@ function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, org
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.full_name.trim() || !form.email.trim()) return
+    // Company is only required for a new add — requiring it on Edit too
+    // would make an existing person's row unsaveable (even just to change
+    // their role) until someone retroactively fills in a company that was
+    // optional when they were first added.
+    if (!form.full_name.trim() || !form.email.trim() || !form.role) return
+    if (!isEdit && !form.company.trim()) return
     setSaving(true)
     setError('')
     try {
@@ -202,13 +226,16 @@ function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, org
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="label">Full Name *</label>
-            <input className="input" value={form.full_name} onChange={e => set('full_name', e.target.value)} required />
+            <input
+              className="input" value={form.full_name} autoFocus required
+              onChange={e => set('full_name', toTitleCase(e.target.value))}
+            />
           </div>
           <div>
             <label className="label">Email *</label>
             <input
               className="input" type="email" value={form.email}
-              onChange={e => set('email', e.target.value)} required disabled={isEdit}
+              onChange={e => set('email', e.target.value.toLowerCase())} required disabled={isEdit}
               placeholder="you@company.com"
             />
             {isEdit && <p className="text-xs text-muted mt-1">Email can't be changed here.</p>}
@@ -216,15 +243,21 @@ function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, org
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Phone</label>
-              <input className="input" type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} />
+              <input
+                className="input" type="tel" value={form.phone} placeholder="(555)123-4567"
+                onChange={e => set('phone', formatPhone(e.target.value))}
+              />
             </div>
             <div>
-              <label className="label">Company</label>
-              <input className="input" value={form.company} onChange={e => set('company', e.target.value)} />
+              <label className="label">Company {!isEdit && '*'}</label>
+              <input
+                className="input" value={form.company} required={!isEdit}
+                onChange={e => set('company', toTitleCase(e.target.value))}
+              />
             </div>
           </div>
           <div>
-            <label className="label">Role</label>
+            <label className="label">Role *</label>
             <select className="input" value={form.role} onChange={e => set('role', e.target.value)} disabled={isSelf}>
               {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
