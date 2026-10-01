@@ -12,13 +12,18 @@
 // detour — and no real page navigation despite the <a> click, since
 // Safari intercepts vCard content before it ever renders as a page.
 //
-// A data: URI, not a Blob/createObjectURL — a blob: URL only resolves
-// inside the exact browsing context that created it, so opening one in a
-// new tab (target="_blank", tried first) loaded a blank page there
-// instead of showing the contact. data: URIs are self-contained (the
-// vCard text is right there in the URL), so there's nothing to resolve
-// and nothing to revoke, and it works in the SAME tab/context — which is
-// also what Safari's contact-overlay behavior actually needs.
+// Two things that look like they should work here don't, on iOS Safari
+// specifically:
+//   - blob: URL + target="_blank" — a blob: URL only resolves inside the
+//     exact browsing context that created it, so a new tab just loaded
+//     blank instead of showing the contact.
+//   - data: URI (tried next, to dodge that) — WebKit silently blocks
+//     top-level navigation to data: URLs triggered from script at all,
+//     as an anti-phishing measure; the click did nothing, no error.
+// blob: URL + a plain same-tab navigation (no target, no download) is
+// the one combination that's both allowed and resolvable: a blob: URL
+// isn't blocked the way data: is, and staying in the same tab means the
+// blob is still valid in whatever context is trying to load it.
 export function downloadVCard(person) {
   const displayName = person.full_name || person.email || 'Contact'
   const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${displayName}`]
@@ -34,10 +39,14 @@ export function downloadVCard(person) {
   if (person.phone) lines.push(`TEL;TYPE=CELL,VOICE:${person.phone}`)
   if (person.email) lines.push(`EMAIL;TYPE=INTERNET:${person.email}`)
   lines.push('END:VCARD')
-  const url = 'data:text/vcard;charset=utf-8,' + encodeURIComponent(lines.join('\r\n'))
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/vcard;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+  // Safari's own contact-overlay handling needs a moment to actually load
+  // the blob before it's revoked out from under it.
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
