@@ -92,7 +92,7 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
       <div class="ea-card" style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;padding:40px;border-radius:12px;border:1px solid #d8d8d4;">
 
         <img src="https://live-trak.ai/logo-light.png" width="200" class="ea-logo-light" style="margin-bottom:32px;" alt="Live-Trak">
-        <img src="https://live-trak.ai/logo-dark.png" width="200" class="ea-logo-dark" style="margin-bottom:32px;" alt="Live-Trak">
+        <img src="https://live-trak.ai/logo-dark.png" width="200" class="ea-logo-dark" style="margin-bottom:32px;display:none;" alt="Live-Trak">
 
         <h1 class="ea-heading" style="font-size:24px;font-weight:700;margin-bottom:8px;color:#1c1c1a;">
           You've been invited to Live-Trak
