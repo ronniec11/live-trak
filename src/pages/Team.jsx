@@ -25,9 +25,17 @@ const PRESET_COLORS = [
 // only reachable if /profile is itself allow-listed in Supabase's Auth ->
 // URL Configuration -> Redirect URLs alongside whatever's there for
 // /projects already — a link to a URL that isn't allow-listed gets its
-// session silently dropped by Supabase, which looks exactly like "the
-// link didn't work."
-const INVITE_REDIRECT_URL = 'https://www.live-trak.ai/profile'
+// session kept but silently redirected to whatever Site URL Supabase falls
+// back to instead (commonly /projects), which is exactly "it took me to
+// the project page" rather than a dropped session.
+//
+// ?welcome=1 — Profile.jsx reads this to show a focused "finish setting up
+// your account" view (email + password up front) instead of the regular
+// full profile/settings page, so this specifically reads as a sign-up
+// step rather than looking like generic account settings. GoTrue's own
+// verify step appends the session as a #hash fragment on top of this same
+// URL, preserving the query string underneath it.
+const INVITE_REDIRECT_URL = 'https://www.live-trak.ai/profile?welcome=1'
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },

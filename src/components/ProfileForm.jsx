@@ -18,7 +18,7 @@ const PRESET_COLORS = [
 // as a real standalone page) and the Navbar's profile modal (embedded=true
 // — a "window within a window" like Scope/Project Settings, so it doesn't
 // interrupt whatever page you were already on).
-export default function ProfileForm({ embedded = false, returnTo }) {
+export default function ProfileForm({ embedded = false, returnTo, welcome = false }) {
   const { profile, updateProfile, signOut } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
@@ -103,8 +103,57 @@ export default function ProfileForm({ embedded = false, returnTo }) {
   const roleColors = { admin: 'text-red-600 dark:text-red-400', pm: 'text-yellow-600 dark:text-yellow-400', superintendent: 'text-blue-600 dark:text-blue-400', foreman: 'text-accent' }
   const roleLabels = { admin: 'Administrator', pm: 'Project Manager', superintendent: 'Superintendent', foreman: 'Foreman' }
 
+  const passwordCard = (
+      <div className="card mb-4">
+        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Password</h2>
+        <p className="text-xs text-muted mb-4">
+          {profile?.email ? `Set a password so you can sign in with ${profile.email} and a password next time, instead of needing a new email link.` : 'Set a password to sign in with email and password next time.'}
+        </p>
+        <form onSubmit={handleSetPassword} className="space-y-4">
+          <div>
+            <label className="label">New Password</label>
+            <input
+              type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+              className="input" placeholder="••••••••" autoComplete="new-password"
+            />
+          </div>
+          <div>
+            <label className="label">Confirm Password</label>
+            <input
+              type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+              className="input" placeholder="••••••••" autoComplete="new-password"
+            />
+          </div>
+          {passwordError && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{passwordError}</div>
+          )}
+          <button type="submit" disabled={savingPassword} className="btn-primary w-full flex items-center justify-center gap-2">
+            {savingPassword ? (
+              <>
+                <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : passwordSaved ? (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+                Password set!
+              </>
+            ) : 'Set Password'}
+          </button>
+        </form>
+      </div>
+  )
+
   return (
     <>
+      {/* welcome=true — Profile.jsx's own heading already says "Welcome to
+          Live-Trak"; Password leads here (the actual next step for someone
+          fresh off an invite link, who has none yet) instead of Display
+          Name, and Role & Permissions is skipped entirely — relevant once
+          you're using the app, not before you've even signed in once. */}
+      {welcome && passwordCard}
       <div className="card mb-4">
         {/* Avatar preview */}
         <div className="flex items-center gap-4 mb-6">
@@ -218,49 +267,13 @@ export default function ProfileForm({ embedded = false, returnTo }) {
         </form>
       </div>
 
-      {/* Password */}
-      <div className="card mb-4">
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Password</h2>
-        <p className="text-xs text-muted mb-4">
-          {profile?.email ? `Set a password so you can sign in with ${profile.email} and a password next time, instead of needing a new email link.` : 'Set a password to sign in with email and password next time.'}
-        </p>
-        <form onSubmit={handleSetPassword} className="space-y-4">
-          <div>
-            <label className="label">New Password</label>
-            <input
-              type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-              className="input" placeholder="••••••••" autoComplete="new-password"
-            />
-          </div>
-          <div>
-            <label className="label">Confirm Password</label>
-            <input
-              type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-              className="input" placeholder="••••••••" autoComplete="new-password"
-            />
-          </div>
-          {passwordError && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{passwordError}</div>
-          )}
-          <button type="submit" disabled={savingPassword} className="btn-primary w-full flex items-center justify-center gap-2">
-            {savingPassword ? (
-              <>
-                <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
-                Saving...
-              </>
-            ) : passwordSaved ? (
-              <>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-                Password set!
-              </>
-            ) : 'Set Password'}
-          </button>
-        </form>
-      </div>
+      {!welcome && passwordCard}
 
-      {/* Role permissions info */}
+      {/* Role permissions info — skipped in welcome mode: not relevant
+          before you've even signed in once, and keeping that first-run
+          page short keeps the actual ask (set a password) from getting
+          lost among it. */}
+      {!welcome && (
       <div className="card">
         <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Role & Permissions</h2>
         <div className="space-y-2">
@@ -293,6 +306,7 @@ export default function ProfileForm({ embedded = false, returnTo }) {
         </div>
         <p className="text-xs text-muted mt-3">Role changes require an administrator.</p>
       </div>
+      )}
 
       <div className="card mt-4">
         <button type="button" onClick={handleSignOut} className="btn-secondary w-full text-red-600 dark:text-red-400">

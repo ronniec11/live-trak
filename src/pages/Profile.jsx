@@ -11,6 +11,11 @@ export default function Profile() {
   const navigate = useNavigate()
   const location = useLocation()
   const returnTo = location.state?.returnTo
+  // Team.jsx's invite link (and its own "Resend Invite") points here with
+  // ?welcome=1 — distinguishes someone landing fresh off an invite from
+  // anyone else opening their own profile, so this can read as a sign-up
+  // step (email + password up front) instead of generic account settings.
+  const welcome = new URLSearchParams(location.search).get('welcome') === '1'
 
   return (
     <Layout>
@@ -26,8 +31,15 @@ export default function Profile() {
             Back to canvas
           </button>
         )}
-        <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-6">My Profile</h1>
-        <ProfileForm returnTo={returnTo} />
+        {welcome ? (
+          <>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-1">Welcome to Live-Trak</h1>
+            <p className="text-sm text-muted mb-6">Set a password to finish creating your account.</p>
+          </>
+        ) : (
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-6">My Profile</h1>
+        )}
+        <ProfileForm returnTo={returnTo} welcome={welcome} />
       </div>
     </Layout>
   )
