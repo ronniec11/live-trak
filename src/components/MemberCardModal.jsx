@@ -59,7 +59,7 @@ export default function MemberCardModal({ person, onClose, onRemove }) {
           {onRemove && (
             <button
               onClick={() => { onRemove(person); onClose() }}
-              className="btn-ghost flex-1 text-red-500 hover:bg-red-500/10"
+              className="flex-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 font-medium px-4 py-2 rounded-lg border border-red-500/40 transition-all duration-150 text-sm"
             >
               Remove
             </button>
