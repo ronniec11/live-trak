@@ -51,6 +51,19 @@ function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserC
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Supabase's own email rate limit on signInWithOtp (one invite/resend per
+  // address roughly every 60s) surfaces as "For security purposes, you can
+  // only request this after N seconds." — true and not a bug, but a raw red
+  // error with no indication of when "later" is just reads as broken.
+  // Parsed out and turned into a live countdown that disables Send Invite
+  // until it's actually going to work again.
+  const [retryAfter, setRetryAfter] = useState(0)
+
+  useEffect(() => {
+    if (retryAfter <= 0) return
+    const t = setTimeout(() => setRetryAfter(s => s - 1), 1000)
+    return () => clearTimeout(t)
+  }, [retryAfter])
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
 
@@ -135,6 +148,8 @@ function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserC
       onClose()
     } catch (err) {
       setError(err.message)
+      const m = /after (\d+) seconds?/i.exec(err.message)
+      if (m) setRetryAfter(parseInt(m[1], 10))
     } finally {
       setSaving(false)
     }
@@ -201,13 +216,17 @@ function PersonModal({ person, currentUserId, currentUserOrgId, org, activeUserC
           </div>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
+              {retryAfter > 0
+                ? `An invite email was just sent to this address — you can try again in ${retryAfter}s.`
+                : error}
+            </div>
           )}
 
           <div className="flex gap-2 pt-1">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary flex-1">
-              {saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Send Invite'}
+            <button type="submit" disabled={saving || retryAfter > 0} className="btn-primary flex-1">
+              {saving ? 'Saving...' : retryAfter > 0 ? `Retry in ${retryAfter}s` : isEdit ? 'Save Changes' : 'Send Invite'}
             </button>
           </div>
         </form>
