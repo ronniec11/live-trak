@@ -1629,7 +1629,7 @@ export default function ScopeDetail() {
               </div>
               <div className="space-y-2">
                 {members.map(member => member && (
-                  <div key={member.id} className="flex items-center gap-2.5 group">
+                  <div key={member.id} className="flex items-center gap-2.5 bg-surface-2 rounded-lg p-2.5 group">
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-bg shrink-0"
                       style={{ backgroundColor: member.avatar_color || '#4ade80' }}
