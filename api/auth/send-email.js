@@ -28,6 +28,64 @@ function requireEnv(name) {
   return v
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// Built here instead of referencing the Resend-hosted "Team Invitation"
+// template's own template:{id,variables} send mode — Resend has a
+// confirmed bug (resend/react-email#3247) where a URL variable sitting
+// inside an href="{{{...}}}" attribute gets corrupted by their template
+// storage/substitution when sent through the REST API (works fine in
+// their dashboard's own "Send test" preview, breaks on a real send,
+// surfacing as a 422 "validation_error" with a blank field name — exactly
+// what this hook hit). Sending the same design as plain html instead
+// sidesteps that bug entirely. Keep this in sync by hand if the Resend
+// template's design changes — this card's styling matches the app's own
+// dark-mode tokens (src/index.css's :root.dark block), not arbitrary
+// colors.
+function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#141628;padding:40px 0;">
+  <tr>
+    <td align="center">
+      <div style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;background:#1c1f36;color:#e8eaf6;padding:40px;border-radius:12px;border:1px solid #333a5c;">
+
+        <img src="https://live-trak.ai/logo.png" width="120" style="margin-bottom:32px;" alt="Live-Trak">
+
+        <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;color:#e8eaf6;">
+          You've been invited to Live-Trak
+        </h1>
+
+        <p style="color:#8b90b3;font-size:16px;margin-bottom:32px;line-height:1.5;">
+          ${escapeHtml(inviterName)} has invited you to join
+          <strong style="color:#e8eaf6;">${escapeHtml(organizationName)}</strong>
+          on Live-Trak — the production tracking platform for construction trades.
+        </p>
+
+        <a href="${confirmationUrl}"
+           style="background:#4ade80;color:#141628;font-size:16px;font-weight:700;padding:14px 32px;border-radius:8px;text-decoration:none;display:inline-block;margin-bottom:32px;">
+          Accept Invitation
+        </a>
+
+        <p style="color:#8b90b3;font-size:13px;">
+          This link expires in 24 hours. If you didn't expect this invitation contact
+          <a href="mailto:hello@live-trak.ai" style="color:#4ade80;">hello@live-trak.ai</a>
+        </p>
+
+        <hr style="border:none;border-top:1px solid #333a5c;margin:32px 0;">
+
+        <p style="color:#8b90b3;font-size:12px;">
+          Live-Trak by Calderon Technologies ·
+          <a href="https://live-trak.ai" style="color:#4ade80;">live-trak.ai</a>
+        </p>
+
+      </div>
+    </td>
+  </tr>
+</table>`
+}
+
 async function buffer(req) {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -84,14 +142,12 @@ export default async function handler(req, res) {
       const { error } = await resend.emails.send({
         from: requireEnv('INVITE_EMAIL_FROM'),
         to: [user.email],
-        template: {
-          id: requireEnv('RESEND_INVITE_TEMPLATE_ID'),
-          variables: {
-            CONFIRMATION_URL: confirmationUrl,
-            INVITER_NAME: user.user_metadata?.inviter_name || 'A teammate',
-            ORGANIZATION_NAME: user.user_metadata?.organization_name || 'their company',
-          },
-        },
+        subject: "You've been invited to Live-Trak",
+        html: inviteEmailHtml({
+          confirmationUrl,
+          inviterName: user.user_metadata?.inviter_name || 'A teammate',
+          organizationName: user.user_metadata?.organization_name || 'their company',
+        }),
       })
       if (error) throw error
     } else {
