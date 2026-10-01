@@ -5,6 +5,7 @@ import MemberCardModal from '../components/MemberCardModal'
 import OfflineSyncButton from '../components/OfflineSyncButton'
 import ScopeSettingsModal from '../components/ScopeSettingsModal'
 import UomProgressBar from '../components/UomProgressBar'
+import WeatherWidget, { useJobLocation } from '../components/WeatherWidget'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
@@ -797,6 +798,7 @@ export default function ScopeDetail() {
   const [savingProjectInfo, setSavingProjectInfo] = useState(false)
   const [tilingPageId, setTilingPageId] = useState(null)
   const [tilingProgress, setTilingProgress] = useState(0)
+  const weatherLocation = useJobLocation(project?.jobs?.address)
   const [tilingServerSide, setTilingServerSide] = useState(false)
   // setTilingPageId is async (React state), so a burst of clicks/duplicate
   // events landing before the next render can all read the same stale
@@ -1015,7 +1017,7 @@ export default function ScopeDetail() {
     setLoading(true)
     try {
       const [projRes, pgsRes, memsRes] = await Promise.all([
-        supabase.from('projects').select('*').eq('id', projectId).single(),
+        supabase.from('projects').select('*, jobs(address)').eq('id', projectId).single(),
         supabase.from('pages').select('*').eq('project_id', projectId).order('created_at'),
         supabase.from('project_members').select('user_id, profiles(*)').eq('project_id', projectId),
       ])
@@ -1544,6 +1546,7 @@ export default function ScopeDetail() {
             than an extension of the main content it sits beside. */}
         <div className="lg:w-72 shrink-0 overflow-auto lg:border-l lg:border-border">
           <div className="p-4 sm:p-6 space-y-4">
+            <WeatherWidget location={weatherLocation} />
             {/* Scope Tags — rolled up from whichever of this scope's
                 sheets are tagged (Sheet Settings), since tags live
                 per-sheet now, not on the scope itself. Always shown
