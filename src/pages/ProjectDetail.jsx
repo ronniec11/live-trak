@@ -214,7 +214,7 @@ function ForecastModal({ location, daily, onClose }) {
               <WeatherIcon code={daily.weather_code[i]} />
               <span className="flex-1 min-w-0 text-xs text-muted truncate">{weatherDescription(daily.weather_code[i])}</span>
               {daily.precipitation_probability_max[i] > 10 && (
-                <span className="text-xs text-accent shrink-0">{daily.precipitation_probability_max[i]}%</span>
+                <span className="text-xs text-blue-600 dark:text-blue-400 font-medium shrink-0">{daily.precipitation_probability_max[i]}%</span>
               )}
               <span className="text-sm text-gray-900 dark:text-white shrink-0 w-16 text-right">
                 {Math.round(daily.temperature_2m_max[i])}° <span className="text-muted">{Math.round(daily.temperature_2m_min[i])}°</span>
@@ -277,7 +277,17 @@ function WeatherWidget({ location }) {
           <WeatherIcon code={current.weather_code} />
           <div className="min-w-0">
             <p className="text-xl font-bold text-gray-900 dark:text-white leading-tight">{Math.round(current.temperature_2m)}°F</p>
-            <p className="text-xs text-muted truncate">{weatherDescription(current.weather_code)} · {Math.round(current.wind_speed_10m)} mph</p>
+            {/* Rain is a big deal in construction — today's chance of rain
+                shows right here at a glance, not just buried in the 10-day
+                modal, color-coded blue so it reads as "precipitation" and
+                not the green "on track" accent used everywhere else. */}
+            <p className="text-xs text-muted truncate">
+              {weatherDescription(current.weather_code)}
+              {daily?.precipitation_probability_max?.[0] != null && (
+                <> · <span className="text-blue-600 dark:text-blue-400 font-medium">{daily.precipitation_probability_max[0]}%</span></>
+              )}
+              {' · '}{Math.round(current.wind_speed_10m)} mph
+            </p>
           </div>
         </div>
         <p className="text-xs text-muted mt-2">
