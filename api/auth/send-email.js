@@ -45,7 +45,20 @@ function escapeHtml(s) {
 // dark-mode tokens (src/index.css's :root.dark block), not arbitrary
 // colors.
 function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
-  return `
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- This card's colors are a deliberate, fixed dark design (the app's
+     own dark-mode tokens), not "whatever looks right in light mode" —
+     without these, Gmail auto-dark-modes any email that doesn't declare
+     its own scheme, repainting our navy/green into a washed-out
+     light-lavender/dark-green mess that doesn't match the app at all. -->
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+</head>
+<body style="margin:0;padding:0;background:#141628;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#141628;padding:40px 0;">
   <tr>
     <td align="center">
@@ -83,7 +96,9 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
       </div>
     </td>
   </tr>
-</table>`
+</table>
+</body>
+</html>`
 }
 
 async function buffer(req) {
