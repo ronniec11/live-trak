@@ -227,7 +227,7 @@ const pageUomLabel = u => u === 'each' ? 'EA' : u
 // than a scope-wide one. This tag picker/create/rate-match logic is a
 // direct port of the old ScopeSettingsModal's, just keyed off page_id and
 // this page's own uom instead of the scope's.
-function PageSettingsModal({ page, onClose, onSaved }) {
+function PageSettingsModal({ page, onClose, onSaved, onMoved }) {
   const { profile } = useAuth()
   const [name, setName] = useState(page.name || '')
   const [uom, setUom] = useState(page.unit_of_measure || 'SF')
@@ -235,6 +235,56 @@ function PageSettingsModal({ page, onClose, onSaved }) {
   const [totalTarget, setTotalTarget] = useState(page.total_target ?? '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // Which Job › Scope this sheet currently lives in, and (lazily, once the
+  // "Move" section is opened) every other scope it could move to — grouped
+  // by job to match how the rest of the app presents the hierarchy. A move
+  // is just reassigning pages.project_id: sessions/tags/tile storage are
+  // all keyed off the page itself (page_id), not a copy of its project_id,
+  // and floor_plan_url/tile_meta are already-resolved storage paths/URLs
+  // baked in at upload/generation time — so nothing downstream needs to be
+  // copied or regenerated, just this one row.
+  const [location, setLocation] = useState(null) // { jobName, scopeName }
+  const [moveOpen, setMoveOpen] = useState(false)
+  const [moveOptions, setMoveOptions] = useState(null) // null = not loaded yet
+  const [moveTarget, setMoveTarget] = useState('')
+  const [moving, setMoving] = useState(false)
+  const [moveError, setMoveError] = useState('')
+
+  useEffect(() => {
+    supabase.from('projects').select('name, jobs(name)').eq('id', page.project_id).single()
+      .then(({ data }) => { if (data) setLocation({ jobName: data.jobs?.name || '—', scopeName: data.name }) })
+  }, [page.project_id])
+
+  function openMove() {
+    setMoveOpen(true)
+    if (moveOptions) return
+    supabase.from('projects').select('id, name, jobs(name)').order('name')
+      .then(({ data, error: err }) => {
+        if (err) { setMoveError(err.message); setMoveOptions([]); return }
+        setMoveOptions((data || [])
+          .filter(p => p.id !== page.project_id)
+          .map(p => ({ id: p.id, name: p.name, jobName: p.jobs?.name || '—' })))
+      })
+  }
+
+  async function doMove() {
+    const target = moveOptions?.find(o => o.id === moveTarget)
+    if (!target) return
+    if (!confirm(`Move "${page.name}" to ${target.jobName} › ${target.name}? It will no longer appear in this scope.`)) return
+    setMoving(true)
+    setMoveError('')
+    try {
+      const { error: err } = await supabase.from('pages').update({ project_id: moveTarget }).eq('id', page.id)
+      if (err) throw err
+      onMoved()
+      onClose()
+    } catch (err) {
+      setMoveError(err.message || 'Failed to move sheet.')
+    } finally {
+      setMoving(false)
+    }
+  }
 
   const [allTags, setAllTags] = useState([])
   const [selectedTagIds, setSelectedTagIds] = useState([])
@@ -350,6 +400,49 @@ function PageSettingsModal({ page, onClose, onSaved }) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        <div className="mb-4 pb-4 border-b border-border">
+          <label className="label">Location</label>
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            {location ? <>{location.jobName} <span className="text-muted">›</span> {location.scopeName}</> : 'Loading…'}
+          </p>
+          {!moveOpen ? (
+            <button type="button" onClick={openMove} className="text-xs text-accent hover:underline mt-1">
+              Move to a different scope…
+            </button>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {moveOptions === null ? (
+                <p className="text-xs text-muted">Loading scopes…</p>
+              ) : moveOptions.length === 0 ? (
+                <p className="text-xs text-muted">No other scopes to move this sheet to.</p>
+              ) : (
+                <>
+                  <select className="input" value={moveTarget} onChange={e => setMoveTarget(e.target.value)}>
+                    <option value="">Choose a scope…</option>
+                    {Object.entries(
+                      moveOptions.reduce((groups, o) => {
+                        (groups[o.jobName] ||= []).push(o)
+                        return groups
+                      }, {})
+                    ).map(([jobName, scopes]) => (
+                      <optgroup key={jobName} label={jobName}>
+                        {scopes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setMoveOpen(false); setMoveTarget('') }} disabled={moving} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
+                    <button type="button" onClick={doMove} disabled={moving || !moveTarget} className="btn-primary flex-1 text-xs py-1.5">
+                      {moving ? 'Moving…' : 'Move Sheet'}
+                    </button>
+                  </div>
+                </>
+              )}
+              {moveError && <p className="text-xs text-red-500">{moveError}</p>}
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -1929,6 +2022,14 @@ export default function ScopeDetail() {
           onSaved={updates => {
             setPages(ps => ps.map(p => p.id === pageSettingsTarget.id ? { ...p, ...updates } : p))
             if (activePage?.id === pageSettingsTarget.id) setActivePage(a => ({ ...a, ...updates }))
+          }}
+          onMoved={() => {
+            setPages(ps => {
+              const remaining = ps.filter(p => p.id !== pageSettingsTarget.id)
+              if (activePage?.id === pageSettingsTarget.id) setActivePage(remaining[0] || null)
+              return remaining
+            })
+            setTodaySessions(ts => ts.filter(s => s.page_id !== pageSettingsTarget.id))
           }}
         />
       )}
