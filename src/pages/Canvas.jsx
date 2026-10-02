@@ -323,6 +323,7 @@ export default function Canvas() {
     let hoveredTextBoxId = null  // which box's dashed outline/handles are currently shown — see onMove and drawMarkersLayer
     let textResizeOrig = null    // {minX, minY, maxX, maxY, fontSize} at mousedown, for computing the new font size from the height ratio
     let textLongPressTimer = null // touch-only: pending "delete this box" timer — see onTouchStart/onTouchMove/onTouchEnd
+    let textRotateBoxId = null   // id of an existing box whose rotate handle was grabbed — see onDown/onMove/onUp
 
     // Rectangle tool — an active rect stays a live, adjustable shape (drag
     // corner handles to expand/collapse, drag inside to move) rather than
@@ -884,6 +885,17 @@ export default function Canvas() {
         const boxW = (t.maxX - t.minX) * z, boxH = (t.maxY - t.minY) * z
         const fontPx = Math.max(8, (t.fontSize || 24) * z)
         countCtx.save()
+        // Rotate the canvas around the box's own screen-space center, then
+        // draw everything exactly as before at its plain (unrotated) screen
+        // coordinates — simpler and more robust than rotating every point
+        // this draw touches by hand, and it's exactly what hitTextBox/
+        // hitTextBoxHandle's own un-rotate-the-pointer approach mirrors.
+        if (t.rotation) {
+          const scx = (t.minX + t.maxX) / 2 * z + p.x, scy = (t.minY + t.maxY) / 2 * z + p.y
+          countCtx.translate(scx, scy)
+          countCtx.rotate(t.rotation)
+          countCtx.translate(-scx, -scy)
+        }
         countCtx.font = `bold ${fontPx}px system-ui,sans-serif`
         countCtx.textAlign = 'left'
         countCtx.textBaseline = 'top'
@@ -907,12 +919,22 @@ export default function Canvas() {
       // off the box and its handles disappear, same as Rectangle only ever
       // showing handles on the one shape that's actually live.
       if (tool === 'text' && !soloSession) {
-        const hoverId = textResizeBoxId || textDragBoxId || hoveredTextBoxId
+        const hoverId = textRotateBoxId || textResizeBoxId || textDragBoxId || hoveredTextBoxId
         const t = hoverId != null && hoverId !== textEditId ? liveTextLabels.find(x => x.id === hoverId) : null
         if (t) {
           const sx1 = t.minX * z + p.x, sy1 = t.minY * z + p.y
           const sx2 = t.maxX * z + p.x, sy2 = t.maxY * z + p.y
           countCtx.save()
+          // Same rotate-the-canvas-around-center approach as the text draw
+          // above — the dashed outline, corner handles, and the rotate
+          // handle/stalk below all get drawn at their plain unrotated
+          // coordinates and come out correctly rotated for free.
+          if (t.rotation) {
+            const scx = (t.minX + t.maxX) / 2 * z + p.x, scy = (t.minY + t.maxY) / 2 * z + p.y
+            countCtx.translate(scx, scy)
+            countCtx.rotate(t.rotation)
+            countCtx.translate(-scx, -scy)
+          }
           countCtx.strokeStyle = t.color || '#000000'
           countCtx.lineWidth = 1
           countCtx.setLineDash([4, 3])
@@ -926,6 +948,22 @@ export default function Canvas() {
             countCtx.lineWidth = 1.5
             countCtx.strokeRect(hx - HR, hy - HR, HR * 2, HR * 2)
           })
+          // Rotate handle — a small circle above top-center on a short
+          // stalk, same visual language as Bluebeam/PowerPoint's own rotate
+          // handle. Its position here (top-center minus a fixed screen
+          // offset) matches hitTextBoxHandle's 'rotate' corner exactly.
+          const hcx = (sx1 + sx2) / 2, hcy = sy1 - ROTATE_HANDLE_OFFSET
+          countCtx.beginPath()
+          countCtx.moveTo(hcx, sy1)
+          countCtx.lineTo(hcx, hcy + 6)
+          countCtx.stroke()
+          countCtx.beginPath()
+          countCtx.arc(hcx, hcy, 6, 0, Math.PI * 2)
+          countCtx.fillStyle = 'rgba(255,255,255,0.9)'
+          countCtx.fill()
+          countCtx.lineWidth = 1.5
+          countCtx.strokeStyle = t.color || '#000000'
+          countCtx.stroke()
           countCtx.restore()
         }
       }
@@ -976,6 +1014,32 @@ export default function Canvas() {
       })
     }
 
+    // Rotates a box to point its top edge at the current pointer position,
+    // around the box's own center — the rotate handle sits straight above
+    // center (angle -90°/-PI/2 from it) when rotation is 0, so adding PI/2
+    // to the pointer's raw angle-from-center is what keeps the handle
+    // tracking directly under the pointer as it's dragged, same feel as
+    // Bluebeam/PowerPoint's own rotate handle. sx/sy are screen coords
+    // (straight from the pointer event, same as hitTextBoxHandle uses) —
+    // rotation is a pure angle, so screen vs. image space makes no
+    // difference to it, only to where the center itself needs to be
+    // measured from (zoom/pan), which this looks up fresh each call rather
+    // than needing a snapshot the way resize/move's orig/fixed do.
+    function rotateTextBox(id, sx, sy, snap) {
+      if (!activePage) return
+      const z = activePage.zoom, p = activePage.pan
+      liveTextLabels = liveTextLabels.map(t => {
+        if (t.id !== id) return t
+        const scx = (t.minX + t.maxX) / 2 * z + p.x, scy = (t.minY + t.maxY) / 2 * z + p.y
+        let rotation = Math.atan2(sy - scy, sx - scx) + Math.PI / 2
+        // Shift-drag snaps to 15° increments — same idea as the LF tool's
+        // own angle snap (snapToAngle), handy for squaring text up with a
+        // sheet that's slightly off-axis or deliberately at a clean angle.
+        if (snap) { const step = Math.PI / 12; rotation = Math.round(rotation / step) * step }
+        return { ...t, rotation }
+      })
+    }
+
     // Removes a box whole — the only other way to get rid of one used to be
     // opening it and deleting all the text by hand, which is a strange
     // amount of typing just to throw something away. Bound to Delete/
@@ -999,8 +1063,16 @@ export default function Canvas() {
     // dragging a corner should resize the text itself, not just re-wrap it
     // inside a differently-shaped box.
     function resizeTextBox(id, orig, fixed, pt) {
-      const minX = Math.min(fixed.x, pt.x), maxX = Math.max(fixed.x, pt.x)
-      const minY = Math.min(fixed.y, pt.y), maxY = Math.max(fixed.y, pt.y)
+      // fixed is one of the box's own (already-local/unrotated) corners —
+      // pt is a raw image-space point from the actual pointer though, so a
+      // rotated box needs it mapped into that same local frame first before
+      // comparing the two, same reasoning as hitTextBox/hitTextBoxHandle.
+      const rotation = orig.rotation || 0
+      const localPt = rotation
+        ? unrotatePoint(pt.x, pt.y, (orig.minX + orig.maxX) / 2, (orig.minY + orig.maxY) / 2, rotation)
+        : pt
+      const minX = Math.min(fixed.x, localPt.x), maxX = Math.max(fixed.x, localPt.x)
+      const minY = Math.min(fixed.y, localPt.y), maxY = Math.max(fixed.y, localPt.y)
       const origH = Math.max(1, orig.maxY - orig.minY)
       const ratio = (maxY - minY) / origH
       const ratioFont = Math.min(TEXT_MAX_FONT, Math.max(TEXT_MIN_FONT, (orig.fontSize || TEXT_FONT_SIZE) * ratio))
@@ -1017,6 +1089,25 @@ export default function Canvas() {
       })
     }
 
+    // How far above a text box's top edge the rotate handle sits, in screen
+    // px — constant regardless of zoom, same reasoning as the corner
+    // handles' own fixed hit radius below.
+    const ROTATE_HANDLE_OFFSET = 28
+
+    // Un-rotates a point by -rotation around (cx,cy) — pure 2D rotation
+    // math, agnostic to whether the inputs are screen or image coordinates
+    // (both hit-testing below and resizeTextBox's resize math use this with
+    // different spaces). Maps a point from "however the box is actually
+    // rotated right now" back into the box's own local frame, where minX/
+    // minY/maxX/maxY — always axis-aligned by definition — can be tested/
+    // computed against directly, exactly like an unrotated box already was.
+    function unrotatePoint(sx, sy, cx, cy, rotation) {
+      if (!rotation) return { x: sx, y: sy }
+      const cos = Math.cos(-rotation), sin = Math.sin(-rotation)
+      const dx = sx - cx, dy = sy - cy
+      return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos }
+    }
+
     // Walk in reverse so an overlapping later box wins the hit test,
     // matching the visual stacking order (later boxes draw on top).
     function hitTextBox(sx, sy) {
@@ -1024,30 +1115,42 @@ export default function Canvas() {
       const z = activePage.zoom, p = activePage.pan
       for (let i = liveTextLabels.length - 1; i >= 0; i--) {
         const t = liveTextLabels[i]
+        const scx = (t.minX + t.maxX) / 2 * z + p.x, scy = (t.minY + t.maxY) / 2 * z + p.y
+        const local = unrotatePoint(sx, sy, scx, scy, t.rotation || 0)
         const sx1 = t.minX * z + p.x, sy1 = t.minY * z + p.y
         const sx2 = t.maxX * z + p.x, sy2 = t.maxY * z + p.y
-        if (sx >= sx1 - 4 && sx <= sx2 + 4 && sy >= sy1 - 4 && sy <= sy2 + 4) return t
+        if (local.x >= sx1 - 4 && local.x <= sx2 + 4 && local.y >= sy1 - 4 && local.y <= sy2 + 4) return t
       }
       return null
     }
 
-    // Corner-resize handles, checked across every existing box (not just
-    // one "active" shape — Rectangle only ever has one live shape at a
-    // time, but committed text boxes all sit there as data simultaneously,
-    // so any of them needs to be grabbable). Walked in the same reverse
-    // stacking order as hitTextBox for the same reason.
+    // Corner-resize + rotate handles, checked across every existing box
+    // (not just one "active" shape — Rectangle only ever has one live shape
+    // at a time, but committed text boxes all sit there as data
+    // simultaneously, so any of them needs to be grabbable). Walked in the
+    // same reverse stacking order as hitTextBox for the same reason.
+    //
+    // The pointer is un-rotated into each box's own local frame before
+    // testing — cheaper and far simpler than rotating every handle's
+    // position out into screen space instead, and exactly mirrors how
+    // drawMarkersLayer draws a rotated box's handles (rotate the CANVAS
+    // around the box's center, then draw everything at its plain local
+    // coordinates — see there).
     function hitTextBoxHandle(sx, sy, radius = 14) {
       if (!activePage) return null
       const z = activePage.zoom, p = activePage.pan
       for (let i = liveTextLabels.length - 1; i >= 0; i--) {
         const t = liveTextLabels[i]
+        const scx = (t.minX + t.maxX) / 2 * z + p.x, scy = (t.minY + t.maxY) / 2 * z + p.y
+        const local = unrotatePoint(sx, sy, scx, scy, t.rotation || 0)
         const corners = {
           nw: {x: t.minX, y: t.minY}, ne: {x: t.maxX, y: t.minY},
           sw: {x: t.minX, y: t.maxY}, se: {x: t.maxX, y: t.maxY},
+          rotate: {x: (t.minX + t.maxX) / 2, y: t.minY - ROTATE_HANDLE_OFFSET / z},
         }
         for (const name in corners) {
           const hx = corners[name].x * z + p.x, hy = corners[name].y * z + p.y
-          if (Math.hypot(sx - hx, sy - hy) < radius) return {box: t, handle: name}
+          if (Math.hypot(local.x - hx, local.y - hy) < radius) return {box: t, handle: name}
         }
       }
       return null
@@ -1126,6 +1229,10 @@ export default function Canvas() {
       input.style.width  = Math.max(40, sx2 - sx1) + 'px'
       input.style.height = Math.max(24, sy2 - sy1) + 'px'
       input.style.fontSize = Math.max(8, (box.fontSize || TEXT_FONT_SIZE) * z) + 'px'
+      // Re-opening an already-rotated box to edit its text — CSS rotates
+      // around the element's own center by default, which matches the
+      // canvas-side rotation's pivot (the box's center) exactly.
+      input.style.transform = box.rotation ? `rotate(${box.rotation}rad)` : 'none'
     }
 
     // On mouseup/touchend after dragging out a new box — a drag too small to
@@ -1633,7 +1740,7 @@ export default function Canvas() {
         shapeClipboard = {
           tool: 'text',
           w: entry.maxX - entry.minX, h: entry.maxY - entry.minY,
-          text: entry.text, color: entry.color, fontSize: entry.fontSize,
+          text: entry.text, color: entry.color, fontSize: entry.fontSize, rotation: entry.rotation || 0,
           lastX: entry.minX, lastY: entry.minY,
         }
       }
@@ -1663,7 +1770,7 @@ export default function Canvas() {
         drawActiveLFPreview(); updateUnsaved(true)
       } else if (tool === 'text') {
         commitTextLabel()
-        const entry = { id: Date.now(), minX: newX, minY: newY, maxX: newX + c.w, maxY: newY + c.h, text: c.text, color: c.color, fontSize: c.fontSize }
+        const entry = { id: Date.now(), minX: newX, minY: newY, maxX: newX + c.w, maxY: newY + c.h, text: c.text, color: c.color, fontSize: c.fontSize, rotation: c.rotation || 0 }
         liveTextLabels.push(entry)
         drawMarkersLayer(); updateUnsaved(true)
       }
@@ -1904,9 +2011,13 @@ export default function Canvas() {
           // committed the box it was stealing focus from).
           if (textEditId != null) { commitTextLabel(); return }
           const handleHit = hitTextBoxHandle(pos.x, pos.y)
+          if (handleHit?.handle === 'rotate') {
+            textRotateBoxId = handleHit.box.id
+            return
+          }
           if (handleHit) {
             textResizeBoxId = handleHit.box.id
-            textResizeOrig = {minX: handleHit.box.minX, minY: handleHit.box.minY, maxX: handleHit.box.maxX, maxY: handleHit.box.maxY, fontSize: handleHit.box.fontSize}
+            textResizeOrig = {minX: handleHit.box.minX, minY: handleHit.box.minY, maxX: handleHit.box.maxX, maxY: handleHit.box.maxY, fontSize: handleHit.box.fontSize, rotation: handleHit.box.rotation || 0}
             textResizeFixed = textResizeAnchor(handleHit.box, handleHit.handle)
             return
           }
@@ -2047,10 +2158,12 @@ export default function Canvas() {
         }
       } else if (tool === 'text') {
         ring.style.display = 'none'
-        if (activePage && !creatingTextBox && !textDragBoxId && !textResizeBoxId) {
+        if (activePage && !creatingTextBox && !textDragBoxId && !textResizeBoxId && !textRotateBoxId) {
           const handleHover = hitTextBoxHandle(pos.x, pos.y)
           const bodyHover = handleHover ? null : hitTextBox(pos.x, pos.y)
-          if (handleHover) {
+          if (handleHover?.handle === 'rotate') {
+            drawEl.style.cursor = 'grab'
+          } else if (handleHover) {
             drawEl.style.cursor = (handleHover.handle === 'nw' || handleHover.handle === 'se') ? 'nwse-resize' : 'nesw-resize'
           } else {
             drawEl.style.cursor = bodyHover ? 'pointer' : 'crosshair'
@@ -2140,6 +2253,13 @@ export default function Canvas() {
         drawActiveTextBoxPreview()
         return
       }
+      if (tool === 'text' && textRotateBoxId) {
+        if (liveTextLabels.some(t => t.id === textRotateBoxId)) {
+          rotateTextBox(textRotateBoxId, pos.x, pos.y, e.shiftKey)
+          drawMarkersLayer()
+        }
+        return
+      }
       if (tool === 'text' && textResizeBoxId) {
         if (liveTextLabels.some(t => t.id === textResizeBoxId)) {
           const pt = s2i(pos.x, pos.y)
@@ -2176,6 +2296,10 @@ export default function Canvas() {
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
       if (creatingTextBox) finalizeTextBoxCreation()
+      if (textRotateBoxId) {
+        updateUnsaved(checkHasLiveContent())
+        textRotateBoxId = null
+      }
       if (textResizeBoxId) {
         updateUnsaved(checkHasLiveContent())
         textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
@@ -2675,6 +2799,7 @@ export default function Canvas() {
         if (textLongPressTimer) { clearTimeout(textLongPressTimer); textLongPressTimer = null }
         if (textDragBoxId) { textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null }
         if (textResizeBoxId) { textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null }
+        if (textRotateBoxId) textRotateBoxId = null
         touchPainting = false; lastTouchPt = null; rectHandle = null
         polyDragMode = null; polyVertexIdx = null
         lfDragMode = null; lfVertexIdx = null
@@ -2826,9 +2951,13 @@ export default function Canvas() {
         // instead of also starting a new box under the same tap.
         if (textEditId != null) { commitTextLabel(); return }
         const handleHit = hitTextBoxHandle(pos.x, pos.y, 20) // bigger touch target
+        if (handleHit?.handle === 'rotate') {
+          textRotateBoxId = handleHit.box.id
+          return
+        }
         if (handleHit) {
           textResizeBoxId = handleHit.box.id
-          textResizeOrig = {minX: handleHit.box.minX, minY: handleHit.box.minY, maxX: handleHit.box.maxX, maxY: handleHit.box.maxY, fontSize: handleHit.box.fontSize}
+          textResizeOrig = {minX: handleHit.box.minX, minY: handleHit.box.minY, maxX: handleHit.box.maxX, maxY: handleHit.box.maxY, fontSize: handleHit.box.fontSize, rotation: handleHit.box.rotation || 0}
           textResizeFixed = textResizeAnchor(handleHit.box, handleHit.handle)
           return
         }
@@ -2958,6 +3087,15 @@ export default function Canvas() {
         drawActiveTextBoxPreview()
         return
       }
+      if (tool === 'text' && textRotateBoxId) {
+        const pos = getTouchPos(e)
+        trackEdgePan(pos, false)
+        if (liveTextLabels.some(t => t.id === textRotateBoxId)) {
+          rotateTextBox(textRotateBoxId, pos.x, pos.y, false)
+          drawMarkersLayer()
+        }
+        return
+      }
       if (tool === 'text' && textResizeBoxId) {
         const pos = getTouchPos(e)
         trackEdgePan(pos, false)
@@ -3025,6 +3163,10 @@ export default function Canvas() {
       polyDragMode = null; polyVertexIdx = null
       lfDragMode = null; lfVertexIdx = null
       if (creatingTextBox) finalizeTextBoxCreation()
+      if (textRotateBoxId) {
+        updateUnsaved(checkHasLiveContent())
+        textRotateBoxId = null
+      }
       if (textResizeBoxId) {
         updateUnsaved(checkHasLiveContent())
         textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
@@ -3214,6 +3356,7 @@ export default function Canvas() {
         if (textLongPressTimer) { clearTimeout(textLongPressTimer); textLongPressTimer = null }
         textDragBoxId = null; textDragMoved = false; textDragStart = null; textDragOrig = null
         textResizeBoxId = null; textResizeFixed = null; textResizeOrig = null
+        textRotateBoxId = null
         hoveredTextBoxId = null
       }
       if (tool !== 'erase' && t !== 'erase' && t !== 'count') prevTool = t
