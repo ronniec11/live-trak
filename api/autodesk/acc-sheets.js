@@ -30,7 +30,23 @@ export default async function handler(req, res) {
       { headers: { Authorization: `Bearer ${apsToken}` } }
     )
     const data = await response.json()
-    res.status(response.status).json(data)
+    if (!response.ok) { res.status(response.status).json(data); return }
+
+    const list = data?.results || data?.data || []
+    if (list.length > 0) { res.status(200).json(data); return }
+
+    // A confirmed-nonempty ACC project (real sheets visible in Autodesk's
+    // own app) still coming back empty here points at sheets being reachable
+    // only through their version-set/collection (what the ACC UI shows as
+    // e.g. "Production Tracking"), not as a flat per-project list. Pulling
+    // version-sets alongside the empty list means the next screenshot shows
+    // both shapes at once instead of a second round trip.
+    const vsResponse = await fetch(
+      `https://developer.api.autodesk.com/construction/sheets/v1/projects/${encodeURIComponent(bareProjectId)}/version-sets?limit=200`,
+      { headers: { Authorization: `Bearer ${apsToken}` } }
+    )
+    const versionSets = await vsResponse.json().catch(() => null)
+    res.status(200).json({ ...data, _debugVersionSets: { status: vsResponse.status, body: versionSets } })
   } catch (err) {
     console.error('[autodesk/acc-sheets] failed:', err)
     res.status(502).json({ error: 'Failed to reach Autodesk.' })
