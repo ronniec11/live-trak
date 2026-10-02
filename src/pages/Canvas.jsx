@@ -3311,7 +3311,7 @@ export default function Canvas() {
       const pd  = livePenCtx.getImageData(0, 0, livePenCanvas.width, livePenCanvas.height).data
       let hasHL = false; for (let i = 3; i < hd.length; i += 4) { if (hd[i] > 10) { hasHL = true; break } }
       let hasPen = false; for (let i = 3; i < pd.length; i += 4) { if (pd[i] > 10) { hasPen = true; break } }
-      if (!hasHL && !hasPen && liveCountMarkers.length === 0 && liveLFLines.length === 0) {
+      if (!hasHL && !hasPen && liveCountMarkers.length === 0 && liveLFLines.length === 0 && liveTextLabels.length === 0) {
         showToast('Nothing to save — paint first!', true); return
       }
       openSaveModal()
