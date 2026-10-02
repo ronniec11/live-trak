@@ -4734,9 +4734,25 @@ export default function Canvas() {
     // Composites just the given sessions onto the sheet's base image —
     // 30%-alpha highlight, full-opacity pen, so a report scoped to one
     // session only shows that session's markup, not everyone else's.
+    //
+    // Rendered at a capped resolution and exported as JPEG rather than at
+    // the sheet's full native pixel size as a lossless PNG — the PDF only
+    // ever displays this at up to ~7in wide (see the addImage call below),
+    // so a multi-thousand-pixel scan embedded at full resolution was pure
+    // waste: readable markup needs maybe 250 DPI at that print size, not
+    // the sheet's full scan resolution, and PNG compresses high-entropy
+    // markup-over-scan content far worse than JPEG does. This is what was
+    // driving reports up toward ~18MB — too big to email without the
+    // sender manually downsizing it first.
+    const SNAPSHOT_MAX_DIM = 1800
+    const SNAPSHOT_JPEG_QUALITY = 0.85
+
     async function buildSheetSnapshot(sessions) {
-      const w = activePage?.image?.width, h = activePage?.image?.height
-      if (!w || !h) return null
+      const srcW = activePage?.image?.width, srcH = activePage?.image?.height
+      if (!srcW || !srcH) return null
+      const scale = Math.min(1, SNAPSHOT_MAX_DIM / Math.max(srcW, srcH))
+      const w = Math.round(srcW * scale), h = Math.round(srcH * scale)
+
       let base
       if (activePage.tileMeta) {
         try {
@@ -4754,23 +4770,24 @@ export default function Canvas() {
       if (!ec) return null
       ec.drawImage(base, 0, 0, w, h)
       ec.globalAlpha = 0.3
-      sessions.forEach(s => { if (s.hlCanvas) ec.drawImage(s.hlCanvas, 0, 0) })
+      sessions.forEach(s => { if (s.hlCanvas) ec.drawImage(s.hlCanvas, 0, 0, s.hlCanvas.width, s.hlCanvas.height, 0, 0, w, h) })
       ec.globalAlpha = 1
-      sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0) })
+      sessions.forEach(s => { if (s.penCanvas) ec.drawImage(s.penCanvas, 0, 0, s.penCanvas.width, s.penCanvas.height, 0, 0, w, h) })
 
       // Count markers — unlike highlight/pen, these aren't baked into a
       // per-session canvas, so they're drawn fresh here: same circle +
-      // number look as the live Count tool (drawMarkersLayer), just sized
-      // relative to the sheet's own resolution rather than the current
-      // viewport zoom, which has no meaning for a full-resolution export.
+      // number look as the live Count tool (drawMarkersLayer), just scaled
+      // down to this export's (possibly capped) resolution rather than the
+      // sheet's full native size, same as everything else in this snapshot.
       const r = Math.max(14, Math.min(w, h) * 0.012)
       sessions.forEach(s => {
         (s.countMarkers || []).forEach(m => {
+          const x = m.x * scale, y = m.y * scale
           ec.save()
           ec.shadowColor = 'rgba(0,0,0,0.5)'
           ec.shadowBlur = r * 0.3
           ec.beginPath()
-          ec.arc(m.x, m.y, r, 0, Math.PI * 2)
+          ec.arc(x, y, r, 0, Math.PI * 2)
           ec.fillStyle = m.color || '#4ade80'
           ec.fill()
           ec.strokeStyle = '#fff'
@@ -4781,12 +4798,12 @@ export default function Canvas() {
           ec.textAlign = 'center'
           ec.textBaseline = 'middle'
           ec.fillStyle = '#fff'
-          ec.fillText(String(m.num), m.x, m.y)
+          ec.fillText(String(m.num), x, y)
           ec.restore()
         })
       })
 
-      return exp.toDataURL('image/png')
+      return exp.toDataURL('image/jpeg', SNAPSHOT_JPEG_QUALITY)
     }
     async function generateSheetReport() {
       if (!activePage) return
@@ -5116,7 +5133,7 @@ export default function Canvas() {
             const maxH = 7.0
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             ensureRoom(h)
-            doc.addImage(data.snapshot, 'PNG', (pageWidth - w) / 2, y, w, h)
+            doc.addImage(data.snapshot, imageFormatFromDataUrl(data.snapshot), (pageWidth - w) / 2, y, w, h)
             y += h + 0.18
           } catch (e) {
             console.warn('[Canvas] Sheet Report: snapshot embed failed:', e)
