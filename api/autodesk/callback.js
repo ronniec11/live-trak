@@ -43,13 +43,14 @@ export default async function handler(req, res) {
     }
 
     const admin = adminClient()
-    const { error: dbErr } = await admin.from('aps_connections').upsert({
+    const { error: dbErr } = await admin.from('integration_connections').upsert({
       user_id: payload.uid,
+      provider: 'autodesk',
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
       expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' })
+    }, { onConflict: 'user_id,provider' })
     if (dbErr) throw dbErr
 
     res.redirect('/company-hub?aps_connected=1')

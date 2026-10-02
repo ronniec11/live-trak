@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase'
 import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileGenerator'
 import { getCachedProject } from '../lib/offlineCache'
 import { resolveStorageUrl, storagePathFrom } from '../lib/storageUrls'
+import { INTEGRATIONS } from '../lib/integrations'
 
 const UPLOAD_TIMEOUT_MS = 30_000
 
@@ -683,6 +684,176 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
   )
 }
 
+// Google Drive's own OAuth token never reaches the browser here either —
+// same posture as ImportAutodeskModal above, just against a much simpler
+// API: Drive is just folders of files/folders, no hub/project layers to
+// drill through first, so there's one view (a folder's contents) instead
+// of several.
+function ImportGoogleDriveModal({ projectId, onClose, onCreated }) {
+  const [crumbs, setCrumbs] = useState([{ label: 'My Drive', folderId: 'root' }])
+  const [items, setItems] = useState([])
+  const [loadingItems, setLoadingItems] = useState(true)
+  const [error, setError] = useState('')
+  const [picked, setPicked] = useState(null)
+  const [pageName, setPageName] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importStep, setImportStep] = useState('')
+
+  async function authedFetch(url) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) throw new Error('Not signed in.')
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.message || data.error || 'Request failed.')
+    return data
+  }
+
+  async function loadFolder(folderId) {
+    setLoadingItems(true)
+    setError('')
+    try {
+      const data = await authedFetch(`/api/google/list?folderId=${encodeURIComponent(folderId)}`)
+      setItems(data.data || [])
+    } catch (err) {
+      setError(err.message)
+      setItems([])
+    } finally {
+      setLoadingItems(false)
+    }
+  }
+
+  useEffect(() => {
+    loadFolder('root')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function enter(entry) {
+    if (entry.kind === 'folder') {
+      setCrumbs(c => [...c, { label: entry.name, folderId: entry.id }])
+      loadFolder(entry.id)
+    } else {
+      setPicked(entry)
+      setPageName(entry.name.replace(/\.[^.]+$/, ''))
+    }
+  }
+
+  function goTo(idx) {
+    const next = crumbs.slice(0, idx + 1)
+    setCrumbs(next)
+    loadFolder(next[next.length - 1].folderId)
+  }
+
+  async function doImport() {
+    if (!picked || !pageName.trim()) return
+    setImporting(true)
+    setError('')
+    try {
+      setImportStep('Downloading from Google Drive…')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not signed in.')
+      const fileResp = await fetch(`/api/google/download?fileId=${encodeURIComponent(picked.id)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!fileResp.ok) {
+        const errData = await fileResp.json().catch(() => ({}))
+        throw new Error(errData.message || errData.error || 'Failed to download the file from Google Drive.')
+      }
+      const blob = await fileResp.blob()
+      const file = new File([blob], picked.name, { type: blob.type || 'application/octet-stream' })
+
+      const data = await createPageFromFile(projectId, pageName, file, setImportStep)
+      setImportStep('')
+      onCreated(data)
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Import failed. Please try again.')
+      setImportStep('')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !importing && onClose()}>
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Import from Google Drive</h2>
+          <button onClick={onClose} disabled={importing} className="btn-ghost p-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {picked ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted">Importing <span className="text-gray-900 dark:text-white font-medium">{picked.name}</span></p>
+            <div>
+              <label className="label">Page Name *</label>
+              <input className="input" value={pageName} onChange={e => setPageName(e.target.value)} required />
+            </div>
+            {importStep && !error && (
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+                {importStep}
+              </div>
+            )}
+            {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
+            <div className="flex gap-2">
+              <button type="button" onClick={() => { setPicked(null); setError('') }} disabled={importing} className="btn-secondary flex-1">Back</button>
+              <button type="button" onClick={doImport} disabled={importing || !pageName.trim()} className="btn-primary flex-1">
+                {importing ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-1 flex-wrap text-xs text-muted">
+              {crumbs.map((c, i) => (
+                <span key={i} className="flex items-center gap-1">
+                  {i > 0 && <span>/</span>}
+                  <button
+                    onClick={() => goTo(i)}
+                    disabled={i === crumbs.length - 1}
+                    className={i === crumbs.length - 1 ? 'text-gray-900 dark:text-white font-medium' : 'hover:text-accent'}
+                  >
+                    {c.label}
+                  </button>
+                </span>
+              ))}
+            </div>
+
+            {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
+
+            <div className="border border-border rounded-lg max-h-80 overflow-y-auto divide-y divide-border">
+              {loadingItems ? (
+                <p className="text-sm text-muted p-4">Loading…</p>
+              ) : items.length === 0 ? (
+                <p className="text-sm text-muted p-4">Nothing here.</p>
+              ) : items.map(entry => (
+                <button
+                  key={entry.id}
+                  onClick={() => enter(entry)}
+                  className="w-full text-left px-3 py-2.5 text-sm hover:bg-surface-2 transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4 text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    {entry.kind === 'file' ? (
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    ) : (
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v6.75a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25v-4.5zm0 0V6a2.25 2.25 0 012.25-2.25h5.379a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H19.5A2.25 2.25 0 0121.75 9v.75" />
+                    )}
+                  </svg>
+                  <span className="text-gray-900 dark:text-white truncate">{entry.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function AddMemberModal({ projectId, existingMemberIds, onClose, onAdded }) {
   const [directory, setDirectory] = useState(null) // null = still loading
   const [search, setSearch] = useState('')
@@ -784,7 +955,8 @@ export default function ScopeDetail() {
   const [offlineMode, setOfflineMode] = useState(false)
   const [notCachedOffline, setNotCachedOffline] = useState(false)
   const [showAddPage, setShowAddPage] = useState(false)
-  const [showImportAutodesk, setShowImportAutodesk] = useState(false)
+  const [connectedIntegrations, setConnectedIntegrations] = useState([]) // provider ids with a working connection
+  const [importProvider, setImportProvider] = useState(null) // provider id of the open import modal, or null
   const [showAddMember, setShowAddMember] = useState(false)
   const [memberCardTarget, setMemberCardTarget] = useState(null)
   const [pageSettingsTarget, setPageSettingsTarget] = useState(null) // the page currently open in Sheet Settings, or null
@@ -1069,6 +1241,21 @@ export default function ScopeDetail() {
 
   useEffect(() => { loadData() }, [projectId])
 
+  // Which "Import from …" buttons to show — only for integrations this
+  // user has actually connected (Company Hub's Integrations panel is where
+  // that's managed), so disconnecting Autodesk and connecting Google Drive
+  // swaps one button for the other instead of always showing every provider.
+  useEffect(() => {
+    if (!canManage) return
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) return
+      fetch('/api/integrations/status', { headers: { Authorization: `Bearer ${session.access_token}` } })
+        .then(res => res.json())
+        .then(data => setConnectedIntegrations(INTEGRATIONS.filter(i => data?.[i.provider]?.connected).map(i => i.provider)))
+        .catch(() => {}) // not critical — worst case no import buttons show up
+    })
+  }, [canManage])
+
   // Server-side tiling (generateTilesServerSide) can genuinely take several
   // minutes on a large sheet — long enough that iOS Safari has been seen
   // suspending the backgrounded tab mid-request, which loses that fetch's
@@ -1283,12 +1470,14 @@ export default function ScopeDetail() {
                 <OfflineSyncButton className="text-xs" />
                 {canManage && (
                   <>
-                    <button onClick={() => setShowImportAutodesk(true)} className="btn-secondary flex items-center gap-1.5 text-xs">
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                      </svg>
-                      Import from Autodesk
-                    </button>
+                    {INTEGRATIONS.filter(i => connectedIntegrations.includes(i.provider)).map(i => (
+                      <button key={i.provider} onClick={() => setImportProvider(i.provider)} className="btn-secondary flex items-center gap-1.5 text-xs">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                        </svg>
+                        Import from {i.shortLabel}
+                      </button>
+                    ))}
                     <button onClick={() => setShowAddPage(true)} className="btn-primary flex items-center gap-1.5 text-xs">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -1684,12 +1873,22 @@ export default function ScopeDetail() {
           }}
         />
       )}
-      {showImportAutodesk && (
+      {importProvider === 'autodesk' && (
         <ImportAutodeskModal
           projectId={projectId}
-          onClose={() => setShowImportAutodesk(false)}
+          onClose={() => setImportProvider(null)}
           onCreated={newPage => {
-            setShowImportAutodesk(false)
+            setImportProvider(null)
+            loadData().then(() => setActivePage(newPage))
+          }}
+        />
+      )}
+      {importProvider === 'google_drive' && (
+        <ImportGoogleDriveModal
+          projectId={projectId}
+          onClose={() => setImportProvider(null)}
+          onCreated={newPage => {
+            setImportProvider(null)
             loadData().then(() => setActivePage(newPage))
           }}
         />

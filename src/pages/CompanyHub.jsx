@@ -4,6 +4,7 @@ import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { formatPhone } from '../lib/phone'
+import { INTEGRATIONS } from '../lib/integrations'
 
 const TIMEZONE_OPTIONS = [
   { value: 'America/New_York', label: 'Eastern (ET)' },
@@ -525,71 +526,120 @@ function TeamCard({ people }) {
   )
 }
 
-// Autodesk Construction Cloud connection — Phase 1 of the APS integration.
-// The actual tokens never pass through this component: connect() asks
-// api/autodesk/auth for a ready-made auth URL (sending the user's own
-// Supabase session so the server knows who's connecting) and just
-// navigates there; status is a plain connected/not-connected flag from
-// api/autodesk/status, never the tokens themselves (see
-// supabase-migration-aps-connections.sql for why).
+// Connect/disconnect for every known integration. The actual tokens never
+// pass through this component: connect() asks the provider's own auth.js
+// for a ready-made auth URL (sending the user's own Supabase session so
+// the server knows who's connecting) and just navigates there; status
+// comes from the unified api/integrations/status, which only ever reports
+// true/false per provider (see supabase-migration-integration-connections.sql
+// for why tokens are never exposed to the browser).
 function IntegrationsCard() {
-  const [status, setStatus] = useState(null) // null = still checking
-  const [connecting, setConnecting] = useState(false)
+  const [status, setStatus] = useState(null) // null = still checking; else { [provider]: {connected, connectedAt} }
+  const [connectingProvider, setConnectingProvider] = useState(null)
+  const [disconnectingProvider, setDisconnectingProvider] = useState(null)
   const [error, setError] = useState('')
 
-  async function authedFetch(url) {
+  async function authedFetch(url, options) {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) throw new Error('Not signed in.')
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    const res = await fetch(url, {
+      ...options,
+      headers: { Authorization: `Bearer ${session.access_token}`, ...(options?.headers || {}) },
+    })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.message || data.error || 'Request failed.')
     return data
   }
 
   useEffect(() => {
-    authedFetch('/api/autodesk/status').then(setStatus).catch(err => {
+    authedFetch('/api/integrations/status').then(setStatus).catch(err => {
       // Swallowing this used to hide real failures (e.g. a missing
       // SUPABASE_SERVICE_ROLE_KEY on the deployed function) behind a plain
       // "Not connected" — no way to tell that apart from a genuine
       // never-connected state. Show it instead.
-      setStatus({ connected: false })
-      setError('Could not check Autodesk connection status: ' + err.message)
+      setStatus({})
+      setError('Could not check integration status: ' + err.message)
     })
-    // Coming back from Autodesk's consent screen — surface any error, then
-    // drop the query params so refreshing the page doesn't replay them.
+    // Coming back from a provider's consent screen — surface any error,
+    // then drop the query params so refreshing the page doesn't replay them.
     const params = new URLSearchParams(window.location.search)
-    if (params.has('aps_connected') || params.has('aps_error')) {
-      if (params.get('aps_error')) setError('Autodesk connection failed: ' + params.get('aps_error'))
+    const sawCallback = INTEGRATIONS.some(i => params.has(`${i.paramPrefix}_connected`) || params.has(`${i.paramPrefix}_error`))
+    if (sawCallback) {
+      for (const i of INTEGRATIONS) {
+        const errParam = params.get(`${i.paramPrefix}_error`)
+        if (errParam) setError(`${i.label} connection failed: ` + errParam)
+      }
       window.history.replaceState({}, '', window.location.pathname)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function connect() {
-    setConnecting(true)
+  async function connect(integration) {
+    setConnectingProvider(integration.provider)
     setError('')
     try {
-      const { authUrl } = await authedFetch('/api/autodesk/auth')
+      const { authUrl } = await authedFetch(integration.authUrl)
       window.location.href = authUrl
     } catch (err) {
       setError(err.message)
-      setConnecting(false)
+      setConnectingProvider(null)
+    }
+  }
+
+  async function disconnect(integration) {
+    setDisconnectingProvider(integration.provider)
+    setError('')
+    try {
+      await authedFetch('/api/integrations/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: integration.provider }),
+      })
+      setStatus(s => ({ ...s, [integration.provider]: { connected: false, connectedAt: null } }))
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDisconnectingProvider(null)
     }
   }
 
   return (
     <div className="card">
       <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Integrations</h2>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-gray-900 dark:text-white">Autodesk Construction Cloud</p>
-          <p className="text-sm text-muted">
-            {status === null ? 'Checking connection…' : status.connected ? 'Connected — sheets can be imported from ACC.' : 'Not connected.'}
-          </p>
-        </div>
-        <button type="button" onClick={connect} disabled={connecting} className="btn-secondary shrink-0">
-          {connecting ? 'Connecting…' : status?.connected ? 'Reconnect Autodesk Account' : 'Connect Autodesk Account'}
-        </button>
+      <div className="divide-y divide-border">
+        {INTEGRATIONS.map(integration => {
+          const connected = !!status?.[integration.provider]?.connected
+          return (
+            <div key={integration.provider} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">{integration.label}</p>
+                <p className="text-sm text-muted">
+                  {status === null ? 'Checking connection…' : connected ? integration.connectedCopy : 'Not connected.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {connected && (
+                  <button
+                    type="button"
+                    onClick={() => disconnect(integration)}
+                    disabled={disconnectingProvider === integration.provider}
+                    className="btn-ghost text-red-600 dark:text-red-400"
+                  >
+                    {disconnectingProvider === integration.provider ? 'Disconnecting…' : 'Disconnect'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => connect(integration)}
+                  disabled={connectingProvider === integration.provider}
+                  className="btn-secondary"
+                >
+                  {connectingProvider === integration.provider ? 'Connecting…' : connected ? 'Reconnect' : 'Connect'}
+                </button>
+              </div>
+            </div>
+          )
+        })}
       </div>
       {error && <div className="mt-3 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
     </div>

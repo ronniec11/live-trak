@@ -1,18 +1,19 @@
-// Autodesk-specific helpers for the APS integration. Generic Supabase/
-// OAuth-state plumbing lives in api/_shared/auth.js (shared with every
-// other integration) — this file only keeps what's actually Autodesk-
-// specific: refreshing a stored APS token.
+// Google-specific helpers for the Drive integration. Generic Supabase/
+// OAuth-state plumbing lives in api/_shared/auth.js (shared with the
+// Autodesk integration) — this file only keeps what's actually Google-
+// specific: refreshing a stored Drive token.
 import { adminClient, getSupabaseUser, requireEnv, signState, verifyState } from '../_shared/auth.js'
 
 export { adminClient, getSupabaseUser, requireEnv, signState, verifyState }
 
-const PROVIDER = 'autodesk'
+const PROVIDER = 'google_drive'
 
-// Looks up the caller's stored APS tokens and refreshes them first if
-// they're at/near expiry, so every proxy endpoint can just call this and
-// get back something usable — refresh_token rotation (APS issues a new
-// one on every refresh) is handled here once instead of in each route.
-export async function getValidApsToken(userId) {
+// Looks up the caller's stored Google tokens and refreshes them first if
+// they're at/near expiry. Google access tokens are short-lived (~1hr);
+// refresh_tokens, unlike Autodesk's, are NOT rotated on refresh — Google
+// keeps issuing the same one, so the existing value is always kept if a
+// refresh response happens not to include one.
+export async function getValidGoogleToken(userId) {
   const admin = adminClient()
   const { data: conn, error } = await admin
     .from('integration_connections')
@@ -26,24 +27,23 @@ export async function getValidApsToken(userId) {
   if (expiresAt - Date.now() > 60 * 1000) return conn.access_token // still good for >1min
 
   if (!conn.refresh_token) return null
-  const resp = await fetch('https://developer.api.autodesk.com/authentication/v2/token', {
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: conn.refresh_token,
-      client_id: requireEnv('APS_CLIENT_ID'),
-      client_secret: requireEnv('APS_CLIENT_SECRET'),
+      client_id: requireEnv('GOOGLE_CLIENT_ID'),
+      client_secret: requireEnv('GOOGLE_CLIENT_SECRET'),
     }),
   })
   const tokens = await resp.json()
   if (!resp.ok || tokens.error) {
-    console.error('[aps] refresh failed:', tokens)
+    console.error('[google] refresh failed:', tokens)
     return null
   }
   await admin.from('integration_connections').update({
     access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token || conn.refresh_token,
     expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('user_id', userId).eq('provider', PROVIDER)
