@@ -46,7 +46,34 @@ export default async function handler(req, res) {
       { headers: { Authorization: `Bearer ${apsToken}` } }
     )
     const versionSets = await vsResponse.json().catch(() => null)
-    res.status(200).json({ ...data, _debugVersionSets: { status: vsResponse.status, body: versionSets } })
+
+    // Also surface exactly which Autodesk identity this server-side token
+    // belongs to — this integration has already hit one case of "connected
+    // as the wrong Autodesk account" earlier, and ACC additionally requires
+    // explicit per-project membership (account-admin access doesn't imply
+    // project-level Sheets access), so knowing who the token is and
+    // whether that user is a member of THIS project is the next fastest
+    // way to tell a scope/membership problem from an API-shape problem.
+    const whoamiResp = await fetch('https://api.userprofile.autodesk.com/userinfo', {
+      headers: { Authorization: `Bearer ${apsToken}` },
+    })
+    const whoami = await whoamiResp.json().catch(() => null)
+
+    let members = null
+    if (whoamiResp.ok && whoami?.sub) {
+      const membersResp = await fetch(
+        `https://developer.api.autodesk.com/construction/admin/v1/projects/${encodeURIComponent(bareProjectId)}/users?filter[autodeskId]=${encodeURIComponent(whoami.sub)}`,
+        { headers: { Authorization: `Bearer ${apsToken}` } }
+      )
+      members = { status: membersResp.status, body: await membersResp.json().catch(() => null) }
+    }
+
+    res.status(200).json({
+      ...data,
+      _debugVersionSets: { status: vsResponse.status, body: versionSets },
+      _debugWhoAmI: { status: whoamiResp.status, body: whoami },
+      _debugProjectMembership: members,
+    })
   } catch (err) {
     console.error('[autodesk/acc-sheets] failed:', err)
     res.status(502).json({ error: 'Failed to reach Autodesk.' })
