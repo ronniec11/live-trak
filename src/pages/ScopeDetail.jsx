@@ -227,7 +227,19 @@ const pageUomLabel = u => u === 'each' ? 'EA' : u
 // than a scope-wide one. This tag picker/create/rate-match logic is a
 // direct port of the old ScopeSettingsModal's, just keyed off page_id and
 // this page's own uom instead of the scope's.
-function PageSettingsModal({ page, onClose, onSaved, onMoved }) {
+// Groups a flat {id, name, jobName} scope list into [jobName, scopes][]
+// pairs, preserving first-seen order — shared by the Move and Copy scope
+// pickers in PageSettingsModal below, which otherwise render the exact
+// same job-grouped <optgroup> structure from two differently-filtered
+// views of the same underlying scope list.
+function groupedByJob(list) {
+  return Object.entries(list.reduce((groups, o) => {
+    (groups[o.jobName] ||= []).push(o)
+    return groups
+  }, {}))
+}
+
+function PageSettingsModal({ page, onClose, onSaved, onMoved, onCopied }) {
   const { profile } = useAuth()
   const [name, setName] = useState(page.name || '')
   const [uom, setUom] = useState(page.unit_of_measure || 'SF')
@@ -236,40 +248,130 @@ function PageSettingsModal({ page, onClose, onSaved, onMoved }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Which Job › Scope this sheet currently lives in, and (lazily, once the
-  // "Move" section is opened) every other scope it could move to — grouped
-  // by job to match how the rest of the app presents the hierarchy. A move
-  // is just reassigning pages.project_id: sessions/tags/tile storage are
-  // all keyed off the page itself (page_id), not a copy of its project_id,
-  // and floor_plan_url/tile_meta are already-resolved storage paths/URLs
-  // baked in at upload/generation time — so nothing downstream needs to be
-  // copied or regenerated, just this one row.
+  // Which Job › Scope this sheet currently lives in, and (lazily, once
+  // either "Move" or "Copy" is opened) every scope in the org, grouped by
+  // job — shared between the two since both need the same picker, just
+  // Move excludes the current scope (moving to where it already is is a
+  // no-op) while Copy includes it (duplicating within the same scope is a
+  // legitimate use — e.g. two different trades tracking separate markup
+  // against the same drawing).
   const [location, setLocation] = useState(null) // { jobName, scopeName }
+  const [scopeOptions, setScopeOptions] = useState(null) // null = not loaded yet; [{id, name, jobName}]
+  const [scopeOptionsError, setScopeOptionsError] = useState('')
+
   const [moveOpen, setMoveOpen] = useState(false)
-  const [moveOptions, setMoveOptions] = useState(null) // null = not loaded yet
   const [moveTarget, setMoveTarget] = useState('')
   const [moving, setMoving] = useState(false)
   const [moveError, setMoveError] = useState('')
+
+  const [copyOpen, setCopyOpen] = useState(false)
+  const [copyTarget, setCopyTarget] = useState('')
+  const [copyIncludeSessions, setCopyIncludeSessions] = useState(false)
+  const [copying, setCopying] = useState(false)
+  const [copyError, setCopyError] = useState('')
+  const [copySuccess, setCopySuccess] = useState('')
 
   useEffect(() => {
     supabase.from('projects').select('name, jobs(name)').eq('id', page.project_id).single()
       .then(({ data }) => { if (data) setLocation({ jobName: data.jobs?.name || '—', scopeName: data.name }) })
   }, [page.project_id])
 
-  function openMove() {
-    setMoveOpen(true)
-    if (moveOptions) return
+  function loadScopeOptions() {
+    if (scopeOptions) return
     supabase.from('projects').select('id, name, jobs(name)').order('name')
       .then(({ data, error: err }) => {
-        if (err) { setMoveError(err.message); setMoveOptions([]); return }
-        setMoveOptions((data || [])
-          .filter(p => p.id !== page.project_id)
-          .map(p => ({ id: p.id, name: p.name, jobName: p.jobs?.name || '—' })))
+        if (err) { setScopeOptionsError(err.message); setScopeOptions([]); return }
+        setScopeOptions((data || []).map(p => ({ id: p.id, name: p.name, jobName: p.jobs?.name || '—' })))
       })
   }
 
+  function openMove() { setMoveOpen(true); loadScopeOptions() }
+  function openCopy() { setCopyOpen(true); loadScopeOptions() }
+
+  // Duplicates one Storage object rather than handing out the same path to
+  // two different pages/sessions — otherwise deleting either one later
+  // would remove the file out from under the other. data:/blob: values are
+  // already self-contained (old inline rows, or an upload that failed and
+  // fell back to one — see Canvas.jsx's uploadCanvasToStorage) and get
+  // reused as-is; there's nothing to duplicate.
+  async function copyStorageFile(stored, newPath) {
+    if (!stored) return null
+    if (stored.startsWith('data:') || stored.startsWith('blob:')) return stored
+    const { error: err } = await supabase.storage.from('floor-plans').copy(storagePathFrom(stored), newPath)
+    if (err) { console.warn('[CopySheet] storage copy failed:', stored, '->', newPath, err); return null }
+    return newPath
+  }
+
+  async function doCopy() {
+    const target = scopeOptions?.find(o => o.id === copyTarget)
+    if (!target) return
+    setCopying(true)
+    setCopyError('')
+    setCopySuccess('')
+    try {
+      const ext = (storagePathFrom(page.floor_plan_url) || '').split('.').pop() || 'bin'
+      const newFloorPlanUrl = await copyStorageFile(page.floor_plan_url, `${copyTarget}/${Date.now()}.${ext}`)
+
+      // Deliberately NOT copying tile_meta/tile_status — duplicating an
+      // entire tile pyramid (potentially thousands of small files across
+      // several zoom levels) file-by-file would be slow and fragile. The
+      // new sheet just starts untiled, exactly like any freshly-imported
+      // one — the existing "Tile" button already handles that state.
+      const { data: newPage, error: insErr } = await supabase.from('pages').insert({
+        project_id: copyTarget,
+        name: page.name,
+        floor_plan_url: newFloorPlanUrl,
+        scale_pixels_per_foot: page.scale_pixels_per_foot,
+        ppi: page.ppi,
+        pixels_per_foot: page.pixels_per_foot,
+        calibrated: page.calibrated,
+        scale: page.scale,
+        unit_of_measure: page.unit_of_measure,
+        daily_target: page.daily_target,
+        total_target: page.total_target,
+      }).select().single()
+      if (insErr) throw insErr
+
+      const { data: tagRows } = await supabase.from('page_tags').select('tag_id').eq('page_id', page.id)
+      if (tagRows?.length) {
+        await supabase.from('page_tags').insert(tagRows.map(t => ({ page_id: newPage.id, tag_id: t.tag_id })))
+      }
+
+      if (copyIncludeSessions) {
+        const { data: sourceSessions } = await supabase.from('sessions').select('*').eq('page_id', page.id)
+        for (const [i, s] of (sourceSessions || []).entries()) {
+          const key = `${Date.now()}_${i}`
+          const newHl = await copyStorageFile(s.highlight_data, `${copyTarget}/sessions/${newPage.id}/${key}_hl.png`)
+          const newPen = s.pen_data ? await copyStorageFile(s.pen_data, `${copyTarget}/sessions/${newPage.id}/${key}_pen.png`) : null
+          const newPhotos = (await Promise.all(
+            (s.photos || []).map((p, pi) => {
+              const photoExt = (storagePathFrom(p) || '').split('.').pop() || 'jpg'
+              return copyStorageFile(p, `${copyTarget}/sessions/${newPage.id}/${key}_photo${pi}.${photoExt}`)
+            })
+          )).filter(Boolean)
+          const { id, page_id, project_id, created_at, updated_at, ...rest } = s
+          await supabase.from('sessions').insert({
+            ...rest,
+            page_id: newPage.id,
+            project_id: copyTarget,
+            highlight_data: newHl,
+            pen_data: newPen,
+            photos: newPhotos,
+          })
+        }
+      }
+
+      setCopySuccess(`Copied to ${target.jobName} › ${target.name}.`)
+      onCopied(newPage, copyTarget)
+    } catch (err) {
+      setCopyError(err.message || 'Failed to copy sheet.')
+    } finally {
+      setCopying(false)
+    }
+  }
+
   async function doMove() {
-    const target = moveOptions?.find(o => o.id === moveTarget)
+    const target = scopeOptions?.find(o => o.id === moveTarget)
     if (!target) return
     if (!confirm(`Move "${page.name}" to ${target.jobName} › ${target.name}? It will no longer appear in this scope.`)) return
     setMoving(true)
@@ -277,6 +379,11 @@ function PageSettingsModal({ page, onClose, onSaved, onMoved }) {
     try {
       const { error: err } = await supabase.from('pages').update({ project_id: moveTarget }).eq('id', page.id)
       if (err) throw err
+      // sessions carries its own (redundant) project_id column alongside
+      // page_id — nothing else in the app reads it today, but leaving it
+      // pointing at the scope this sheet just left would be stale, wrong
+      // data sitting in the DB waiting to confuse a future query.
+      await supabase.from('sessions').update({ project_id: moveTarget }).eq('page_id', page.id)
       onMoved()
       onClose()
     } catch (err) {
@@ -402,38 +509,38 @@ function PageSettingsModal({ page, onClose, onSaved, onMoved }) {
           </button>
         </div>
 
-        <div className="mb-4 pb-4 border-b border-border">
-          <label className="label">Location</label>
-          <p className="text-sm text-gray-700 dark:text-gray-300">
-            {location ? <>{location.jobName} <span className="text-muted">›</span> {location.scopeName}</> : 'Loading…'}
-          </p>
-          {!moveOpen ? (
-            <button type="button" onClick={openMove} className="text-xs text-accent hover:underline mt-1">
-              Move to a different scope…
-            </button>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {moveOptions === null ? (
+        <div className="mb-4 pb-4 border-b border-border space-y-3">
+          <div>
+            <label className="label">Location</label>
+            <p className="text-sm text-gray-700 dark:text-gray-300">
+              {location ? <>{location.jobName} <span className="text-muted">›</span> {location.scopeName}</> : 'Loading…'}
+            </p>
+          </div>
+
+          {!moveOpen && !copyOpen && (
+            <div className="flex gap-4">
+              <button type="button" onClick={openMove} className="text-xs text-accent hover:underline">Move to a different scope…</button>
+              <button type="button" onClick={openCopy} className="text-xs text-accent hover:underline">Copy to a scope…</button>
+            </div>
+          )}
+
+          {moveOpen && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">Move "{page.name}" — it will no longer appear in this scope.</p>
+              {scopeOptions === null ? (
                 <p className="text-xs text-muted">Loading scopes…</p>
-              ) : moveOptions.length === 0 ? (
-                <p className="text-xs text-muted">No other scopes to move this sheet to.</p>
               ) : (
                 <>
                   <select className="input" value={moveTarget} onChange={e => setMoveTarget(e.target.value)}>
                     <option value="">Choose a scope…</option>
-                    {Object.entries(
-                      moveOptions.reduce((groups, o) => {
-                        (groups[o.jobName] ||= []).push(o)
-                        return groups
-                      }, {})
-                    ).map(([jobName, scopes]) => (
+                    {groupedByJob(scopeOptions.filter(o => o.id !== page.project_id)).map(([jobName, scopes]) => (
                       <optgroup key={jobName} label={jobName}>
                         {scopes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </optgroup>
                     ))}
                   </select>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => { setMoveOpen(false); setMoveTarget('') }} disabled={moving} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
+                    <button type="button" onClick={() => { setMoveOpen(false); setMoveTarget(''); setMoveError('') }} disabled={moving} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
                     <button type="button" onClick={doMove} disabled={moving || !moveTarget} className="btn-primary flex-1 text-xs py-1.5">
                       {moving ? 'Moving…' : 'Move Sheet'}
                     </button>
@@ -443,6 +550,44 @@ function PageSettingsModal({ page, onClose, onSaved, onMoved }) {
               {moveError && <p className="text-xs text-red-500">{moveError}</p>}
             </div>
           )}
+
+          {copyOpen && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">Copy "{page.name}" as a new sheet — the original is untouched.</p>
+              {scopeOptions === null ? (
+                <p className="text-xs text-muted">Loading scopes…</p>
+              ) : (
+                <>
+                  <select className="input" value={copyTarget} onChange={e => setCopyTarget(e.target.value)}>
+                    <option value="">Choose a scope…</option>
+                    {groupedByJob(scopeOptions).map(([jobName, scopes]) => (
+                      <optgroup key={jobName} label={jobName}>
+                        {scopes.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}{s.id === page.project_id ? ' (this scope)' : ''}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <label className="flex items-center gap-2 text-xs text-muted">
+                    <input type="checkbox" checked={copyIncludeSessions} onChange={e => setCopyIncludeSessions(e.target.checked)} />
+                    Also copy existing sessions (strokes, highlights, counts, photos)
+                  </label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setCopyOpen(false); setCopyTarget(''); setCopyError(''); setCopySuccess(''); setCopyIncludeSessions(false) }} disabled={copying} className="btn-secondary flex-1 text-xs py-1.5">
+                      {copySuccess ? 'Done' : 'Cancel'}
+                    </button>
+                    <button type="button" onClick={doCopy} disabled={copying || !copyTarget} className="btn-primary flex-1 text-xs py-1.5">
+                      {copying ? 'Copying…' : 'Copy Sheet'}
+                    </button>
+                  </div>
+                </>
+              )}
+              {copyError && <p className="text-xs text-red-500">{copyError}</p>}
+              {copySuccess && <p className="text-xs text-accent">{copySuccess}</p>}
+            </div>
+          )}
+
+          {scopeOptionsError && <p className="text-xs text-red-500">{scopeOptionsError}</p>}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -2030,6 +2175,12 @@ export default function ScopeDetail() {
               return remaining
             })
             setTodaySessions(ts => ts.filter(s => s.page_id !== pageSettingsTarget.id))
+          }}
+          onCopied={(newPage, targetProjectId) => {
+            // Only this scope's own view needs refreshing — a copy sent to
+            // a different scope has nothing to show here until you're
+            // actually looking at that scope.
+            if (targetProjectId === projectId) loadData()
           }}
         />
       )}
