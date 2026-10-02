@@ -1803,17 +1803,17 @@ export default function ScopeDetail() {
                   return (
                     <div key={page.id} className="shrink-0 group/tab relative">
                       {isEditingThis ? (
-                        <div className="flex flex-col items-center gap-1" style={{ width: 120 }}>
+                        <div className="flex flex-col items-center gap-2" style={{ width: 150 }}>
                           <input
                             autoFocus
-                            className="text-xs bg-surface-3 border border-accent/50 rounded px-2 py-1 w-full text-gray-900 dark:text-white text-center"
+                            className="text-sm bg-surface-3 border-2 border-accent/50 rounded-lg px-2.5 py-2 w-full text-gray-900 dark:text-white text-center"
                             value={editingPageName}
                             onChange={e => setEditingPageName(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') savePageRename(page); if (e.key === 'Escape') setEditingPageId(null) }}
                           />
-                          <div className="flex gap-1">
-                            <button onClick={() => savePageRename(page)} className="text-accent text-xs">Save</button>
-                            <button onClick={() => setEditingPageId(null)} className="text-muted text-xs">Cancel</button>
+                          <div className="flex gap-2">
+                            <button onClick={() => savePageRename(page)} className="px-3 py-1.5 rounded-lg bg-accent/15 text-accent text-xs font-semibold">Save</button>
+                            <button onClick={() => setEditingPageId(null)} className="px-3 py-1.5 rounded-lg bg-surface-3 text-muted text-xs font-semibold">Cancel</button>
                           </div>
                         </div>
                       ) : (
@@ -1877,7 +1877,7 @@ export default function ScopeDetail() {
                   )
                 })}
               </div>
-              <p className="pt-2 text-xs text-muted">Double-click to open</p>
+              {!editingPageId && <p className="pt-2 text-xs text-muted">Double-click to open</p>}
               </div>
             ) : (
               <div className="text-center py-16">
