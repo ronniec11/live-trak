@@ -2500,7 +2500,9 @@ export default function Canvas() {
     function edgePanEligible() {
       return (tool === 'rect' && !!rectHandle) ||
              (tool === 'poly' && (!!polyDragMode || (activePoly && !activePoly.closed))) ||
-             (tool === 'lf' && (!!lfDragMode || (activeLFLine && !activeLFLine.finished)))
+             (tool === 'lf' && (!!lfDragMode || (activeLFLine && !activeLFLine.finished))) ||
+             (tool === 'text' && (!!creatingTextBox || !!textRotateBoxId || !!textResizeBoxId || !!textDragBoxId)) ||
+             (tool === 'erase' && (isPainting || touchPainting))
     }
 
     // Re-applies whichever shape is currently active at the given (screen-
@@ -2573,6 +2575,47 @@ export default function Canvas() {
           previewPos = snapToAngle({x: last.x * z + p.x, y: last.y * z + p.y}, pos)
         }
         drawActiveLFPreview(previewPos)
+        return
+      }
+      if (tool === 'text' && creatingTextBox) {
+        const pt = s2i(pos.x, pos.y)
+        creatingTextBox.minX = Math.min(textCreateFixed.x, pt.x); creatingTextBox.maxX = Math.max(textCreateFixed.x, pt.x)
+        creatingTextBox.minY = Math.min(textCreateFixed.y, pt.y); creatingTextBox.maxY = Math.max(textCreateFixed.y, pt.y)
+        drawActiveTextBoxPreview()
+        return
+      }
+      if (tool === 'text' && textRotateBoxId) {
+        if (liveTextLabels.some(t => t.id === textRotateBoxId)) {
+          rotateTextBox(textRotateBoxId, pos.x, pos.y, shiftKey)
+          drawMarkersLayer()
+        }
+        return
+      }
+      if (tool === 'text' && textResizeBoxId) {
+        if (liveTextLabels.some(t => t.id === textResizeBoxId)) {
+          const pt = s2i(pos.x, pos.y)
+          resizeTextBox(textResizeBoxId, textResizeOrig, textResizeFixed, pt)
+          drawMarkersLayer()
+        }
+        return
+      }
+      if (tool === 'text' && textDragBoxId) {
+        if (liveTextLabels.some(t => t.id === textDragBoxId) && textDragMoved) {
+          const pt = s2i(pos.x, pos.y)
+          moveTextBox(textDragBoxId, textDragOrig, pt.x - textDragStart.x, pt.y - textDragStart.y)
+          drawMarkersLayer()
+        }
+        return
+      }
+      // Erase is a continuous stroke, not a stored "shape" like the others
+      // here — continuing it while edge-panning just means keep erasing at
+      // the same screen position each tick, same as an ordinary paint move,
+      // connecting from whichever last point the ACTUAL input source (mouse
+      // vs. touch) left behind so the stroke stays unbroken through the pan.
+      if (tool === 'erase' && (isPainting || touchPainting)) {
+        const pt = s2i(pos.x, pos.y)
+        if (isPainting) { doPaint(pt.x, pt.y, lastPenPt); lastPenPt = pt }
+        else { doPaint(pt.x, pt.y, lastTouchPt); lastTouchPt = pt }
       }
     }
 
@@ -3126,6 +3169,7 @@ export default function Canvas() {
       }
       if (!touchPainting) return
       const pos = getTouchPos(e)
+      trackEdgePan(pos, false) // only actually pans for 'erase' — edgePanEligible() gates it
       const pt = s2i(pos.x, pos.y)
       doPaint(pt.x, pt.y, lastTouchPt); lastTouchPt = pt
     }
