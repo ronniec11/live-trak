@@ -24,6 +24,14 @@ export default async function handler(req, res) {
       fields: 'files(id,name,mimeType)',
       orderBy: 'folder,name',
       pageSize: '1000',
+      // Drive's API excludes Shared Drive (Team Drive) content from
+      // results by default — these two flags are both required to see it.
+      // Without them, anything living in an org's shared drive (common for
+      // a company's job/project folders, as opposed to someone's personal
+      // My Drive) silently vanishes from every listing, starred or not.
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+      corpora: 'allDrives',
     })
     const response = await fetch(url, { headers: { Authorization: `Bearer ${googleToken}` } })
     const data = await response.json()

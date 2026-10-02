@@ -36,8 +36,11 @@ export default async function handler(req, res) {
   if (!googleToken) { res.status(409).json({ error: 'not_connected', message: 'Connect your Google account first.' }); return }
 
   try {
+    // supportsAllDrives is required on every call here, not just listing —
+    // a file picked from inside a Shared Drive 404s on both the metadata
+    // lookup and the download itself without it.
     const metaResp = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType`,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType&supportsAllDrives=true`,
       { headers: { Authorization: `Bearer ${googleToken}` } }
     )
     const meta = await metaResp.json()
@@ -55,7 +58,7 @@ export default async function handler(req, res) {
 
     const downloadUrl = isNative
       ? `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`
-      : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`
+      : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`
 
     const fileResp = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${googleToken}` } })
     if (!fileResp.ok) {
