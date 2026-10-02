@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { limitError } from '../lib/planLimits'
 import { downloadVCard } from '../lib/vcard'
+import { formatPhone } from '../lib/phone'
 
 const PRESET_COLORS = [
   '#4ade80', '#22d3ee', '#f472b6', '#fb923c', '#a78bfa',
@@ -54,16 +55,6 @@ function toTitleCase(s) {
   return s.replace(/(^|\s)([a-z])/g, (_, pre, ch) => pre + ch.toUpperCase())
 }
 
-// (xxx) xxx-xxxx regardless of how it's typed — strips everything but
-// digits first, so pasting "555.123.4567" or "+1 (555) 123-4567" lands on
-// the same format as typing it digit by digit.
-function formatPhone(raw) {
-  const digits = raw.replace(/\D/g, '').slice(0, 10)
-  if (digits.length === 0) return ''
-  if (digits.length < 4) return `(${digits}`
-  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
-  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-}
 
 function PersonModal({ person, currentUserId, currentUserOrgId, inviterName, organizationName, org, activeUserCount, onClose, onSaved }) {
   const isEdit = !!person
@@ -375,7 +366,7 @@ function PersonCard({ person, currentUserId, viewerIsAdmin, onClose, onEdit, onR
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
               </svg>
-              <span className="truncate">{person.phone}</span>
+              <span className="truncate">{formatPhone(person.phone)}</span>
             </a>
           )}
           {person.company && (
@@ -638,7 +629,7 @@ export default function Team() {
                       </span>
                     </div>
                     <p className="text-xs text-muted truncate">
-                      {p.email}{p.phone ? ` · ${p.phone}` : ''}{p.company ? ` · ${p.company}` : ''}
+                      {p.email}{p.phone ? ` · ${formatPhone(p.phone)}` : ''}{p.company ? ` · ${p.company}` : ''}
                     </p>
                   </div>
                   <span className="text-xs text-muted capitalize shrink-0">{ROLE_LABELS[p.role] || p.role}</span>

@@ -1,3 +1,5 @@
+import { formatPhone } from './phone'
+
 // Builds a standard vCard from a profile-shaped object (full_name/
 // company/phone/email) and opens it — shared by every "download this
 // person's contact" button (MemberCardModal, Team.jsx's PersonCard) so
@@ -36,7 +38,7 @@ export function downloadVCard(person) {
   const [given, ...rest] = displayName.trim().split(/\s+/)
   lines.push(`N:${rest.join(' ')};${given};;;`)
   if (person.company) lines.push(`ORG:${person.company}`)
-  if (person.phone) lines.push(`TEL;TYPE=CELL,VOICE:${person.phone}`)
+  if (person.phone) lines.push(`TEL;TYPE=CELL,VOICE:${formatPhone(person.phone)}`)
   if (person.email) lines.push(`EMAIL;TYPE=INTERNET:${person.email}`)
   lines.push('END:VCARD')
   const blob = new Blob([lines.join('\r\n')], { type: 'text/vcard;charset=utf-8' })

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { formatPhone } from '../lib/phone'
 
 const TIMEZONE_OPTIONS = [
   { value: 'America/New_York', label: 'Eastern (ET)' },
@@ -193,7 +194,7 @@ function CompanyProfileCard({ org, onSaved }) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Phone</label>
-            <input className="input" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(555) 555-5555" />
+            <input className="input" type="tel" value={phone} onChange={e => setPhone(formatPhone(e.target.value))} placeholder="(555) 555-5555" />
           </div>
           <div>
             <label className="label">Website</label>
