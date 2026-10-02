@@ -503,6 +503,11 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
       } else if (view.type === 'accProjects') {
         data = await authedFetch(`/api/autodesk/projects?hubId=${encodeURIComponent(view.hubId)}`)
         setItems((data.data || []).map(p => ({ id: p.id, name: p.attributes?.name || 'Project', kind: 'accProject' })))
+      } else if (view.type === 'projectRoot') {
+        setItems([
+          { id: 'sheets', name: 'Sheets', kind: 'sheetsRoot' },
+          { id: 'files', name: 'Files', kind: 'topFolders' },
+        ])
       } else if (view.type === 'topFolders') {
         data = await authedFetch(`/api/autodesk/folders?hubId=${encodeURIComponent(view.hubId)}&projectId=${encodeURIComponent(view.projectId)}`)
         setItems((data.data || []).map(f => ({ id: f.id, name: f.attributes?.displayName || 'Folder', kind: 'folder' })))
@@ -513,8 +518,17 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
           name: e.attributes?.displayName || 'Untitled',
           kind: e.type === 'folders' ? 'folder' : 'file',
         })))
+      } else if (view.type === 'sheets') {
+        data = await authedFetch(`/api/autodesk/acc-sheets?projectId=${encodeURIComponent(view.projectId)}`)
+        const list = data?.results || data?.data || (Array.isArray(data) ? data : [])
+        setItems(list.map(s => ({
+          id: s.id,
+          name: s.title || s.name || s.sheetNumber || 'Untitled sheet',
+          kind: 'sheet',
+        })))
+        if (!list.length) setRawResponse(data)
       }
-      if (!data?.data?.length) setRawResponse(data)
+      if (view.type !== 'sheets' && view.type !== 'projectRoot' && !data?.data?.length) setRawResponse(data)
     } catch (err) {
       setError(err.message)
       setItems([])
@@ -540,14 +554,22 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
       setCrumbs(c => [...c, { label: entry.name, view }])
       loadView(view)
     } else if (entry.kind === 'accProject') {
-      const view = { type: 'topFolders', hubId: currentView.hubId, projectId: entry.id }
+      const view = { type: 'projectRoot', hubId: currentView.hubId, projectId: entry.id }
+      setCrumbs(c => [...c, { label: entry.name, view }])
+      loadView(view)
+    } else if (entry.kind === 'sheetsRoot') {
+      const view = { type: 'sheets', projectId: currentView.projectId }
+      setCrumbs(c => [...c, { label: entry.name, view }])
+      loadView(view)
+    } else if (entry.kind === 'topFolders') {
+      const view = { type: 'topFolders', hubId: currentView.hubId, projectId: currentView.projectId }
       setCrumbs(c => [...c, { label: entry.name, view }])
       loadView(view)
     } else if (entry.kind === 'folder') {
       const view = { type: 'folder', projectId: currentView.projectId, folderId: entry.id }
       setCrumbs(c => [...c, { label: entry.name, view }])
       loadView(view)
-    } else if (entry.kind === 'file') {
+    } else if (entry.kind === 'file' || entry.kind === 'sheet') {
       setPicked(entry)
       setPageName(entry.name.replace(/\.[^.]+$/, ''))
     }
@@ -565,9 +587,13 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
     setError('')
     try {
       setImportStep('Locating file on Autodesk…')
-      const { url, name: fileName } = await authedFetch(
-        `/api/autodesk/download?projectId=${encodeURIComponent(currentView.projectId)}&itemId=${encodeURIComponent(picked.id)}`
-      )
+      const { url, name: fileName } = picked.kind === 'sheet'
+        ? await authedFetch(
+            `/api/autodesk/sheet-download?projectId=${encodeURIComponent(currentView.projectId)}&sheetId=${encodeURIComponent(picked.id)}`
+          )
+        : await authedFetch(
+            `/api/autodesk/download?projectId=${encodeURIComponent(currentView.projectId)}&itemId=${encodeURIComponent(picked.id)}`
+          )
       setImportStep('Downloading from Autodesk…')
       const fileResp = await fetch(url)
       if (!fileResp.ok) throw new Error('Failed to download the file from Autodesk.')
@@ -657,7 +683,7 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
                   className="w-full text-left px-3 py-2.5 text-sm hover:bg-surface-2 transition-colors flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    {entry.kind === 'file' ? (
+                    {entry.kind === 'file' || entry.kind === 'sheet' ? (
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                     ) : (
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v6.75a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25v-4.5zm0 0V6a2.25 2.25 0 012.25-2.25h5.379a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H19.5A2.25 2.25 0 0121.75 9v.75" />
