@@ -689,8 +689,11 @@ function ImportAutodeskModal({ projectId, onClose, onCreated }) {
 // API: Drive is just folders of files/folders, no hub/project layers to
 // drill through first, so there's one view (a folder's contents) instead
 // of several.
+const DRIVE_ROOT_VIEW = { label: 'My Drive', type: 'folder', folderId: 'root' }
+const DRIVE_STARRED_VIEW = { label: '★ Starred', type: 'starred' }
+
 function ImportGoogleDriveModal({ projectId, onClose, onCreated }) {
-  const [crumbs, setCrumbs] = useState([{ label: 'My Drive', folderId: 'root' }])
+  const [crumbs, setCrumbs] = useState([DRIVE_ROOT_VIEW])
   const [items, setItems] = useState([])
   const [loadingItems, setLoadingItems] = useState(true)
   const [error, setError] = useState('')
@@ -708,11 +711,12 @@ function ImportGoogleDriveModal({ projectId, onClose, onCreated }) {
     return data
   }
 
-  async function loadFolder(folderId) {
+  async function loadView(view) {
     setLoadingItems(true)
     setError('')
     try {
-      const data = await authedFetch(`/api/google/list?folderId=${encodeURIComponent(folderId)}`)
+      const qs = view.type === 'starred' ? 'starred=1' : `folderId=${encodeURIComponent(view.folderId)}`
+      const data = await authedFetch(`/api/google/list?${qs}`)
       setItems(data.data || [])
     } catch (err) {
       setError(err.message)
@@ -723,14 +727,14 @@ function ImportGoogleDriveModal({ projectId, onClose, onCreated }) {
   }
 
   useEffect(() => {
-    loadFolder('root')
+    loadView(DRIVE_ROOT_VIEW)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function enter(entry) {
     if (entry.kind === 'folder') {
-      setCrumbs(c => [...c, { label: entry.name, folderId: entry.id }])
-      loadFolder(entry.id)
+      setCrumbs(c => [...c, { label: entry.name, type: 'folder', folderId: entry.id }])
+      loadView({ type: 'folder', folderId: entry.id })
     } else {
       setPicked(entry)
       setPageName(entry.name.replace(/\.[^.]+$/, ''))
@@ -740,7 +744,15 @@ function ImportGoogleDriveModal({ projectId, onClose, onCreated }) {
   function goTo(idx) {
     const next = crumbs.slice(0, idx + 1)
     setCrumbs(next)
-    loadFolder(next[next.length - 1].folderId)
+    loadView(next[next.length - 1])
+  }
+
+  // Jumps straight to Starred/My Drive from anywhere, resetting the trail —
+  // a shortcut for the common case (a sheet you star once, then reuse
+  // every time) instead of re-walking the folder structure each import.
+  function jumpTo(view) {
+    setCrumbs([view])
+    loadView(view)
   }
 
   async function doImport() {
@@ -808,6 +820,23 @@ function ImportGoogleDriveModal({ projectId, onClose, onCreated }) {
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="flex gap-2">
+              {[DRIVE_ROOT_VIEW, DRIVE_STARRED_VIEW].map(v => (
+                <button
+                  key={v.type}
+                  type="button"
+                  onClick={() => jumpTo(v)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                    crumbs[0].type === v.type
+                      ? 'bg-accent/10 border-accent text-accent font-medium'
+                      : 'border-border text-muted hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-1 flex-wrap text-xs text-muted">
               {crumbs.map((c, i) => (
                 <span key={i} className="flex items-center gap-1">

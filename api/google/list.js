@@ -1,6 +1,8 @@
-// Lists the contents of a Google Drive folder (default: "My Drive" root).
-// Unlike Autodesk's hub/project/folder hierarchy, Drive is just folders
-// containing files and other folders — a single flat endpoint is enough
+// Lists the contents of a Google Drive folder (default: "My Drive" root),
+// or — with ?starred=1 — every file/folder the user has starred in Drive,
+// regardless of which folder it actually lives in. Unlike Autodesk's hub/
+// project/folder hierarchy, Drive is just folders containing files and
+// other folders — a single flat endpoint, switched by query, is enough
 // for the whole browsing experience.
 import { getSupabaseUser, getValidGoogleToken } from './_lib.js'
 
@@ -10,6 +12,7 @@ export default async function handler(req, res) {
   const user = await getSupabaseUser(req)
   if (!user) { res.status(401).json({ error: 'Sign in to Live-Trak first.' }); return }
 
+  const starred = req.query.starred === '1'
   const folderId = req.query.folderId || 'root'
 
   const googleToken = await getValidGoogleToken(user.id)
@@ -17,7 +20,7 @@ export default async function handler(req, res) {
 
   try {
     const url = 'https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
+      q: starred ? 'starred = true and trashed = false' : `'${folderId}' in parents and trashed = false`,
       fields: 'files(id,name,mimeType)',
       orderBy: 'folder,name',
       pageSize: '1000',
