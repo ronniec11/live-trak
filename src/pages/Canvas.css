@@ -33,6 +33,32 @@
   --ct-track-blue: #1e3a5f;
 }
 
+/* ── PAGE ROOT ── */
+/* height: 100vh, then 100dvh overriding it — NOT a single inline style
+   (which is what this was before), because that's the only way to get a
+   safe fallback: a browser that doesn't understand 100dvh yet just
+   ignores that whole declaration and keeps the 100vh line above it,
+   which plain inline-style JS objects can't express (one JS key can only
+   ever hold one value, so a second `height` would just silently
+   overwrite the first in JS before it ever reaches the DOM).
+   100vh on iOS Safari is measured against the LARGEST possible viewport,
+   as if its address bar/toolbar were already collapsed — when it's
+   actually showing (e.g. right after opening this page), the real
+   visible area is shorter than that, so the page's bottom edge (part of
+   the sidebar, the canvas's own bottom, the Save/Undo/History row) was
+   rendering underneath Safari's own chrome, clipped off and
+   unreachable — "the canvas doesn't take up the whole screen". 100dvh
+   tracks the ACTUAL visible viewport continuously, growing and shrinking
+   live as Safari's chrome shows/hides, so this always fills exactly what's
+   actually visible instead of guessing at the chrome-collapsed size. */
+.ct-page-root {
+  display: flex; flex-direction: column; overflow: hidden;
+  font-family: system-ui, sans-serif;
+  background: var(--ct-bg); color: var(--ct-text);
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* ── HEADER ── */
 .ct-header {
   background: var(--ct-surface); border-bottom: 1px solid var(--ct-border);

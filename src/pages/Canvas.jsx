@@ -6660,7 +6660,7 @@ export default function Canvas() {
   }, [sidebarCollapsed])
 
   return (
-    <div style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden',fontFamily:'system-ui,sans-serif',background:'var(--ct-bg)',color:'var(--ct-text)'}}>
+    <div className="ct-page-root">
 
       <div className="ct-header">
         <button className="ct-hbtn" onClick={() => navigate(-1)} style={{flexShrink:0}}>← Back</button>
