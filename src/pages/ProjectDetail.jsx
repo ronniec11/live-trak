@@ -1060,13 +1060,20 @@ export default function ProjectDetail() {
           {scopeReorderError} <strong>(tap to dismiss)</strong>
         </div>
       )}
-      {/* Main column and sidebar scroll independently of each other (same
-          technique as the scope dashboard, ScopeDetail.jsx) — each is its
-          own overflow-auto panel inside a fixed-height row, instead of the
-          whole page scrolling as one, which used to carry the sidebar
-          (weather/map/team) away with the main content. */}
-      <div className="flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
-        <div className="flex-1 overflow-auto">
+      {/* Main column and sidebar scroll independently of each other on lg+
+          (same technique as the scope dashboard, ScopeDetail.jsx) — each is
+          its own overflow-auto panel inside a fixed-height row, instead of
+          the whole page scrolling as one, which used to carry the sidebar
+          (weather/map/team) away with the main content. Below lg, this is
+          OFF (just lg: — this used to apply unconditionally): the
+          sidebar's own content easily needs more height than the viewport,
+          and with shrink-0 in a fixed-height flex-col row it claimed
+          however much it needed, squeezing the main column (the actual
+          Scopes list) down into whatever sliver was left, scrollable in a
+          tiny window of its own. Below lg this is now one normal page
+          scroll instead. */}
+      <div className="flex flex-col lg:flex-row lg:h-[calc(100vh-3.5rem)]">
+        <div className="flex-1 lg:overflow-auto">
           {offlineMode && (
             <div className="mx-4 mt-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
               No connection — showing the copy downloaded for offline use. Open a scope to keep working; it'll sync once you're back online.
@@ -1223,7 +1230,7 @@ export default function ProjectDetail() {
             the outer row above) rather than scrolling away with the main
             content, plus a left border on lg so it reads as its own
             column, same as the scope dashboard's sidebar. */}
-        <div className="lg:w-72 shrink-0 overflow-auto lg:border-l lg:border-border">
+        <div className="lg:w-72 shrink-0 lg:overflow-auto lg:border-l lg:border-border">
           <div className="p-4 sm:p-6 space-y-4">
             <WeatherWidget location={location} />
             <LocationMap location={location} />

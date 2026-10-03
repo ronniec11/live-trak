@@ -1656,13 +1656,23 @@ export default function ScopeDetail() {
 
   return (
     <Layout>
-      {/* Main column and sidebar scroll independently of each other (same
-          technique as the job dashboard, ProjectDetail.jsx) — each is its
-          own overflow-auto panel inside a fixed-height row, instead of the
-          whole page scrolling as one. */}
-      <div className="flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
+      {/* Main column and sidebar scroll independently of each other on lg+
+          (same technique as the job dashboard, ProjectDetail.jsx) — each is
+          its own overflow-auto panel inside a fixed-height row, instead of
+          the whole page scrolling as one. Below lg, the fixed height and
+          independent-scroll panels are OFF (just lg: — this used to apply
+          unconditionally): the sidebar's content (weather, tags, activity,
+          sessions, members — easily taller than the screen on its own) sat
+          in a flex-col row next to the main column with shrink-0 and no
+          flex-grow, so it claimed however much height its content actually
+          needed, in a container that couldn't grow past the viewport —
+          squeezing the main column (the actual floor plans) down into
+          whatever sliver was left, scrollable in a tiny window of its own.
+          A normal single-column page scroll (header → main → sidebar, one
+          after another) is what a phone screen actually wants here. */}
+      <div className="flex flex-col lg:flex-row lg:h-[calc(100vh-3.5rem)]">
         {/* Main area */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 lg:overflow-auto">
           {offlineMode && (
             <div className="mx-4 mt-4 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-700 dark:text-blue-300">
               No connection — showing the copy downloaded for offline use. Open a sheet to keep working; it'll sync once you're back online.
@@ -2009,7 +2019,7 @@ export default function ScopeDetail() {
         {/* Sidebar — its own scroll panel (see the row's comment above),
             plus a left border on lg so it reads as its own column rather
             than an extension of the main content it sits beside. */}
-        <div className="lg:w-72 shrink-0 overflow-auto lg:border-l lg:border-border">
+        <div className="lg:w-72 shrink-0 lg:overflow-auto lg:border-l lg:border-border">
           <div className="p-4 sm:p-6 space-y-4">
             <WeatherWidget location={weatherLocation} />
             {/* Scope Tags — rolled up from whichever of this scope's
