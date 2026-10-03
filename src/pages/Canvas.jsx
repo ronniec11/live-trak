@@ -13,6 +13,13 @@ import { limitError, limitsForPlan, orgIsUnlimited } from '../lib/planLimits'
 import ProfileModal from '../components/ProfileModal'
 import './Canvas.css'
 
+// Module-level (not per-render) — the device doesn't change mid-session, and
+// this needs to be readable from the sidebar's JSX className below, not just
+// from inside the big canvas-setup effect further down (which does its own,
+// separate isSafari/isIPad check for unrelated reasons — memory limits,
+// decode timing — so it's left alone rather than wired to this constant).
+const IS_IPAD = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+
 // NOTE: Run this migration in Supabase SQL editor before using count tool:
 // ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS count_data jsonb DEFAULT '[]';
 //
@@ -6842,7 +6849,7 @@ export default function Canvas() {
           </button>
         </div>
 
-        <div className={`ct-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+        <div className={`ct-sidebar${sidebarCollapsed ? ' collapsed' : ''}${IS_IPAD ? ' ipad-fixed' : ''}`}>
           <div className="ct-sb-sec">
             <div className="ct-sb-ttl">Tool</div>
             <div className="ct-tool-row">

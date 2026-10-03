@@ -246,10 +246,24 @@
 .ct-progress-bar-fill { height: 100%; background: #facc15; border-radius: 4px; transition: width 0.4s ease; }
 .ct-progress-bar-fill.over { background: var(--ct-accent); }
 
+/* iPad has the vertical room to show the tool palette, color grid and
+   Daily Progress at their natural height without squeezing the session
+   list the way a phone screen does — so there, undo the whole-column
+   scroll above and go back to a fixed control panel with only the
+   session list scrolling underneath it. .ct-sidebar's own overflow-y:auto
+   is overridden to hidden so the column itself stops scrolling, and
+   .ct-sessions-wrap becomes the one flexible, scrollable region instead
+   (same shape this had before the whole-column-scroll change — see that
+   commit's own comments for why phones needed it changed away from this). */
+.ct-sidebar.ipad-fixed { overflow-y: hidden; }
+.ct-sidebar.ipad-fixed .ct-sessions-wrap { flex: 1; overflow-y: auto; min-height: 0; }
+.ct-sidebar.ipad-fixed .ct-sessions-wrap::-webkit-scrollbar { width: 4px; }
+.ct-sidebar.ipad-fixed .ct-sessions-wrap::-webkit-scrollbar-thumb { background: var(--ct-border); border-radius: 2px; }
+
 /* ── SESSIONS ── */
-/* No longer its own flex:1/overflow-y:auto region — .ct-sidebar itself
-   scrolls now (see its own comment), so this just takes whatever height
-   its content naturally needs. */
+/* No longer its own flex:1/overflow-y:auto region on phones — .ct-sidebar
+   itself scrolls there now (see its own comment); iPad overrides this back
+   to a flexible scroll region just above. */
 .ct-sessions-wrap { padding: 9px 11px; }
 .ct-empty-msg { font-size: 12px; color: var(--ct-muted); text-align: center; padding: 20px 0; line-height: 1.9; }
 .ct-scard {
