@@ -1672,17 +1672,25 @@ export default function ScopeDetail() {
               dashboard's own header (ProjectDetail.jsx), rather than a
               bordered/tinted box. */}
           <div className="px-4 sm:px-6 pt-6">
-            <div className="flex items-start gap-3 mb-6">
-              {/* Scopes are always opened from within their parent project's
-                  dashboard now, not from a standalone list — back goes there
-                  when we know it (job_id), falling back to the orphaned
-                  /scopes list only if this project somehow has none. */}
-              <button onClick={() => navigate(project?.job_id ? `/projects/${project.job_id}` : '/scopes')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                </svg>
-              </button>
-              <div className="flex-1 min-w-0">
+            {/* Stacks on narrow screens (flex-col) — the action buttons used
+                to sit in the same row as the title with shrink-0, which on
+                an iPhone-width screen left the title squeezed into whatever
+                sliver was left over after three un-shrinking buttons, so it
+                wrapped one or two words per line instead of reading as a
+                normal heading. Below sm, the title gets the full row to
+                itself and the buttons wrap onto their own row underneath. */}
+            <div className="flex flex-col sm:flex-row sm:items-start gap-3 mb-6">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                {/* Scopes are always opened from within their parent project's
+                    dashboard now, not from a standalone list — back goes there
+                    when we know it (job_id), falling back to the orphaned
+                    /scopes list only if this project somehow has none. */}
+                <button onClick={() => navigate(project?.job_id ? `/projects/${project.job_id}` : '/scopes')} className="btn-ghost p-1.5 mt-0.5 shrink-0">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                  </svg>
+                </button>
+                <div className="flex-1 min-w-0">
                 {editingProjectInfo ? (
                   <div className="space-y-1.5">
                     <input
@@ -1732,8 +1740,9 @@ export default function ScopeDetail() {
                     {project.description && <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{project.description}</p>}
                   </>
                 )}
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 flex-wrap sm:shrink-0">
                 <OfflineSyncButton className="text-xs" />
                 {canManage && (
                   <>
