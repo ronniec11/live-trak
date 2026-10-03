@@ -82,7 +82,14 @@ export default function Layout({ children, fullHeight = false }) {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         style={{
-          transform: `translateY(${pullDistance}px)`,
+          // 'none' at rest, not translateY(0px) — ANY non-'none' transform
+          // on this element (even a zero one) makes it the containing
+          // block for every position:fixed descendant inside it, which is
+          // how every modal in this app is built. With that permanently
+          // on, a modal opened after scrolling main down would anchor to
+          // main's scrolled content instead of the actual screen — exactly
+          // the "modal opens off at the top, can't see it" bug this fixes.
+          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : 'none',
           transition: pullingRef.current ? 'none' : 'transform 0.2s ease-out',
         }}
       >
