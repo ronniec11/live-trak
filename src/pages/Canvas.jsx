@@ -4990,6 +4990,37 @@ export default function Canvas() {
         })
       })
 
+      // Text labels — same draw as the live canvas's own committed-label
+      // rendering (drawMarkersLayer), just driven by this export's flat
+      // `scale` factor instead of the live view's zoom/pan, and rotated the
+      // same rotate-the-canvas-around-center way for a box that's been
+      // turned with the Text tool's rotate handle.
+      sessions.forEach(s => {
+        (s.textLabels || []).forEach(t => {
+          const sx = t.minX * scale, sy = t.minY * scale
+          const boxW = (t.maxX - t.minX) * scale, boxH = (t.maxY - t.minY) * scale
+          const fontPx = Math.max(8, (t.fontSize || 24) * scale)
+          ec.save()
+          if (t.rotation) {
+            const cx = (t.minX + t.maxX) / 2 * scale, cy = (t.minY + t.maxY) / 2 * scale
+            ec.translate(cx, cy)
+            ec.rotate(t.rotation)
+            ec.translate(-cx, -cy)
+          }
+          ec.font = `bold ${fontPx}px system-ui,sans-serif`
+          ec.textAlign = 'left'
+          ec.textBaseline = 'top'
+          ec.fillStyle = t.color || '#000000'
+          const lines = wrapTextLines(ec, t.text, Math.max(10, boxW))
+          const lineH = fontPx * 1.2
+          lines.forEach((line, i) => {
+            if (i * lineH > boxH) return // clip to the box's height, same as the live view
+            ec.fillText(line, sx, sy + i * lineH)
+          })
+          ec.restore()
+        })
+      })
+
       return exp.toDataURL('image/jpeg', SNAPSHOT_JPEG_QUALITY)
     }
     async function generateSheetReport() {
