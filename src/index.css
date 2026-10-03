@@ -60,10 +60,20 @@
     box-sizing: border-box;
   }
 
+  /* overscroll-behavior-y: none — stops the browser's OWN native
+     pull-to-refresh/elastic-bounce gesture (distinct from Layout.jsx's
+     deliberate, JS-driven pull-to-refresh on `main`, which this doesn't
+     touch). Without it, a fast gesture that momentarily escapes an
+     element's touch-action:none — e.g. a quick pinch-zoom on the Canvas
+     floor plan where a finger briefly lands outside the OSD viewer/draw
+     canvas — can rubber-band the whole page, and iOS Safari/Android
+     Chrome read that bounce-and-release at the top as "pull to refresh"
+     and reload the page out from under whatever was being edited. */
   html, body, #root {
     height: 100%;
     margin: 0;
     padding: 0;
+    overscroll-behavior-y: none;
   }
 
   body {
