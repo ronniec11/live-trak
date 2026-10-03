@@ -514,38 +514,46 @@ export default function Reports() {
               </div>
             </div>
             <div className="card overflow-x-auto">
-              <table className="w-full text-sm">
+              {/* min-w forces real column widths instead of the browser's
+                  default table behavior (shrink columns and wrap cell text
+                  to fit whatever space is available) — on a phone that was
+                  wrapping "Under Raised Floor Cleaning" etc. across 2-3
+                  lines per cell instead of letting the already-present
+                  overflow-x-auto wrapper do its job. whitespace-nowrap on
+                  every cell (below) is what actually stops the wrapping;
+                  this just gives the table enough width to not need to. */}
+              <table className="w-full min-w-[880px] text-sm">
                 <thead>
                   <tr className="text-left text-muted border-b border-border">
-                    <th className="py-2 pr-4">Person</th>
-                    {showProjectColumn && <th className="py-2 pr-4">Project</th>}
-                    <th className="py-2 pr-4">Floor Plan</th>
-                    <th className="py-2 pr-4">Date</th>
-                    <th className="py-2 pr-4">Time</th>
-                    <th className="py-2 pr-4 text-right">SF</th>
-                    <th className="py-2 pr-4 text-right">LF</th>
-                    <th className="py-2 pr-4 text-right">Count</th>
-                    <th className="py-2 pr-4 text-right">Crew</th>
-                    <th className="py-2 pr-4 text-right">Hours</th>
-                    <th className="py-2 pr-4 text-right">Total Hours</th>
-                    <th className="py-2 pr-4 text-right">SF/Person-Hr</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Person</th>
+                    {showProjectColumn && <th className="py-2 pr-4 whitespace-nowrap">Project</th>}
+                    <th className="py-2 pr-4 whitespace-nowrap">Floor Plan</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Date</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Time</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">SF</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">LF</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">Count</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">Crew</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">Hours</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">Total Hours</th>
+                    <th className="py-2 pr-4 text-right whitespace-nowrap">SF/Person-Hr</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={i} className="border-b border-border/50 text-gray-700 dark:text-gray-300">
-                      <td className="py-2 pr-4">{r.person}</td>
-                      {showProjectColumn && <td className="py-2 pr-4">{r.project}</td>}
-                      <td className="py-2 pr-4">{r.floorPlan}</td>
-                      <td className="py-2 pr-4">{r.date}</td>
-                      <td className="py-2 pr-4">{r.time}</td>
-                      <td className="py-2 pr-4 text-right">{r.sf.toLocaleString()}</td>
-                      <td className="py-2 pr-4 text-right">{r.lf ? r.lf.toLocaleString() : '—'}</td>
-                      <td className="py-2 pr-4 text-right">{r.countItems || '—'}</td>
-                      <td className="py-2 pr-4 text-right">{r.crewSize || '—'}</td>
-                      <td className="py-2 pr-4 text-right">{r.hoursWorked || '—'}</td>
-                      <td className="py-2 pr-4 text-right">{r.totalHours || '—'}</td>
-                      <td className="py-2 pr-4 text-right">{r.sfPerPersonHour || '—'}</td>
+                      <td className="py-2 pr-4 whitespace-nowrap">{r.person}</td>
+                      {showProjectColumn && <td className="py-2 pr-4 whitespace-nowrap">{r.project}</td>}
+                      <td className="py-2 pr-4 whitespace-nowrap">{r.floorPlan}</td>
+                      <td className="py-2 pr-4 whitespace-nowrap">{r.date}</td>
+                      <td className="py-2 pr-4 whitespace-nowrap">{r.time}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.sf.toLocaleString()}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.lf ? r.lf.toLocaleString() : '—'}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.countItems || '—'}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.crewSize || '—'}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.hoursWorked || '—'}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.totalHours || '—'}</td>
+                      <td className="py-2 pr-4 text-right whitespace-nowrap">{r.sfPerPersonHour || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
