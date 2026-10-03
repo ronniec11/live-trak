@@ -96,6 +96,15 @@ export default function Canvas() {
   const [canvasProfile, setCanvasProfile] = useState(null)
   const headerProfile = profile || canvasProfile
   const [showProfile, setShowProfile] = useState(false)
+  // Hides the tool/sessions sidebar so the floor plan can use the full
+  // screen width — no CSS transition on the width change (see the effect
+  // below): the drawing canvases and the OpenSeadragon viewer both need
+  // their pixel dimensions recalculated the instant the sidebar's width
+  // actually changes (onResize, already wired to the window 'resize'
+  // event for an actual window resize), and an animated width change
+  // would mean guessing when the transition finishes to do that safely
+  // instead of just reading the new size directly off the DOM.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const wrapRef          = useRef(null)
   const planRef          = useRef(null)
@@ -6592,7 +6601,7 @@ export default function Canvas() {
 
     api.current = {
       setTool, startCalib, cancelCalib,
-      doZoom, resetView,
+      doZoom, resetView, onResize,
       openHistory, closeHistory, calPrevMonth, calNextMonth, closeDailyReport, printDailyReportPDF,
       openReportSetup, closeReportSetup, setReportScope, renderReportSessionList, generateSheetReport,
       closeEditModal, saveEdit, startPaintEdit,
@@ -6641,6 +6650,14 @@ export default function Canvas() {
       if (toast) toast.remove()
     }
   }, [pageId, user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Collapsing the sidebar changes the floor plan area's actual pixel
+  // width — the drawing canvases and the OpenSeadragon viewer both size
+  // themselves off that, and only recalculate on a real window 'resize'
+  // event otherwise, which a CSS-only sidebar toggle never fires.
+  useEffect(() => {
+    api.current?.onResize?.()
+  }, [sidebarCollapsed])
 
   return (
     <div style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden',fontFamily:'system-ui,sans-serif',background:'var(--ct-bg)',color:'var(--ct-text)'}}>
@@ -6768,9 +6785,17 @@ export default function Canvas() {
             <span ref={editBannerTxtRef}>Editing session</span>
             <button className="ct-cancel-edit-btn" onClick={() => api.current.cancelSessionEdit?.()}>Cancel</button>
           </div>
+
+          <button
+            className="ct-sb-toggle"
+            onClick={() => setSidebarCollapsed(c => !c)}
+            title={sidebarCollapsed ? 'Show tools' : 'Hide tools — full-screen the floor plan'}
+          >
+            {sidebarCollapsed ? '‹' : '›'}
+          </button>
         </div>
 
-        <div className="ct-sidebar">
+        <div className={`ct-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
           <div className="ct-sb-sec">
             <div className="ct-sb-ttl">Tool</div>
             <div className="ct-tool-row">

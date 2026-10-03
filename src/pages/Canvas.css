@@ -77,6 +77,20 @@
   background-image: radial-gradient(circle, var(--ct-bg-dot) 1px, transparent 1px);
   background-size: 26px 26px;
 }
+/* Sits at the right edge of .ct-canvas-wrap — which is also exactly
+   where .ct-sidebar begins, since the two are flex row siblings — so it
+   naturally tracks the sidebar's current edge whether it's expanded or
+   collapsed (see .ct-sidebar.collapsed), no extra positioning math needed. */
+.ct-sb-toggle {
+  position: absolute; top: 50%; right: 0; transform: translateY(-50%);
+  width: 22px; height: 52px;
+  background: var(--ct-surface); border: 1px solid var(--ct-border); border-right: none;
+  border-radius: 8px 0 0 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; line-height: 1; color: var(--ct-muted);
+  cursor: pointer; z-index: 5;
+}
+.ct-sb-toggle:hover { color: var(--ct-text); border-color: var(--ct-accent); }
 .ct-upload-zone {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -147,6 +161,13 @@
    session card gets its natural height instead of being crammed; see
    .ct-sb-footer for why Save/Undo/History stay reachable regardless. */
 .ct-sidebar { width: 268px; flex-shrink: 0; background: var(--ct-surface); border-left: 1px solid var(--ct-border); display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+/* No width transition on purpose — the floor plan canvases and the
+   OpenSeadragon viewer both need to recalculate their actual pixel size
+   the instant this changes (see the sidebarCollapsed effect in
+   Canvas.jsx), and an animated collapse would mean guessing when that
+   transition finishes to do it safely instead of just reading the new
+   size directly off the DOM right after the toggle. */
+.ct-sidebar.collapsed { width: 0; min-width: 0; border-left: none; }
 .ct-sidebar::-webkit-scrollbar { width: 4px; }
 .ct-sidebar::-webkit-scrollbar-thumb { background: var(--ct-border); border-radius: 2px; }
 .ct-sb-sec { padding: 11px 13px; border-bottom: 1px solid var(--ct-border); }
