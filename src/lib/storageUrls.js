@@ -37,9 +37,51 @@ export async function resolveStorageUrl(stored, ttlSeconds = SIGNED_URL_TTL_SECO
   return data.signedUrl
 }
 
+// Shared by the two batch forms below. One real HTTP request signs every
+// Storage path at once (the Storage API's own createSignedUrls, plural) —
+// looping resolveStorageUrl() per path instead issues one round trip per
+// path, which on a page with many stored references (a long job's worth of
+// session markup, say) is the dominant cost of loading it, especially on a
+// slow mobile connection where each extra round trip's latency adds up
+// rather than overlapping. data:/blob: entries need no network call either
+// way and are passed through untouched, same as resolveStorageUrl.
+async function batchResolve(storedList, ttlSeconds) {
+  const list = storedList || []
+  const pairs = list.map(stored => ({ stored, url: null }))
+  const toSign = [] // { idx, path }
+  pairs.forEach((p, idx) => {
+    if (!p.stored) return
+    if (p.stored.startsWith('data:') || p.stored.startsWith('blob:')) { p.url = p.stored; return }
+    toSign.push({ idx, path: storagePathFrom(p.stored) })
+  })
+  if (toSign.length) {
+    const { data, error } = await supabase.storage.from('floor-plans').createSignedUrls(toSign.map(t => t.path), ttlSeconds)
+    if (error) {
+      console.error('[storageUrls] Batch sign failed:', error)
+    } else {
+      data.forEach((d, i) => { pairs[toSign[i].idx].url = d.signedUrl || null })
+    }
+  }
+  return pairs
+}
+
 // Batch form — session photo arrays are the common multi-URL case. Skips
 // nulls from failed individual signs rather than failing the whole batch.
 export async function resolveStorageUrls(storedList, ttlSeconds = SIGNED_URL_TTL_SECONDS) {
-  const resolved = await Promise.all((storedList || []).map(s => resolveStorageUrl(s, ttlSeconds)))
-  return resolved.filter(Boolean)
+  const pairs = await batchResolve(storedList, ttlSeconds)
+  return pairs.map(p => p.url).filter(Boolean)
+}
+
+// Batch form that keeps each result keyed to its original stored value
+// (rather than resolveStorageUrls' plain filtered array) — for callers that
+// need to look a resolved URL back up per source row, e.g. loading many
+// sessions' hl/pen canvases where each row's own highlight_data/pen_data
+// string is the lookup key. A failed individual sign is simply absent from
+// the map; callers already treat "no resolved URL" as the normal not-found
+// case.
+export async function resolveStorageUrlMap(storedList, ttlSeconds = SIGNED_URL_TTL_SECONDS) {
+  const pairs = await batchResolve(storedList, ttlSeconds)
+  const map = new Map()
+  for (const p of pairs) if (p.url) map.set(p.stored, p.url)
+  return map
 }

@@ -8,7 +8,7 @@ import autoTable from 'jspdf-autotable'
 import { buildTileSource, TILE_BASE_SCALE } from '../lib/tileGenerator'
 import { enqueueSessionOp, isNetworkError, syncPendingOps, getPendingOps, cancelOpsForSession } from '../lib/offlineSync'
 import { getCachedPage, getCachedProject, getCachedTilesForPage, buildOfflineTileSource, stitchTilesToImage } from '../lib/offlineCache'
-import { resolveStorageUrl } from '../lib/storageUrls'
+import { resolveStorageUrl, resolveStorageUrlMap } from '../lib/storageUrls'
 import { limitError, limitsForPlan, orgIsUnlimited } from '../lib/planLimits'
 import ProfileModal from '../components/ProfileModal'
 import './Canvas.css'
@@ -5587,6 +5587,7 @@ export default function Canvas() {
 
     async function loadSessionsFromSupabase() {
       console.log('[Canvas] Loading all sessions for page', pageId)
+      const tStart = performance.now()
       // Clear existing sessions to avoid duplicates if this is called more than once
       if (activePage) activePage.sessions = []
       // Load all sessions (not just today) for persistent markup
@@ -5595,26 +5596,44 @@ export default function Canvas() {
         .select('*, profiles(full_name, avatar_color)')
         .eq('page_id', pageId)
         .order('created_at', {ascending: true})
+      const tQuery = performance.now()
 
-      console.log('[Canvas] Supabase returned', dbSessions?.length, 'sessions, error:', error)
+      console.log('[Canvas] Supabase returned', dbSessions?.length, 'sessions, error:', error, '— query took', (tQuery - tStart).toFixed(0), 'ms')
       if (error) { console.error('[Canvas] Error loading sessions:', error); return }
       if (!dbSessions?.length) { console.log('[Canvas] No sessions found'); return }
+
+      // Legacy rows inline their markup as base64 data: URLs directly in
+      // this table instead of a Storage path (see the migration note atop
+      // this file) — the row fetch above already paid for transferring
+      // that text, so a page that's mostly legacy sessions can be slow
+      // well before any image decoding starts. This surfaces that case
+      // instead of leaving it indistinguishable from a slow decode/sign step.
+      let inlineBytes = 0, inlineCount = 0
+      for (const s of dbSessions) {
+        if (s.highlight_data?.startsWith('data:')) { inlineBytes += s.highlight_data.length; inlineCount++ }
+        if (s.pen_data?.startsWith('data:')) { inlineBytes += s.pen_data.length; inlineCount++ }
+      }
+      if (inlineCount) console.warn('[Canvas]', inlineCount, 'legacy inline data: canvases on this page —', (inlineBytes / 1024 / 1024).toFixed(1), 'MB transferred as part of the sessions query itself')
 
       console.log('[Canvas] Loading', dbSessions.length, 'sessions')
       // Each session's hl/pen canvas needs its own signed URL now (the
       // bucket is private) — signing is a network round trip, and doing it
       // one session at a time inside the loop below (as loadCanvasFromDataUrl
       // did on its own) serialized every one of those round trips, visibly
-      // slowing down a page with many sessions. Resolving them all up front,
-      // in parallel, cuts that down to one batch wait instead of N.
+      // slowing down a page with many sessions. resolveStorageUrlMap signs
+      // them all in a single Storage API call instead of one round trip per
+      // path — on a long job's worth of sessions over a mobile connection,
+      // that's the difference between one request's latency and dozens of
+      // them, even when those dozens run "in parallel" (the browser still
+      // caps concurrent connections per origin).
       const storagePaths = new Set()
       for (const dbSess of dbSessions) {
         if (dbSess.highlight_data && !dbSess.highlight_data.startsWith('data:')) storagePaths.add(dbSess.highlight_data)
         if (dbSess.pen_data && !dbSess.pen_data.startsWith('data:')) storagePaths.add(dbSess.pen_data)
       }
-      const resolvedUrls = new Map(
-        await Promise.all([...storagePaths].map(async p => [p, await resolveStorageUrl(p)]))
-      )
+      const resolvedUrls = await resolveStorageUrlMap([...storagePaths])
+      const tSigned = performance.now()
+      console.log('[Canvas] Signed', storagePaths.size, 'storage paths in', (tSigned - tQuery).toFixed(0), 'ms')
 
       // Decodes one session's hl/pen canvases plus its markup JSON into the
       // session object renderSessions/redrawAll expect, or null to skip it
@@ -5794,8 +5813,10 @@ export default function Canvas() {
       for (const session of results) {
         if (session) activePage.sessions.push(session)
       }
+      const tDecoded = performance.now()
 
-      console.log('[Canvas] Sessions loaded:', activePage.sessions.length)
+      console.log('[Canvas] Sessions loaded:', activePage.sessions.length,
+        '— decode took', (tDecoded - tSigned).toFixed(0), 'ms, total', (tDecoded - tStart).toFixed(0), 'ms')
       invalidateSessions()
       redrawAll(); renderSessions(); updateSF(); updateProgressBar(); saveDayToHistory()
       // Defensive second pass on Safari/iPad: every session's canvas is
