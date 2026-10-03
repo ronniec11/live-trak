@@ -5616,60 +5616,65 @@ export default function Canvas() {
         await Promise.all([...storagePaths].map(async p => [p, await resolveStorageUrl(p)]))
       )
 
-      for (const dbSess of dbSessions) {
-        if (deletedSessionIds.has(dbSess.id)) continue
-        let hlCanvas = null, penCanvas = null
+      // Decodes one session's hl/pen canvases plus its markup JSON into the
+      // session object renderSessions/redrawAll expect, or null to skip it
+      // (deleted, or no usable hlCanvas). id is precomputed by the caller
+      // rather than taken from sessionCounter in here, since several of
+      // these now run concurrently (see the worker pool below) and
+      // sessionCounter++ needs to stay deterministic regardless of which
+      // one finishes first.
+      async function loadOneSession(dbSess, id) {
+        if (deletedSessionIds.has(dbSess.id)) return null
+        const tw = activePage.image.width, th = activePage.image.height
+        // hl and pen used to be awaited one after the other here — no
+        // reason to serialize two independent decodes of the same session.
+        let [hlCanvas, penCanvas] = await Promise.all([
+          dbSess.highlight_data
+            ? loadCanvasFromDataUrl(dbSess.highlight_data, tw, th, resolvedUrls.get(dbSess.highlight_data))
+            : null,
+          dbSess.pen_data
+            ? loadCanvasFromDataUrl(dbSess.pen_data, tw, th, resolvedUrls.get(dbSess.pen_data))
+            : null,
+        ])
 
-        if (dbSess.highlight_data) {
-          console.log('[Canvas] Loading session markup from:', dbSess.highlight_data.substring(0, 50))
-          hlCanvas = await loadCanvasFromDataUrl(dbSess.highlight_data, activePage.image.width, activePage.image.height, resolvedUrls.get(dbSess.highlight_data))
-          console.log('[Canvas] hlCanvas result:', hlCanvas?.width, 'x', hlCanvas?.height,
-            'activePage image:', activePage.image?.width, 'x', activePage.image?.height)
-          // Legacy sessions stored highlight_data as a base64 data: URL (new
-          // sessions upload to Storage instead — see uploadCanvasToStorage).
-          // If <img src="data:..."> silently fails to decode on iPad Safari,
-          // retry via fetch()+blob, which goes through a different decode path.
-          if (!hlCanvas && dbSess.highlight_data.startsWith('data:')) {
-            console.warn('[Canvas] Data URL load failed, trying blob approach')
-            let blobUrl = null
-            try {
-              const res = await fetch(dbSess.highlight_data)
-              const blob = await res.blob()
-              const tw = activePage.image.width, th = activePage.image.height
-              // Same oversized-canvas risk as the primary path — decode
-              // straight to target size when possible, native size otherwise.
-              if (typeof createImageBitmap === 'function') {
-                const bitmap = await createImageBitmap(blob, { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high' })
-                const c = document.createElement('canvas'); c.width = tw; c.height = th
-                const cCtx = c.getContext('2d')
-                if (cCtx) cCtx.drawImage(bitmap, 0, 0)
-                bitmap.close()
-                hlCanvas = c
-              } else {
-                blobUrl = URL.createObjectURL(blob)
-                const img = new Image()
-                await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl })
-                const c = document.createElement('canvas'); c.width = img.width; c.height = img.height
-                const cCtx = c.getContext('2d')
-                if (cCtx && c.width > 0) cCtx.drawImage(img, 0, 0)
-                hlCanvas = c
-              }
-              console.log('[Canvas] Blob fallback succeeded:', hlCanvas.width, 'x', hlCanvas.height)
-            } catch (e) {
-              console.warn('[Canvas] Blob fallback also failed:', e)
-            } finally {
-              if (blobUrl) URL.revokeObjectURL(blobUrl)
+        // Legacy sessions stored highlight_data as a base64 data: URL (new
+        // sessions upload to Storage instead — see uploadCanvasToStorage).
+        // If <img src="data:..."> silently fails to decode on iPad Safari,
+        // retry via fetch()+blob, which goes through a different decode path.
+        if (!hlCanvas && dbSess.highlight_data?.startsWith('data:')) {
+          console.warn('[Canvas] Data URL load failed, trying blob approach')
+          let blobUrl = null
+          try {
+            const res = await fetch(dbSess.highlight_data)
+            const blob = await res.blob()
+            // Same oversized-canvas risk as the primary path — decode
+            // straight to target size when possible, native size otherwise.
+            if (typeof createImageBitmap === 'function') {
+              const bitmap = await createImageBitmap(blob, { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high' })
+              const c = document.createElement('canvas'); c.width = tw; c.height = th
+              const cCtx = c.getContext('2d')
+              if (cCtx) cCtx.drawImage(bitmap, 0, 0)
+              bitmap.close()
+              hlCanvas = c
+            } else {
+              blobUrl = URL.createObjectURL(blob)
+              const img = new Image()
+              await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl })
+              const c = document.createElement('canvas'); c.width = img.width; c.height = img.height
+              const cCtx = c.getContext('2d')
+              if (cCtx && c.width > 0) cCtx.drawImage(img, 0, 0)
+              hlCanvas = c
             }
+          } catch (e) {
+            console.warn('[Canvas] Blob fallback also failed:', e)
+          } finally {
+            if (blobUrl) URL.revokeObjectURL(blobUrl)
           }
         }
-        if (dbSess.pen_data) {
-          penCanvas = await loadCanvasFromDataUrl(dbSess.pen_data, activePage.image.width, activePage.image.height, resolvedUrls.get(dbSess.pen_data))
-        }
 
-        console.log('[Canvas] Loaded session', dbSess.id, 'hlCanvas:', hlCanvas?.width, 'x', hlCanvas?.height)
         if (!hlCanvas || hlCanvas.width === 0) {
           console.warn('[Canvas] Skipping session with invalid hlCanvas:', dbSess.id)
-          continue
+          return null
         }
 
         const img = activePage.image
@@ -5696,12 +5701,10 @@ export default function Canvas() {
         try {
           const raw = dbSess.count_data
           const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
-          console.log('[Canvas] count_data raw for session', dbSess.id, dbSess.name, ':', JSON.stringify(parsed), 'this device img:', img.width, 'x', img.height)
           if (Array.isArray(parsed)) {
             // Legacy shape: bare marker array, no size reference was ever
             // saved — best effort, used as-is (matches pre-fix behavior).
             countMarkers = parsed
-            console.warn('[Canvas] count_data is legacy bare-array shape (no w/h) — markers used unscaled')
           } else if (parsed?.markers) {
             // {w, h, markers}: rescale from the saving device's image size
             // to this device's, same idea as the hlCanvas/penCanvas resize
@@ -5710,9 +5713,7 @@ export default function Canvas() {
             // one (and vice versa).
             const sx = parsed.w ? img.width / parsed.w : 1
             const sy = parsed.h ? img.height / parsed.h : 1
-            console.log('[Canvas] Rescaling', parsed.markers.length, 'markers: saved at', parsed.w, 'x', parsed.h, '-> scale', sx.toFixed(4), sy.toFixed(4))
             countMarkers = parsed.markers.map(m => ({ ...m, x: m.x * sx, y: m.y * sy }))
-            console.log('[Canvas] Rescaled marker coords:', JSON.stringify(countMarkers.map(m => ({x: Math.round(m.x), y: Math.round(m.y)}))))
           }
         } catch {}
 
@@ -5747,8 +5748,8 @@ export default function Canvas() {
 
         const date = dbSess.work_date || getCurrentDate()
 
-        activePage.sessions.push({
-          id:           sessionCounter++,
+        return {
+          id,
           name:         dbSess.name || 'Session',
           color:        dbSess.color || '#facc15',
           userName:     dbSess.profiles?.full_name || 'User',
@@ -5766,7 +5767,32 @@ export default function Canvas() {
           totalHours:   dbSess.total_hours ?? null,
           photos:       Array.isArray(dbSess.photos) ? dbSess.photos : [],
           supabaseId:   dbSess.id,
-        })
+        }
+      }
+
+      // Ids are assigned up front, synchronously, so session order stays
+      // tied to created_at (dbSessions' own order) no matter which worker
+      // below finishes first.
+      const ids = dbSessions.map(() => sessionCounter++)
+      const results = new Array(dbSessions.length).fill(null)
+      // Each session can mean two full-size image decodes (hl + pen) — on a
+      // page with a long history, decoding all of them at once risks the
+      // same oversized-canvas memory pressure already worked around above
+      // for a single session. A small worker pool (same pattern as
+      // offlineCache.js's tile pyramid download) gets most of the
+      // wall-clock win of loading sessions in parallel without trying to
+      // decode all of them at once.
+      const CONCURRENCY = 4
+      let nextIdx = 0
+      async function sessionWorker() {
+        while (nextIdx < dbSessions.length) {
+          const idx = nextIdx++
+          results[idx] = await loadOneSession(dbSessions[idx], ids[idx])
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, dbSessions.length) }, sessionWorker))
+      for (const session of results) {
+        if (session) activePage.sessions.push(session)
       }
 
       console.log('[Canvas] Sessions loaded:', activePage.sessions.length)
