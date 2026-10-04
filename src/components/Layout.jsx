@@ -32,13 +32,23 @@ export default function Layout({ children, fullHeight = false }) {
   function onTouchStart(e) {
     if (refreshing) return
     const main = mainRef.current
-    if (!main || main.scrollTop > 0) { touchStartY.current = null; pullingRef.current = false; return }
+    // e.touches.length > 1 — a second finger means this is a pinch (e.g.
+    // zooming the Leaflet map preview on ProjectDetail, which disables its
+    // OWN touch handling for the small sidebar widget but doesn't swallow
+    // the underlying touch events) rather than a one-finger pull, so don't
+    // even start tracking it.
+    if (!main || main.scrollTop > 0 || e.touches.length > 1) { touchStartY.current = null; pullingRef.current = false; return }
     touchStartY.current = e.touches[0].clientY
     pullingRef.current = true
   }
 
   function onTouchMove(e) {
     if (!pullingRef.current || touchStartY.current == null) return
+    // A second finger joining mid-gesture turns this into a pinch — bail
+    // out rather than keep reading touches[0], which stays free to travel
+    // well past PULL_THRESHOLD on a fast two-finger zoom and would
+    // otherwise trigger a real page reload mid-gesture (see onTouchStart).
+    if (e.touches.length > 1) { pullingRef.current = false; touchStartY.current = null; setPullDistance(0); return }
     const delta = e.touches[0].clientY - touchStartY.current
     if (delta <= 0) { setPullDistance(0); return }
     setPullDistance(Math.min(MAX_PULL, delta * 0.5))
