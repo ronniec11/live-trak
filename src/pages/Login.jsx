@@ -1,7 +1,182 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+
+// EMAIL OTP SECOND FACTOR — requires two manual, dashboard-only steps in
+// Supabase before this works at all (nothing here can set either from
+// code):
+//   1. Authentication -> Sign In Methods -> enable "Email OTP". Without
+//      this, both signInWithOtp (OtpStep.sendCode below) and verifyOtp
+//      fail, which blocks EVERY admin/pm login and every foreman/
+//      superintendent's first login on a given device (see otpPolicy.js) —
+//      confirm it's on before this ships, not after.
+//   2. Authentication -> Email Templates -> whichever template actually
+//      carries the code (an "OTP" entry if the dashboard has one, otherwise
+//      "Magic Link" — Supabase's own template list has moved around across
+//      versions, so check what's there rather than assuming) -> make sure
+//      {{ .Token }} is present in the body so the 6-digit code gets
+//      emailed, not just a bare link.
+// See otpPolicy.js for who this applies to and why, and AuthContext.jsx for
+// how otpPending/otpVerified are tracked.
+
+// Shared chrome for every Login.jsx screen (password form, forgot/signup,
+// and the OTP step below) — factored out so the OTP step can reuse the same
+// logo/card framing without duplicating it.
+function AuthShell({ children, footer }) {
+  return (
+    <div className="min-h-screen bg-bg flex items-center justify-center px-4">
+      {/* Background grid */}
+      <div
+        className="absolute inset-0 opacity-[0.03]"
+        style={{
+          backgroundImage: `linear-gradient(#4ade80 1px, transparent 1px), linear-gradient(90deg, #4ade80 1px, transparent 1px)`,
+          backgroundSize: '40px 40px',
+        }}
+      />
+
+      <div className="w-full max-w-sm relative">
+        {/* Logo */}
+        <div className="flex items-center justify-center gap-4 mb-8">
+          <img src="/live-trak-icon.svg?v=3" style={{ width: '56px', height: '56px' }} />
+          <h1 className="text-3xl font-extralight text-gray-900 dark:text-white tracking-tight">Live-Trak</h1>
+        </div>
+
+        {/* Card */}
+        <div className="card border-border/60">
+          {children}
+        </div>
+
+        {footer && <p className="text-center text-xs text-muted mt-4">{footer}</p>}
+      </div>
+    </div>
+  )
+}
+
+const OTP_RESEND_COOLDOWN = 60
+
+// Step 2 of login for roles OTP applies to (see otpPolicy.js) — rendered by
+// Login.jsx once `user` is set (password already verified, or a restored
+// session that still needs this) but otpPending is still true. Sends the
+// first code itself on mount so the person doesn't need an extra tap after
+// already submitting their password.
+function OtpStep({ email, onVerified, onUseDifferentAccount }) {
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  const [sending, setSending] = useState(true)
+  const [verifying, setVerifying] = useState(false)
+  const [cooldown, setCooldown] = useState(OTP_RESEND_COOLDOWN)
+  const sentRef = useRef(false)
+
+  async function sendCode() {
+    setSending(true)
+    setError('')
+    try {
+      const { error: err } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+      if (err) throw err
+      setCooldown(OTP_RESEND_COOLDOWN)
+    } catch (err) {
+      setError(err.message || 'Could not send a verification code — try again.')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  // Ref guard, not just an empty dep array — React 18 StrictMode (see
+  // main.jsx) mounts/unmounts/remounts every component once in dev, which
+  // would otherwise send two codes for one actual screen view.
+  useEffect(() => {
+    if (sentRef.current) return
+    sentRef.current = true
+    sendCode()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const t = setInterval(() => setCooldown(c => Math.max(0, c - 1)), 1000)
+    return () => clearInterval(t)
+  }, [cooldown])
+
+  async function handleVerify(e) {
+    e.preventDefault()
+    setError('')
+    setVerifying(true)
+    try {
+      const { error: err } = await supabase.auth.verifyOtp({ email, token: code, type: 'email' })
+      if (err) throw err
+      onVerified()
+    } catch (err) {
+      setError(err.message || 'Invalid or expired code')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  return (
+    <>
+      <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Enter verification code</h2>
+      <p className="text-sm text-muted mb-5">
+        We sent a verification code to <span className="font-medium text-gray-700 dark:text-gray-300">{email}</span>.
+      </p>
+
+      <form onSubmit={handleVerify} className="space-y-4">
+        <div>
+          <label className="label">6-digit code</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
+            maxLength={6}
+            value={code}
+            onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            className="input text-center text-lg tracking-[0.5em]"
+            placeholder="······"
+            required
+            autoFocus
+          />
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={verifying || code.length !== 6}
+          className="btn-primary w-full flex items-center justify-center gap-2"
+        >
+          {verifying ? (
+            <>
+              <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+              Verifying...
+            </>
+          ) : 'Verify'}
+        </button>
+
+        <button
+          type="button"
+          onClick={sendCode}
+          disabled={sending || cooldown > 0}
+          className="btn-ghost w-full text-sm"
+        >
+          {sending ? 'Sending...' : cooldown > 0 ? `Resend code (${cooldown}s)` : 'Resend code'}
+        </button>
+
+        <button
+          type="button"
+          onClick={onUseDifferentAccount}
+          className="text-center text-xs text-muted hover:text-gray-700 dark:hover:text-gray-300 w-full"
+        >
+          Not you? Sign out
+        </button>
+      </form>
+    </>
+  )
+}
 
 // Same canonical URL Team.jsx's invite flow redirects to (see
 // INVITE_REDIRECT_URL there) — /profile is where the password field
@@ -27,7 +202,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
   const [signupSent, setSignupSent] = useState(false)
-  const { signIn, user } = useAuth()
+  const { signIn, user, loading: authLoading, otpPending, markOtpVerified, signOut } = useAuth()
   const navigate = useNavigate()
 
   // A magic-link/invite click that failed to authenticate lands here
@@ -58,9 +233,15 @@ export default function Login() {
   // a session is a network round-trip, so this page can render before it
   // resolves. Without this, the user is signed in moments later but just
   // sits on the login form with no indication anything happened.
+  //
+  // Gated on !authLoading && !otpPending rather than firing the instant
+  // `user` is set: whether OTP is even required isn't known until profile
+  // has loaded (authLoading covers that window — see AuthContext), and if
+  // it IS required, this should render the OTP step below instead of
+  // leaving for /projects, not navigate away before that step runs.
   useEffect(() => {
-    if (user) navigate('/projects', { replace: true })
-  }, [user, navigate])
+    if (user && !authLoading && !otpPending) navigate('/projects', { replace: true })
+  }, [user, authLoading, otpPending, navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -68,7 +249,9 @@ export default function Login() {
     setLoading(true)
     try {
       await signIn(email, password)
-      navigate('/projects')
+      // No navigate() here — the effect above owns it once `user` and
+      // otpPending settle, since this component needs to stay put and
+      // render the OTP step below instead when one's required.
     } catch (err) {
       setError(err.message || 'Invalid email or password')
     } finally {
@@ -126,29 +309,38 @@ export default function Login() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-bg flex items-center justify-center px-4">
-      {/* Background grid */}
-      <div
-        className="absolute inset-0 opacity-[0.03]"
-        style={{
-          backgroundImage: `linear-gradient(#4ade80 1px, transparent 1px), linear-gradient(90deg, #4ade80 1px, transparent 1px)`,
-          backgroundSize: '40px 40px',
-        }}
-      />
-
-      <div className="w-full max-w-sm relative">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-4 mb-8">
-          <img src="/live-trak-icon.svg?v=3" style={{ width: '56px', height: '56px' }} />
-          <h1 className="text-3xl font-extralight text-gray-900 dark:text-white tracking-tight">Live-Trak</h1>
+  // Signed in (password just verified, or a restored session) but still
+  // waiting on profile to resolve before otpPending is known — see the
+  // redirect effect above and AuthContext's SIGNED_IN handling.
+  if (user && authLoading) {
+    return (
+      <AuthShell>
+        <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted">
+          <div className="w-4 h-4 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+          Signing you in...
         </div>
+      </AuthShell>
+    )
+  }
 
-        {/* Card */}
-        <div className="card border-border/60">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-5">
-            {mode === 'forgot' ? 'Reset your password' : mode === 'signup' ? 'Create your company' : 'Sign in to your account'}
-          </h2>
+  // Password verified, but this role/device needs the OTP second factor
+  // too (see otpPolicy.js) — also what ProtectedRoute bounces back to if a
+  // signed-in-but-unverified session lands directly on a protected route.
+  if (user && otpPending) {
+    return (
+      <AuthShell>
+        <OtpStep email={user.email} onVerified={markOtpVerified} onUseDifferentAccount={signOut} />
+      </AuthShell>
+    )
+  }
+
+  return (
+    <AuthShell
+      footer={mode === 'signup' ? 'Already have a Live-Trak account at your company? Ask an admin to invite you from the Team page instead.' : 'Contact your project administrator for access.'}
+    >
+      <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-5">
+        {mode === 'forgot' ? 'Reset your password' : mode === 'signup' ? 'Create your company' : 'Sign in to your account'}
+      </h2>
 
           {linkError && mode === 'signin' && (
             <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-400 text-sm mb-4">
@@ -367,12 +559,6 @@ export default function Login() {
               </button>
             </form>
           )}
-        </div>
-
-        <p className="text-center text-xs text-muted mt-4">
-          {mode === 'signup' ? 'Already have a Live-Trak account at your company? Ask an admin to invite you from the Team page instead.' : 'Contact your project administrator for access.'}
-        </p>
-      </div>
-    </div>
+    </AuthShell>
   )
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import CompanySetup from './CompanySetup'
 
 export default function ProtectedRoute({ children }) {
-  const { user, profile, loading, signOut } = useAuth()
+  const { user, profile, loading, signOut, otpPending } = useAuth()
   const [timedOut, setTimedOut] = useState(false)
   const location = useLocation()
 
@@ -42,6 +42,16 @@ export default function ProtectedRoute({ children }) {
   // #error=...&error_description=... still attached, which Login.jsx reads
   // to explain what happened instead of just showing a bare sign-in form.
   if (!user || profile?.active === false) {
+    return <Navigate to={{ pathname: '/login', hash: location.hash }} replace />
+  }
+
+  // Signed in, but this session hasn't completed its email-OTP second
+  // factor yet (see AuthContext/otpPolicy.js) — bounce to /login, which
+  // renders the OTP step (not the password form) for an already-authed
+  // user, same as right after submitting the password there. Checked
+  // before CompanySetup below: identity should be confirmed before letting
+  // a brand-new signup do anything at all, claiming an org included.
+  if (otpPending) {
     return <Navigate to={{ pathname: '/login', hash: location.hash }} replace />
   }
 
