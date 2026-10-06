@@ -3,20 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
-// EMAIL OTP SECOND FACTOR — requires two manual, dashboard-only steps in
-// Supabase before this works at all (nothing here can set either from
-// code):
-//   1. Authentication -> Sign In Methods -> enable "Email OTP". Without
-//      this, both signInWithOtp (OtpStep.sendCode below) and verifyOtp
-//      fail, which blocks EVERY admin/pm login and every foreman/
-//      superintendent's first login on a given device (see otpPolicy.js) —
-//      confirm it's on before this ships, not after.
-//   2. Authentication -> Email Templates -> whichever template actually
-//      carries the code (an "OTP" entry if the dashboard has one, otherwise
-//      "Magic Link" — Supabase's own template list has moved around across
-//      versions, so check what's there rather than assuming) -> make sure
-//      {{ .Token }} is present in the body so the 6-digit code gets
-//      emailed, not just a bare link.
+// EMAIL OTP SECOND FACTOR — depends on dashboard-only Supabase config this
+// file can't set:
+//   - Authentication -> Providers -> Email -> "Enable email provider" is
+//     what actually governs OTP in this dashboard version (there's no
+//     separate "Email OTP" switch) — confirmed on for this project.
+//     "Email OTP length" there must match OTP_CODE_LENGTH below exactly,
+//     or a correctly-typed code can never satisfy the Verify button; it's
+//     currently 8, not Supabase's older 6-digit default.
+//   - Authentication -> Email Templates -> whichever template carries the
+//     code (an "OTP" entry if the dashboard has one, otherwise "Magic
+//     Link") -> make sure {{ .Token }} is present in the body so the code
+//     actually gets emailed, not just a bare link.
 // See otpPolicy.js for who this applies to and why, and AuthContext.jsx for
 // how otpPending/otpVerified are tracked.
 
@@ -54,6 +52,12 @@ function AuthShell({ children, footer }) {
 }
 
 const OTP_RESEND_COOLDOWN = 60
+// Must match Supabase -> Authentication -> Providers -> Email -> "Email OTP
+// length" exactly, or a correctly-entered code can never reach this length
+// and Verify stays disabled. That project setting currently reads 8, not
+// Supabase's older 6-digit default — check there first if this ever needs
+// to change rather than assuming 6.
+const OTP_CODE_LENGTH = 8
 
 // Step 2 of login for roles OTP applies to (see otpPolicy.js) — rendered by
 // Login.jsx once `user` is set (password already verified, or a restored
@@ -122,17 +126,17 @@ function OtpStep({ email, onVerified, onUseDifferentAccount }) {
 
       <form onSubmit={handleVerify} className="space-y-4">
         <div>
-          <label className="label">6-digit code</label>
+          <label className="label">{OTP_CODE_LENGTH}-digit code</label>
           <input
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
             pattern="[0-9]*"
-            maxLength={6}
+            maxLength={OTP_CODE_LENGTH}
             value={code}
-            onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, OTP_CODE_LENGTH))}
             className="input text-center text-lg tracking-[0.5em]"
-            placeholder="······"
+            placeholder={'·'.repeat(OTP_CODE_LENGTH)}
             required
             autoFocus
           />
@@ -146,7 +150,7 @@ function OtpStep({ email, onVerified, onUseDifferentAccount }) {
 
         <button
           type="submit"
-          disabled={verifying || code.length !== 6}
+          disabled={verifying || code.length !== OTP_CODE_LENGTH}
           className="btn-primary w-full flex items-center justify-center gap-2"
         >
           {verifying ? (
