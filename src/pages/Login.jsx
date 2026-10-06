@@ -18,6 +18,30 @@ import { supabase } from '../lib/supabase'
 // See otpPolicy.js for who this applies to and why, and AuthContext.jsx for
 // how otpPending/otpVerified are tracked.
 
+// Same canonical URL Team.jsx's invite flow redirects to (see
+// INVITE_REDIRECT_URL there) — /profile is where the password field
+// actually lives (Profile.jsx's "Password" card), and it's already
+// allow-listed in Supabase's Auth -> Redirect URLs for that same reason.
+// Duplicated rather than imported/shared, matching how this app already
+// keeps a couple of other one-off constants local to whichever page uses
+// them instead of a shared constants file.
+//
+// OtpStep's sendCode below also deliberately passes this same URL as its
+// own emailRedirectTo — not because the OTP step ever follows a link
+// (it doesn't), but because it's what api/auth/send-email.js's hook uses
+// to tell "this is a login OTP" apart from Team.jsx's own resend-invite
+// flow, which is otherwise identical from the hook's point of view (both
+// call supabase.auth.signInWithOtp on an existing user, so both come
+// through tagged the same email_action_type). Already allow-listed, since
+// it's the same URL used for reset/signup below — no extra Supabase
+// config needed to make that disambiguation work.
+const RESET_REDIRECT_URL = 'https://www.live-trak.ai/profile'
+// Same URL, reused rather than a fresh one — it's already allow-listed in
+// Supabase's Auth -> Redirect URLs (see the comment above), and which
+// protected route a confirmation link lands on doesn't actually matter:
+// ProtectedRoute/CompanySetup decides what to show from the session alone.
+const SIGNUP_REDIRECT_URL = RESET_REDIRECT_URL
+
 // Shared chrome for every Login.jsx screen (password form, forgot/signup,
 // and the OTP step below) — factored out so the OTP step can reuse the same
 // logo/card framing without duplicating it.
@@ -74,7 +98,10 @@ function OtpStep({ email, onVerified, onUseDifferentAccount }) {
     setSending(true)
     setError('')
     try {
-      const { error: err } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+      const { error: err } = await supabase.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: false, emailRedirectTo: RESET_REDIRECT_URL },
+      })
       if (err) throw err
       setCooldown(OTP_RESEND_COOLDOWN)
     } catch (err) {
@@ -179,20 +206,6 @@ function OtpStep({ email, onVerified, onUseDifferentAccount }) {
     </>
   )
 }
-
-// Same canonical URL Team.jsx's invite flow redirects to (see
-// INVITE_REDIRECT_URL there) — /profile is where the password field
-// actually lives (Profile.jsx's "Password" card), and it's already
-// allow-listed in Supabase's Auth -> Redirect URLs for that same reason.
-// Duplicated rather than imported/shared, matching how this app already
-// keeps a couple of other one-off constants local to whichever page uses
-// them instead of a shared constants file.
-const RESET_REDIRECT_URL = 'https://www.live-trak.ai/profile'
-// Same URL, reused rather than a fresh one — it's already allow-listed in
-// Supabase's Auth -> Redirect URLs (see the comment above), and which
-// protected route a confirmation link lands on doesn't actually matter:
-// ProtectedRoute/CompanySetup decides what to show from the session alone.
-const SIGNUP_REDIRECT_URL = RESET_REDIRECT_URL
 
 export default function Login() {
   const [mode, setMode] = useState('signin') // 'signin' | 'forgot' | 'signup'

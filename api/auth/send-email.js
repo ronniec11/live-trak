@@ -32,6 +32,17 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+// Login.jsx's OTP second-factor step calls supabase.auth.signInWithOtp on
+// an EXISTING user (shouldCreateUser: false) — the exact same API Team.jsx
+// uses to resend an invite to someone who already has an account, so both
+// land here as email_action_type 'magiclink' with no way to tell them
+// apart from that alone. Login.jsx deliberately passes this as its
+// emailRedirectTo (distinct from Team.jsx's INVITE_REDIRECT_URL below) so
+// the branch below can tell which one actually happened. Already
+// allow-listed in Supabase (it's the same URL Login.jsx's own password
+// reset/signup confirm use) — no extra Supabase config needed for this.
+const LOGIN_OTP_REDIRECT_URL = 'https://www.live-trak.ai/profile'
+
 // Built here instead of referencing the Resend-hosted "Team Invitation"
 // template's own template:{id,variables} send mode — Resend has a
 // confirmed bug (resend/react-email#3247) where a URL variable sitting
@@ -110,6 +121,49 @@ function inviteEmailHtml({ confirmationUrl, inviterName, organizationName }) {
 </html>`
 }
 
+// Dark theme (unlike inviteEmailHtml's light one above) — matches the
+// design actually requested for this screen, and plain HTML/inline styles
+// for the same Resend-template-substitution-bug reason noted on
+// inviteEmailHtml. No exact "expires in N minutes" claim — Supabase's own
+// Email OTP expiration setting (Authentication -> Providers -> Email) is
+// what actually governs that, lives entirely outside this repo, and has
+// already changed once this project; a hardcoded number here would just be
+// one more place to remember to keep in sync with it.
+function otpEmailHtml({ token }) {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
+</head>
+<body style="margin:0;padding:0;background:#0a0a0f;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0f;padding:40px 0;">
+  <tr>
+    <td align="center">
+      <div style="font-family:'Inter',system-ui,sans-serif;max-width:500px;margin:0 auto;background:#0a0a0f;color:#f1f1f3;padding:40px;border-radius:12px;">
+
+        <h2 style="font-size:20px;margin:0 0 8px;">Your verification code</h2>
+        <p style="color:#8888a0;margin:0 0 24px;">Enter this code to complete your login to Live-Trak.</p>
+
+        <div style="background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;padding:24px;text-align:center;margin-bottom:24px;">
+          <span style="font-size:36px;font-weight:800;letter-spacing:8px;color:#22c55e;">${escapeHtml(token)}</span>
+        </div>
+
+        <p style="color:#8888a0;font-size:13px;margin:0;">
+          If you didn't request this, contact
+          <a href="mailto:hello@live-trak.ai" style="color:#22c55e;">hello@live-trak.ai</a>.
+        </p>
+
+      </div>
+    </td>
+  </tr>
+</table>
+</body>
+</html>`
+}
+
 async function buffer(req) {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -144,22 +198,41 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { token_hash, redirect_to, email_action_type } = email_data
+    const { token, token_hash, redirect_to, email_action_type } = email_data
     // Logged unconditionally (not just on error) — 'magiclink' and
     // 'signup' turned out not to be the only two values this app
     // actually sees in practice (handling both still produced the plain
     // fallback once), so the fastest way to find the real value for a
     // given attempt is reading it straight from here instead of guessing
     // a third one blind.
-    console.log('[auth/send-email] email_action_type:', email_action_type)
+    console.log('[auth/send-email] email_action_type:', email_action_type, 'redirect_to:', redirect_to)
+
+    const resend = new Resend(requireEnv('RESEND_API_KEY'))
+
+    // Login.jsx's OTP step — see LOGIN_OTP_REDIRECT_URL above for why
+    // redirect_to (not just email_action_type, which 'magiclink' alone
+    // can't disambiguate from a resend-invite below) is what catches this.
+    // Checked first/separately: this is the one case where the code itself
+    // is what the person needs, not a clickable link, so it skips
+    // confirmationUrl entirely.
+    if (email_action_type === 'magiclink' && redirect_to === LOGIN_OTP_REDIRECT_URL) {
+      const { error } = await resend.emails.send({
+        from: requireEnv('INVITE_EMAIL_FROM'),
+        to: [user.email],
+        subject: 'Your Live-Trak verification code',
+        html: otpEmailHtml({ token }),
+      })
+      if (error) throw error
+      res.status(200).json({})
+      return
+    }
+
     // Same link GoTrue's own default templates build from
     // {{ .ConfirmationURL }} — hitting this verifies the token, then
     // 302-redirects the browser to redirect_to (Team.jsx's
     // INVITE_REDIRECT_URL, already allow-listed in Supabase's Auth ->
     // URL Configuration).
     const confirmationUrl = `${SUPABASE_URL}/auth/v1/verify?token=${token_hash}&type=${email_action_type}&redirect_to=${encodeURIComponent(redirect_to)}`
-
-    const resend = new Resend(requireEnv('RESEND_API_KEY'))
 
     if (email_action_type === 'magiclink' || email_action_type === 'signup') {
       // Both of these come from Team.jsx's own signInWithOtp calls —
