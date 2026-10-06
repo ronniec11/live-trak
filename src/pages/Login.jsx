@@ -9,8 +9,8 @@ import { supabase } from '../lib/supabase'
 //     what actually governs OTP in this dashboard version (there's no
 //     separate "Email OTP" switch) — confirmed on for this project.
 //     "Email OTP length" there must match OTP_CODE_LENGTH below exactly,
-//     or a correctly-typed code can never satisfy the Verify button; it's
-//     currently 8, not Supabase's older 6-digit default.
+//     or a correctly-typed code can never satisfy the Verify button —
+//     set to 6 on this project.
 //   - Authentication -> Email Templates -> whichever template carries the
 //     code (an "OTP" entry if the dashboard has one, otherwise "Magic
 //     Link") -> make sure {{ .Token }} is present in the body so the code
@@ -54,10 +54,8 @@ function AuthShell({ children, footer }) {
 const OTP_RESEND_COOLDOWN = 60
 // Must match Supabase -> Authentication -> Providers -> Email -> "Email OTP
 // length" exactly, or a correctly-entered code can never reach this length
-// and Verify stays disabled. That project setting currently reads 8, not
-// Supabase's older 6-digit default — check there first if this ever needs
-// to change rather than assuming 6.
-const OTP_CODE_LENGTH = 8
+// and Verify stays disabled.
+const OTP_CODE_LENGTH = 6
 
 // Step 2 of login for roles OTP applies to (see otpPolicy.js) — rendered by
 // Login.jsx once `user` is set (password already verified, or a restored
