@@ -490,7 +490,13 @@
   background: var(--ct-bg); touch-action: none; cursor: grab;
 }
 .ct-rep-snap-viewport.dragging { cursor: grabbing; }
-.ct-rep-snap-img { position: absolute; left: 0; top: 0; display: block; user-select: none; -webkit-user-drag: none; }
+/* max-width: none overrides Tailwind's preflight (img { max-width: 100%;
+   height: auto }, from @tailwind base in index.css) — without it, the
+   explicit pixel width applyReportSnapTransform sets once zoomed past the
+   viewport's own width got clamped back down by that 100% cap while the
+   explicit height kept growing, stretching the image vertically relative
+   to its own width on every zoom-in. */
+.ct-rep-snap-img { position: absolute; left: 0; top: 0; max-width: none; display: block; user-select: none; -webkit-user-drag: none; }
 .ct-rep-snap-hint {
   position: absolute; top: 8px; left: 8px; z-index: 5; pointer-events: none;
   background: rgba(0,0,0,0.6); color: #fff; font-size: 10px;

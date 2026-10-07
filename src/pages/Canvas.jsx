@@ -4845,9 +4845,16 @@ export default function Canvas() {
     let reportSnapViewportW = 0                  // on-screen viewport width in CSS px (the "fit whole sheet" width)
     let reportSnapZoom = 1
     let reportSnapCropX = 0, reportSnapCropY = 0 // top-left of the visible region, in the SNAPSHOT's own natural pixels
-    let reportSnapDragging = false
+    // Keyed by pointerId so one-finger drag-to-pan and two-finger
+    // pinch-to-zoom share the same down/move/up plumbing — the size of
+    // this map (1 vs 2 active touches) is what picks which gesture a given
+    // move event means, matching how every native photo viewer behaves.
+    let reportSnapPointers = new Map()
     let reportSnapDragStartX = 0, reportSnapDragStartY = 0
     let reportSnapDragStartCropX = 0, reportSnapDragStartCropY = 0
+    let reportSnapPinchStartDist = 0
+    let reportSnapPinchStartZoom = 1
+    let reportSnapPinchAnchorNatX = 0, reportSnapPinchAnchorNatY = 0 // natural-image point held fixed under the pinch midpoint
 
     // Keeps the visible region inside the snapshot's own bounds — called
     // after any zoom or pan change, since both can push the crop rect
@@ -4883,25 +4890,67 @@ export default function Canvas() {
       reportSnapCropX = 0; reportSnapCropY = 0
       applyReportSnapTransform()
     }
+    // Re-anchors whichever gesture is now active against the CURRENT set of
+    // pointers — called on every pointerdown/up, since a finger joining or
+    // leaving changes which gesture a subsequent move means, and resuming
+    // from stale start coordinates would jump the image.
+    function reportSnapRebaseGesture(viewport) {
+      const pts = [...reportSnapPointers.values()]
+      if (pts.length === 1) {
+        reportSnapDragStartX = pts[0].x; reportSnapDragStartY = pts[0].y
+        reportSnapDragStartCropX = reportSnapCropX; reportSnapDragStartCropY = reportSnapCropY
+      } else if (pts.length >= 2) {
+        const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y
+        reportSnapPinchStartDist = Math.hypot(dx, dy) || 1
+        reportSnapPinchStartZoom = reportSnapZoom
+        const rect = viewport.getBoundingClientRect()
+        const midX = (pts[0].x + pts[1].x) / 2 - rect.left
+        const midY = (pts[0].y + pts[1].y) / 2 - rect.top
+        const s = (reportSnapViewportW / reportSnapImgW) * reportSnapZoom
+        reportSnapPinchAnchorNatX = reportSnapCropX + midX / s
+        reportSnapPinchAnchorNatY = reportSnapCropY + midY / s
+      }
+    }
     function onReportSnapPointerDown(e) {
-      if (reportSnapZoom <= 1) return // nothing to pan at the fit view
-      reportSnapDragging = true
-      reportSnapDragStartX = e.clientX; reportSnapDragStartY = e.clientY
-      reportSnapDragStartCropX = reportSnapCropX; reportSnapDragStartCropY = reportSnapCropY
-      e.currentTarget.classList.add('dragging')
-      e.currentTarget.setPointerCapture?.(e.pointerId)
+      const viewport = e.currentTarget
+      reportSnapPointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      viewport.classList.add('dragging')
+      viewport.setPointerCapture?.(e.pointerId)
+      reportSnapRebaseGesture(viewport)
     }
     function onReportSnapPointerMove(e) {
-      if (!reportSnapDragging) return
-      const s = (reportSnapViewportW / reportSnapImgW) * reportSnapZoom
-      reportSnapCropX = reportSnapDragStartCropX - (e.clientX - reportSnapDragStartX) / s
-      reportSnapCropY = reportSnapDragStartCropY - (e.clientY - reportSnapDragStartY) / s
+      if (!reportSnapPointers.has(e.pointerId)) return
+      const viewport = e.currentTarget
+      reportSnapPointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      const pts = [...reportSnapPointers.values()]
+      if (pts.length >= 2) {
+        // Pinch — zoom from the two touches' distance, anchored so the
+        // natural-image point that was under their midpoint when the
+        // pinch started stays under wherever that midpoint is now (also
+        // picks up a two-finger drag "for free", since the midpoint moving
+        // shifts the anchor along with it).
+        const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y
+        const dist = Math.hypot(dx, dy) || 1
+        reportSnapZoom = Math.min(Math.max(reportSnapPinchStartZoom * (dist / reportSnapPinchStartDist), 1), REPORT_SNAP_MAX_ZOOM)
+        const rect = viewport.getBoundingClientRect()
+        const midX = (pts[0].x + pts[1].x) / 2 - rect.left
+        const midY = (pts[0].y + pts[1].y) / 2 - rect.top
+        const s = (reportSnapViewportW / reportSnapImgW) * reportSnapZoom
+        reportSnapCropX = reportSnapPinchAnchorNatX - midX / s
+        reportSnapCropY = reportSnapPinchAnchorNatY - midY / s
+      } else if (reportSnapZoom > 1) {
+        const s = (reportSnapViewportW / reportSnapImgW) * reportSnapZoom
+        reportSnapCropX = reportSnapDragStartCropX - (pts[0].x - reportSnapDragStartX) / s
+        reportSnapCropY = reportSnapDragStartCropY - (pts[0].y - reportSnapDragStartY) / s
+      }
       clampReportSnapCrop()
       applyReportSnapTransform()
     }
     function onReportSnapPointerUp(e) {
-      reportSnapDragging = false
-      e.currentTarget.classList?.remove('dragging')
+      const viewport = e.currentTarget
+      reportSnapPointers.delete(e.pointerId)
+      if (reportSnapPointers.size === 0) viewport.classList.remove('dragging')
+      else reportSnapRebaseGesture(viewport) // one finger lifted off a pinch — resume as a plain drag from here
     }
     function onReportSnapWheel(e) {
       e.preventDefault()
@@ -5371,6 +5420,7 @@ export default function Canvas() {
           viewport.addEventListener('pointerdown', onReportSnapPointerDown)
           viewport.addEventListener('pointermove', onReportSnapPointerMove)
           viewport.addEventListener('pointerup', onReportSnapPointerUp)
+          viewport.addEventListener('pointercancel', onReportSnapPointerUp)
           viewport.addEventListener('pointerleave', onReportSnapPointerUp)
           viewport.addEventListener('wheel', onReportSnapWheel, { passive: false })
           reportBodyRef.current.querySelector('.ct-rep-snap-in').addEventListener('click', () => setReportSnapZoom(reportSnapZoom * 1.3))
