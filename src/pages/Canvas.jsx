@@ -5089,12 +5089,24 @@ export default function Canvas() {
     // the sheet's full native pixel size as a lossless PNG — the PDF only
     // ever displays this at up to ~7in wide (see the addImage call below),
     // so a multi-thousand-pixel scan embedded at full resolution was pure
-    // waste: readable markup needs maybe 250 DPI at that print size, not
-    // the sheet's full scan resolution, and PNG compresses high-entropy
-    // markup-over-scan content far worse than JPEG does. This is what was
-    // driving reports up toward ~18MB — too big to email without the
-    // sender manually downsizing it first.
-    const SNAPSHOT_MAX_DIM = 1800
+    // waste, and PNG compresses high-entropy markup-over-scan content far
+    // worse than JPEG does. This is what was driving reports up toward
+    // ~18MB before this cap existed — too big to email without the sender
+    // manually downsizing it first.
+    //
+    // 3000 (~430 DPI at that 7in width), not the original 1800 (~250 DPI) —
+    // confirmed on a real report that 1800 read as visibly soft once
+    // printed, especially small room/dimension text on a dense sheet.
+    // This also sets the ceiling for how sharp a zoomed-in crop can look
+    // (see cropReportSnapshotForPrint): that crops pixels out of THIS
+    // already-capped image rather than re-rendering from the sheet's true
+    // full-resolution source, so a region zoomed into 2-3x only still looks
+    // sharp because there's meaningfully more detail in the base image to
+    // begin with now. JPEG still compresses a mostly-white scan-plus-lines
+    // image like this well enough that the size cost of the jump is modest
+    // — nowhere near what was actually driving file size up (see
+    // shrinkPhotoDataUrl's own comment, the real culprit).
+    const SNAPSHOT_MAX_DIM = 3000
     const SNAPSHOT_JPEG_QUALITY = 0.85
 
     async function buildSheetSnapshot(sessions) {
