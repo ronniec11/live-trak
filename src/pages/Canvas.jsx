@@ -5737,7 +5737,37 @@ export default function Canvas() {
           }
         }
 
-        doc.save(`Sheet Report - ${data.sheetName}.pdf`)
+        // On an installed-to-homescreen iPad PWA, doc.save()'s <a download>
+        // click doesn't trigger a real download — iOS Safari doesn't honor
+        // the download attribute, so it navigates the whole PWA window to a
+        // blob: URL instead, landing on a full-page native PDF viewer (its
+        // own back arrow/X, not this app's). Tapping either one then either
+        // restores this report modal from bfcache or, in practice more
+        // often, reloads the app from scratch and loses it — confirmed on
+        // device, same root cause the SHEET REPORT section comment up top
+        // already flagged for window.open() (why this modal exists in the
+        // first place instead of a new tab/window). The Web Share API
+        // sidesteps it entirely: the native share sheet (with its own Save
+        // to Files / Print / AirDrop options — covering "Print / Save as
+        // PDF" either way) slides up OVER this page rather than navigating
+        // away from it, so dismissing it returns to this exact modal,
+        // nothing lost.
+        // Falls back to the plain download for browsers without
+        // file-sharing support (desktop, where doc.save() already works
+        // fine with no navigation involved).
+        const filename = `Sheet Report - ${data.sheetName}.pdf`
+        const file = new File([doc.output('blob')], filename, { type: 'application/pdf' })
+        if (navigator.canShare?.({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file], title: filename })
+          } catch (shareErr) {
+            // AbortError — the person dismissed the share sheet without
+            // picking anything, not a real failure, nothing to report.
+            if (shareErr?.name !== 'AbortError') throw shareErr
+          }
+        } else {
+          doc.save(filename)
+        }
       } catch (e) {
         console.error('[Canvas] Sheet Report PDF generation failed:', e)
         alert('Failed to generate the PDF: ' + (e.message || 'check console'))
