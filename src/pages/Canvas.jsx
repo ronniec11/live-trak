@@ -4979,6 +4979,50 @@ export default function Canvas() {
       })
     }
 
+    // Survives the navigation printDailyReportPDF triggers (see its own
+    // comment) — persisted right before that navigation, restored back
+    // open on the next mount below, zoom/pan included, so "hit back after
+    // Print/Save as PDF, the sheet report is still there to tweak the zoom
+    // and look again" is something this app actively restores rather than
+    // something left to the browser's bfcache to maybe get right.
+    // Self-contained (the restored report doesn't need activePage/sessions
+    // to have loaded first), and sessionStorage rather than localStorage —
+    // this should only ever come back for the tab that just navigated away
+    // and returned, not resurrect a stale report in some unrelated later
+    // visit to this sheet.
+    const REPORT_RETURN_KEY = `ct_report_return_${pageId}`
+    function persistReportForReturn() {
+      if (!lastReportData) return
+      try {
+        sessionStorage.setItem(REPORT_RETURN_KEY, JSON.stringify({
+          report: lastReportData,
+          zoom: reportSnapZoom, cropX: reportSnapCropX, cropY: reportSnapCropY,
+        }))
+      } catch (e) {
+        // Quota exceeded (a big snapshot/many photos) or sessionStorage
+        // unavailable — losing the restore-on-return is a worse UX, not a
+        // worse Print, so this never blocks the actual save below.
+        console.warn('[Canvas] Could not persist the report for return-from-print:', e)
+      }
+    }
+    function restoreReportIfReturning() {
+      let saved
+      try {
+        const raw = sessionStorage.getItem(REPORT_RETURN_KEY)
+        if (!raw) return
+        sessionStorage.removeItem(REPORT_RETURN_KEY) // one-time — an ordinary reload/revisit shouldn't keep reopening this
+        saved = JSON.parse(raw)
+      } catch (e) {
+        console.warn('[Canvas] Could not restore the report after returning from print:', e)
+        return
+      }
+      if (!saved?.report) return
+      lastReportData = saved.report
+      renderSheetReport({ restoreZoom: { zoom: saved.zoom, cropX: saved.cropX, cropY: saved.cropY } })
+      if (reportModalRef.current) reportModalRef.current.classList.add('open')
+    }
+    restoreReportIfReturning()
+
     function openReportSetup() {
       if (!activePage) return
       reportScope = 'day'
@@ -5347,7 +5391,11 @@ export default function Canvas() {
         <img class="${itemCls}" src="${p.url}" alt="${p.name}" title="${p.name}" style="border-color:${p.color};" />`).join('')
       return `<div class="${gridCls}">${items}</div>`
     }
-    function renderSheetReport() {
+    // opts.restoreZoom ({zoom, cropX, cropY}), when given, applies that
+    // saved view instead of resetting to the default fit — used by
+    // restoreReportIfReturning above when reopening a report that was open
+    // right before Print/Save as PDF navigated away.
+    function renderSheetReport(opts = {}) {
       const data = lastReportData
       if (!data) return
       const rows = reportRowsHtml(data, 'ct-rep-num')
@@ -5415,17 +5463,24 @@ export default function Canvas() {
         })
         if (data.snapshot) {
           const viewport = reportBodyRef.current.querySelector('.ct-rep-snap-viewport')
-          // Fresh snapshot each time a report is generated — reset the view
-          // and re-measure, rather than carrying over the previous report's
-          // zoom/pan (which may not even make sense against a differently
-          // sized/shaped sheet).
-          reportSnapZoom = 1; reportSnapCropX = 0; reportSnapCropY = 0
+          if (opts.restoreZoom) {
+            reportSnapZoom = opts.restoreZoom.zoom || 1
+            reportSnapCropX = opts.restoreZoom.cropX || 0
+            reportSnapCropY = opts.restoreZoom.cropY || 0
+          } else {
+            // Fresh snapshot each time a NEW report is generated — reset the
+            // view, rather than carrying over the previous report's zoom/pan
+            // (which may not even make sense against a differently
+            // sized/shaped sheet).
+            reportSnapZoom = 1; reportSnapCropX = 0; reportSnapCropY = 0
+          }
           const tmp = new Image()
           tmp.onload = () => {
             reportSnapImgW = tmp.naturalWidth
             reportSnapImgH = tmp.naturalHeight
             reportSnapViewportW = viewport.clientWidth
             viewport.style.height = (reportSnapImgH / reportSnapImgW * reportSnapViewportW) + 'px'
+            clampReportSnapCrop() // guards a restored zoom/crop that's no longer valid for some reason
             applyReportSnapTransform()
           }
           tmp.src = data.snapshot
@@ -5738,36 +5793,23 @@ export default function Canvas() {
         }
 
         // On an installed-to-homescreen iPad PWA, doc.save()'s <a download>
-        // click doesn't trigger a real download — iOS Safari doesn't honor
-        // the download attribute, so it navigates the whole PWA window to a
-        // blob: URL instead, landing on a full-page native PDF viewer (its
-        // own back arrow/X, not this app's). Tapping either one then either
-        // restores this report modal from bfcache or, in practice more
-        // often, reloads the app from scratch and loses it — confirmed on
-        // device, same root cause the SHEET REPORT section comment up top
-        // already flagged for window.open() (why this modal exists in the
-        // first place instead of a new tab/window). The Web Share API
-        // sidesteps it entirely: the native share sheet (with its own Save
-        // to Files / Print / AirDrop options — covering "Print / Save as
-        // PDF" either way) slides up OVER this page rather than navigating
-        // away from it, so dismissing it returns to this exact modal,
-        // nothing lost.
-        // Falls back to the plain download for browsers without
-        // file-sharing support (desktop, where doc.save() already works
-        // fine with no navigation involved).
-        const filename = `Sheet Report - ${data.sheetName}.pdf`
-        const file = new File([doc.output('blob')], filename, { type: 'application/pdf' })
-        if (navigator.canShare?.({ files: [file] })) {
-          try {
-            await navigator.share({ files: [file], title: filename })
-          } catch (shareErr) {
-            // AbortError — the person dismissed the share sheet without
-            // picking anything, not a real failure, nothing to report.
-            if (shareErr?.name !== 'AbortError') throw shareErr
-          }
-        } else {
-          doc.save(filename)
-        }
+        // click doesn't trigger a real silent download — iOS Safari doesn't
+        // honor the download attribute, so it navigates the whole PWA
+        // window to a blob: URL instead, landing on a full-page native PDF
+        // viewer. That IS the preview the person wants before actually
+        // printing/saving, so this keeps it (a Web Share API version was
+        // tried and reverted — it skips the preview entirely, going
+        // straight to the share sheet, which wasn't the actual ask). What
+        // needed fixing instead is only that tapping that native viewer's
+        // own back arrow/X didn't reliably return here: it's a real
+        // navigation away from the SPA, and relying on bfcache to restore
+        // this modal on "back" isn't reliable — in practice it was more
+        // often reloading the app from scratch and losing it. See
+        // persistReportForReturn below and its restore counterpart in the
+        // init effect for how this is made to come back deterministically
+        // instead, zoom/pan included.
+        persistReportForReturn()
+        doc.save(`Sheet Report - ${data.sheetName}.pdf`)
       } catch (e) {
         console.error('[Canvas] Sheet Report PDF generation failed:', e)
         alert('Failed to generate the PDF: ' + (e.message || 'check console'))
