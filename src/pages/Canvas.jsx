@@ -4832,6 +4832,104 @@ export default function Canvas() {
     let reportScope = 'day'    // 'day' | 'range' | 'all'
     let lastReportData = null  // shared between the on-screen view and Print
 
+    // ── SHEET REPORT: snapshot pan/zoom ────────────────────────────────────
+    // "Print to what you're viewing" — the on-screen snapshot preview can be
+    // zoomed/panned like a photo viewer, and printDailyReportPDF below crops
+    // the embedded floor-plan image to match whatever's visible here instead
+    // of always embedding the whole sheet. Plain closure state rather than
+    // React state, same as everything else in this file — these are read
+    // and written from plain DOM event listeners wired up in
+    // renderSheetReport, not from JSX.
+    const REPORT_SNAP_MAX_ZOOM = 6
+    let reportSnapImgW = 0, reportSnapImgH = 0   // natural pixel size of the current snapshot
+    let reportSnapViewportW = 0                  // on-screen viewport width in CSS px (the "fit whole sheet" width)
+    let reportSnapZoom = 1
+    let reportSnapCropX = 0, reportSnapCropY = 0 // top-left of the visible region, in the SNAPSHOT's own natural pixels
+    let reportSnapDragging = false
+    let reportSnapDragStartX = 0, reportSnapDragStartY = 0
+    let reportSnapDragStartCropX = 0, reportSnapDragStartCropY = 0
+
+    // Keeps the visible region inside the snapshot's own bounds — called
+    // after any zoom or pan change, since both can push the crop rect
+    // outside what the image actually has (zooming out shrinks it back
+    // below the previous pan offset; panning can overshoot an edge).
+    function clampReportSnapCrop() {
+      const cropW = reportSnapImgW / reportSnapZoom
+      const cropH = reportSnapImgH / reportSnapZoom
+      reportSnapCropX = Math.min(Math.max(reportSnapCropX, 0), Math.max(0, reportSnapImgW - cropW))
+      reportSnapCropY = Math.min(Math.max(reportSnapCropY, 0), Math.max(0, reportSnapImgH - cropH))
+    }
+    // Absolute-positions the <img> inside its overflow:hidden viewport so it
+    // shows exactly the reportSnapCropX/Y..+cropW/H region of the snapshot,
+    // stretched to fill the viewport — a crop-and-zoom rather than a CSS
+    // transform, so the math stays in one unit (CSS px per natural px, `s`)
+    // instead of juggling transform-origin.
+    function applyReportSnapTransform() {
+      const img = reportBodyRef.current?.querySelector('.ct-rep-snap-img')
+      if (!img || !reportSnapImgW) return
+      const s = (reportSnapViewportW / reportSnapImgW) * reportSnapZoom
+      img.style.width = (reportSnapImgW * s) + 'px'
+      img.style.height = (reportSnapImgH * s) + 'px'
+      img.style.left = (-reportSnapCropX * s) + 'px'
+      img.style.top = (-reportSnapCropY * s) + 'px'
+    }
+    function setReportSnapZoom(z) {
+      reportSnapZoom = Math.min(Math.max(z, 1), REPORT_SNAP_MAX_ZOOM)
+      clampReportSnapCrop()
+      applyReportSnapTransform()
+    }
+    function resetReportSnapView() {
+      reportSnapZoom = 1
+      reportSnapCropX = 0; reportSnapCropY = 0
+      applyReportSnapTransform()
+    }
+    function onReportSnapPointerDown(e) {
+      if (reportSnapZoom <= 1) return // nothing to pan at the fit view
+      reportSnapDragging = true
+      reportSnapDragStartX = e.clientX; reportSnapDragStartY = e.clientY
+      reportSnapDragStartCropX = reportSnapCropX; reportSnapDragStartCropY = reportSnapCropY
+      e.currentTarget.classList.add('dragging')
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+    }
+    function onReportSnapPointerMove(e) {
+      if (!reportSnapDragging) return
+      const s = (reportSnapViewportW / reportSnapImgW) * reportSnapZoom
+      reportSnapCropX = reportSnapDragStartCropX - (e.clientX - reportSnapDragStartX) / s
+      reportSnapCropY = reportSnapDragStartCropY - (e.clientY - reportSnapDragStartY) / s
+      clampReportSnapCrop()
+      applyReportSnapTransform()
+    }
+    function onReportSnapPointerUp(e) {
+      reportSnapDragging = false
+      e.currentTarget.classList?.remove('dragging')
+    }
+    function onReportSnapWheel(e) {
+      e.preventDefault()
+      setReportSnapZoom(reportSnapZoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15))
+    }
+    // Crops the snapshot to the currently-visible region for printing — a
+    // fresh canvas read of the actual image data, not just a CSS-level
+    // effect, so printDailyReportPDF gets real cropped pixels to embed.
+    // Resolves the ORIGINAL uncropped snapshot untouched when the view is
+    // still at its default fit (zoom 1), so an un-zoomed report prints
+    // exactly as it always has.
+    function cropReportSnapshotForPrint(snapshotDataUrl) {
+      return new Promise(resolve => {
+        if (reportSnapZoom <= 1 || !reportSnapImgW) { resolve(snapshotDataUrl); return }
+        const img = new Image()
+        img.onload = () => {
+          const cropW = Math.round(reportSnapImgW / reportSnapZoom)
+          const cropH = Math.round(reportSnapImgH / reportSnapZoom)
+          const c = document.createElement('canvas')
+          c.width = cropW; c.height = cropH
+          c.getContext('2d').drawImage(img, reportSnapCropX, reportSnapCropY, cropW, cropH, 0, 0, cropW, cropH)
+          resolve(c.toDataURL('image/jpeg', SNAPSHOT_JPEG_QUALITY))
+        }
+        img.onerror = () => resolve(snapshotDataUrl)
+        img.src = snapshotDataUrl
+      })
+    }
+
     function openReportSetup() {
       if (!activePage) return
       reportScope = 'day'
@@ -5101,6 +5199,12 @@ export default function Canvas() {
         scopeLabel: projectDescription || projectName || 'Scope',
         range,
         generated: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+        // Same figure as the header's own blue "% of target" stat (see
+        // updateSFDisplay) — the sheet's overall completion as of right
+        // now, independent of which sessions this particular report
+        // happens to include (a single-day report shouldn't claim the
+        // sheet is only as complete as that one day's work).
+        percentComplete: totalBuildingSF > 0 ? Math.round((cachedTotalSF / totalBuildingSF) * 100) : null,
         snapshot,
         logoUrl: orgLogoUrl,
         rows: included.map(s => ({
@@ -5198,12 +5302,21 @@ export default function Canvas() {
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
           <div>
             <div class="ct-rep-title">${data.label} — <span class="ct-rep-title-scope">${data.scopeLabel}</span></div>
-            <div class="ct-rep-desc">${data.sheetName}</div>
+            <div class="ct-rep-desc">${data.sheetName}${data.percentComplete != null ? ` <span class="ct-rep-pct">— ${data.percentComplete}% Complete</span>` : ''}</div>
             <div class="ct-rep-sub">Production Tracking Report &nbsp;•&nbsp; ${data.range} &nbsp;•&nbsp; Generated ${data.generated}</div>
           </div>
           ${data.logoUrl ? `<img src="${data.logoUrl}" alt="Company logo" style="max-height:120px;max-width:120px;object-fit:contain;flex-shrink:0;" />` : ''}
         </div>
-        ${data.snapshot ? `<img src="${data.snapshot}" style="max-width:100%;border:1px solid var(--ct-border);border-radius:8px;margin:12px 0;display:block;" />` : ''}
+        ${data.snapshot ? `
+        <div class="ct-rep-snap-viewport">
+          <img class="ct-rep-snap-img" src="${data.snapshot}" draggable="false" />
+          <div class="ct-rep-snap-hint">Drag/scroll or +/− to zoom — the printed report matches this view</div>
+          <div class="ct-rep-snap-zoom">
+            <button type="button" class="ct-rep-snap-in" title="Zoom in">+</button>
+            <button type="button" class="ct-rep-snap-out" title="Zoom out">−</button>
+            <button type="button" class="ct-rep-snap-reset" title="Reset view">⤢</button>
+          </div>
+        </div>` : ''}
         <table class="ct-rep-table">
           <colgroup>
             <col style="width:13%"><col style="width:${sessionPct}%">
@@ -5239,6 +5352,31 @@ export default function Canvas() {
         reportBodyRef.current.querySelectorAll('.ct-rep-photo').forEach(img => {
           img.addEventListener('click', () => window.open(img.src, '_blank'))
         })
+        if (data.snapshot) {
+          const viewport = reportBodyRef.current.querySelector('.ct-rep-snap-viewport')
+          // Fresh snapshot each time a report is generated — reset the view
+          // and re-measure, rather than carrying over the previous report's
+          // zoom/pan (which may not even make sense against a differently
+          // sized/shaped sheet).
+          reportSnapZoom = 1; reportSnapCropX = 0; reportSnapCropY = 0
+          const tmp = new Image()
+          tmp.onload = () => {
+            reportSnapImgW = tmp.naturalWidth
+            reportSnapImgH = tmp.naturalHeight
+            reportSnapViewportW = viewport.clientWidth
+            viewport.style.height = (reportSnapImgH / reportSnapImgW * reportSnapViewportW) + 'px'
+            applyReportSnapTransform()
+          }
+          tmp.src = data.snapshot
+          viewport.addEventListener('pointerdown', onReportSnapPointerDown)
+          viewport.addEventListener('pointermove', onReportSnapPointerMove)
+          viewport.addEventListener('pointerup', onReportSnapPointerUp)
+          viewport.addEventListener('pointerleave', onReportSnapPointerUp)
+          viewport.addEventListener('wheel', onReportSnapWheel, { passive: false })
+          reportBodyRef.current.querySelector('.ct-rep-snap-in').addEventListener('click', () => setReportSnapZoom(reportSnapZoom * 1.3))
+          reportBodyRef.current.querySelector('.ct-rep-snap-out').addEventListener('click', () => setReportSnapZoom(reportSnapZoom / 1.3))
+          reportBodyRef.current.querySelector('.ct-rep-snap-reset').addEventListener('click', resetReportSnapView)
+        }
       }
     }
     function closeDailyReport() {
@@ -5333,10 +5471,21 @@ export default function Canvas() {
         doc.text(data.scopeLabel, margin + doc.getTextWidth(labelText), y)
         y += 0.24
 
-        // Sheet name
+        // Sheet name, plus percent complete right after it in the same blue
+        // as the on-screen header's own "% of target" stat (see
+        // updateSFDisplay) — same figure, just surfaced here too. Font
+        // weight deliberately left as whatever it already was (inherited
+        // bold from the title above) rather than reset here, so the sheet
+        // name's own look is unchanged from before this was added.
         doc.setFontSize(11)
         doc.setTextColor('#6b7280')
         doc.text(data.sheetName, margin, y)
+        if (data.percentComplete != null) {
+          const sheetNameWidth = doc.getTextWidth(data.sheetName)
+          doc.setFont(undefined, 'bold')
+          doc.setTextColor('#3b82f6')
+          doc.text(` — ${data.percentComplete}% Complete`, margin + sheetNameWidth, y)
+        }
         y += 0.2
 
         // "Production Tracking Report" • range • generated
@@ -5360,14 +5509,19 @@ export default function Canvas() {
         // landscape sheet down well short of the width it had room for.
         if (data.snapshot) {
           try {
-            const props = doc.getImageProperties(data.snapshot)
+            // Cropped to whatever region the on-screen preview is currently
+            // zoomed/panned to (see cropReportSnapshotForPrint) — resolves
+            // the snapshot untouched if the view is still at its default
+            // fit, so an un-zoomed report prints exactly as it always has.
+            const snapshotForPrint = await cropReportSnapshotForPrint(data.snapshot)
+            const props = doc.getImageProperties(snapshotForPrint)
             const imgMargin = 0.75
             let w = pageWidth - imgMargin * 2
             let h = w * props.height / props.width
             const maxH = 7.0
             if (h > maxH) { h = maxH; w = h * props.width / props.height }
             ensureRoom(h)
-            doc.addImage(data.snapshot, imageFormatFromDataUrl(data.snapshot), (pageWidth - w) / 2, y, w, h)
+            doc.addImage(snapshotForPrint, imageFormatFromDataUrl(snapshotForPrint), (pageWidth - w) / 2, y, w, h)
             y += h + 0.18
           } catch (e) {
             console.warn('[Canvas] Sheet Report: snapshot embed failed:', e)

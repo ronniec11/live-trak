@@ -475,7 +475,34 @@
 .ct-rep-title { font-size: 18px; font-weight: 800; color: var(--ct-text); }
 .ct-rep-title-scope { color: var(--ct-accent); }
 .ct-rep-desc { font-size: 13px; font-weight: 600; color: var(--ct-muted); margin-top: 2px; }
+/* Same blue as the main canvas header's own "% of target" stat (inline
+   style, color:'#3b82f6' — see hdrPctRef in the Canvas.jsx JSX) — this is
+   that same figure, just also surfaced here next to the sheet name. */
+.ct-rep-pct { color: #3b82f6; font-weight: 800; }
 .ct-rep-sub { font-size: 11px; color: var(--ct-muted); margin: 4px 0 16px; }
+/* Pan/zoom viewport for the report's floor-plan snapshot — see
+   applyReportSnapTransform/cropReportSnapshotForPrint in Canvas.jsx.
+   touch-action: none so a touch drag pans the image instead of scrolling
+   the report body underneath it (same technique as .ct-draw-canvas). */
+.ct-rep-snap-viewport {
+  position: relative; overflow: hidden; margin: 12px 0;
+  border: 1px solid var(--ct-border); border-radius: 8px;
+  background: var(--ct-bg); touch-action: none; cursor: grab;
+}
+.ct-rep-snap-viewport.dragging { cursor: grabbing; }
+.ct-rep-snap-img { position: absolute; left: 0; top: 0; display: block; user-select: none; -webkit-user-drag: none; }
+.ct-rep-snap-hint {
+  position: absolute; top: 8px; left: 8px; z-index: 5; pointer-events: none;
+  background: rgba(0,0,0,0.6); color: #fff; font-size: 10px;
+  padding: 3px 8px; border-radius: 10px;
+}
+.ct-rep-snap-zoom { position: absolute; bottom: 10px; right: 10px; z-index: 5; display: flex; flex-direction: column; gap: 4px; }
+.ct-rep-snap-zoom button {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  background: var(--ct-surface); border: 1px solid var(--ct-border); border-radius: 5px;
+  color: var(--ct-text); font-size: 16px; line-height: 1; cursor: pointer; transition: all 0.12s;
+}
+.ct-rep-snap-zoom button:hover { border-color: var(--ct-accent); color: var(--ct-accent); }
 /* table-layout: fixed (with a colgroup guessing each column's share)
    briefly replaced this — but a fixed width can't grow for content wider
    than its guess, and the bold Total row's numbers ran off the page as a
