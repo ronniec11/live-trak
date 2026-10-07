@@ -5461,6 +5461,34 @@ export default function Canvas() {
       return t === 'JPG' ? 'JPEG' : (t || 'JPEG')
     }
 
+    // Session completion photos come straight off a phone camera (often
+    // 3000px+ and several MB each, sometimes HEIC-turned-JPEG) and
+    // urlToDataURL fetches that raw file as-is — but the PDF only ever
+    // draws a photo into a 1.15in box (see the photos loop below), same
+    // order of magnitude as buildSheetSnapshot's own reasoning for capping
+    // the floor-plan snapshot instead of embedding it at full scan
+    // resolution. Without this, a report with even a handful of photos
+    // across an "All Time" range balloons into the tens of MB — too big to
+    // export or email, confirmed on a real report.
+    const REPORT_PHOTO_MAX_DIM = 500
+    const REPORT_PHOTO_JPEG_QUALITY = 0.8
+    function shrinkPhotoDataUrl(dataUrl) {
+      return new Promise(resolve => {
+        const img = new Image()
+        img.onload = () => {
+          const scale = Math.min(1, REPORT_PHOTO_MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight))
+          const w = Math.round(img.naturalWidth * scale)
+          const h = Math.round(img.naturalHeight * scale)
+          const c = document.createElement('canvas')
+          c.width = w; c.height = h
+          c.getContext('2d').drawImage(img, 0, 0, w, h)
+          resolve(c.toDataURL('image/jpeg', REPORT_PHOTO_JPEG_QUALITY))
+        }
+        img.onerror = () => resolve(dataUrl) // fall back to the untouched fetch rather than dropping the photo
+        img.src = dataUrl
+      })
+    }
+
     // Builds the PDF ourselves (jsPDF + autoTable) instead of going
     // through the OS print dialog (window.print() on a hidden iframe, as
     // this used to). Safari/WebKit's print engine — on both iPadOS and
@@ -5538,9 +5566,13 @@ export default function Canvas() {
         }
         y += 0.2
 
-        // "Production Tracking Report" • range • generated
+        // "Production Tracking Report" • range • generated — explicit grey
+        // here now rather than relying on inheriting it from the sheet-name
+        // line above: the percent-complete segment just set blue, and
+        // jsPDF has no "reset to default" call, only ever "set to X".
         doc.setFont(undefined, 'normal')
         doc.setFontSize(9)
+        doc.setTextColor('#6b7280')
         doc.text(`Production Tracking Report    •    ${data.range}    •    Generated ${data.generated}`, margin, y)
         y += 0.18
 
@@ -5681,7 +5713,7 @@ export default function Canvas() {
           for (const p of data.photos) {
             if (x + size > pageWidth - margin) { x = margin; y += size + gap; ensureRoom(size) }
             try {
-              const dataUrl = await urlToDataURL(p.url)
+              const dataUrl = await shrinkPhotoDataUrl(await urlToDataURL(p.url))
               doc.addImage(dataUrl, imageFormatFromDataUrl(dataUrl), x, y, size, size)
               doc.setDrawColor(p.color || '#4ade80')
               doc.setLineWidth(0.02)
