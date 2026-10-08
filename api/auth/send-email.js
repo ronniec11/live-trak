@@ -221,6 +221,19 @@ export default async function handler(req, res) {
         to: [user.email],
         subject: 'Your Live-Trak verification code',
         html: otpEmailHtml({ token }),
+        // iOS's "Security Code AutoFill" (the suggestion bar above the
+        // keyboard — confirmed on-device for a Gmail-app inbox not even
+        // added to Apple Mail) reads this from the push notification
+        // PREVIEW TEXT the mail app shows, which comes from the plain-text
+        // part of the email, not the HTML. Without an explicit `text`
+        // here, Resend auto-generates one by stripping the HTML card —
+        // serviceable, but the code ends up a sentence or two in, right at
+        // the edge of (or past) how much a notification banner actually
+        // shows before truncating. Leading with the code itself, the same
+        // way the working example that prompted this was phrased ("092800
+        // is your one-time code..."), keeps it inside the preview length
+        // every time instead of leaving it to chance.
+        text: `${token} is your Live-Trak verification code. Enter it to finish signing in. If you didn't request this, contact hello@live-trak.ai.`,
       })
       if (error) throw error
       res.status(200).json({})
