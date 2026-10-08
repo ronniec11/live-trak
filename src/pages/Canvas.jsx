@@ -5556,6 +5556,33 @@ export default function Canvas() {
       })
     }
 
+    // The company logo (CompanyHub's handleLogoChange) is uploaded with no
+    // resize/compression guardrail at all — a high-res PNG export can run
+    // several MB on its own despite only ever being drawn into a ~1.25in
+    // box here (see the logo embed below), same bloat this fixed for
+    // session photos above. Unlike photos, a logo is usually a flat-color
+    // mark on a transparent background, so it's kept as PNG (alpha-safe)
+    // rather than flattened to JPEG, unless the source already was a JPEG.
+    const REPORT_LOGO_MAX_DIM = 400
+    function shrinkLogoDataUrl(dataUrl) {
+      return new Promise(resolve => {
+        const img = new Image()
+        img.onload = () => {
+          const scale = Math.min(1, REPORT_LOGO_MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight))
+          if (scale === 1) { resolve(dataUrl); return }
+          const w = Math.round(img.naturalWidth * scale)
+          const h = Math.round(img.naturalHeight * scale)
+          const c = document.createElement('canvas')
+          c.width = w; c.height = h
+          c.getContext('2d').drawImage(img, 0, 0, w, h)
+          const isJpeg = /^data:image\/jpe?g/.test(dataUrl)
+          resolve(isJpeg ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png'))
+        }
+        img.onerror = () => resolve(dataUrl) // fall back to the untouched fetch rather than dropping the logo
+        img.src = dataUrl
+      })
+    }
+
     // Builds the PDF ourselves (jsPDF + autoTable) instead of going
     // through the OS print dialog (window.print() on a hidden iframe, as
     // this used to). Safari/WebKit's print engine — on both iPadOS and
@@ -5594,7 +5621,7 @@ export default function Canvas() {
         // its bottom edge lands at 1.0625in from the page's top edge.
         if (data.logoUrl) {
           try {
-            const logoDataUrl = await urlToDataURL(data.logoUrl)
+            const logoDataUrl = await shrinkLogoDataUrl(await urlToDataURL(data.logoUrl))
             const props = doc.getImageProperties(logoDataUrl)
             const maxW = 1.25, maxH = 1.0625 - margin
             let w = maxW, h = w * props.height / props.width
