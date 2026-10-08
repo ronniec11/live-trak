@@ -144,8 +144,19 @@ function otpEmailHtml({ token }) {
     <td align="center">
       <div style="font-family:'Inter',system-ui,sans-serif;max-width:500px;margin:0 auto;background:#0a0a0f;color:#f1f1f3;padding:40px;border-radius:12px;">
 
-        <h2 style="font-size:20px;margin:0 0 8px;">Your verification code</h2>
-        <p style="color:#8888a0;margin:0 0 24px;">Enter this code to complete your login to Live-Trak.</p>
+        <!-- This sentence is deliberately the FIRST visible text in the
+             email, code first — Gmail's push-notification preview turned
+             out to be built from the rendered/stripped HTML body (not the
+             separate text/plain part this hook also sends), so whatever
+             reads first here is what shows up above the keyboard for
+             iOS's code-autofill to find. Confirmed on-device that leading
+             with "CODE is your ... code" (matching a working competitor
+             example) is what that detector actually keys off — the
+             previous heading-then-paragraph-then-code order never
+             surfaced it, even once the separate text/plain part existed. -->
+        <p style="font-size:15px;margin:0 0 20px;">
+          <strong>${escapeHtml(token)}</strong> is your Live-Trak verification code. Enter it to finish signing in.
+        </p>
 
         <div style="background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;padding:24px;text-align:center;margin-bottom:24px;">
           <span style="font-size:36px;font-weight:800;letter-spacing:8px;color:#22c55e;">${escapeHtml(token)}</span>
