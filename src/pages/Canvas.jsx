@@ -168,6 +168,8 @@ export default function Canvas() {
   const hdrTotalRef         = useRef(null)
   const hdrTotalLblRef      = useRef(null)
   const hdrPctRef           = useRef(null)
+  const hdrFilterBoxRef     = useRef(null)   // "Showing" stat box — only visible once the page has tags
+  const hdrFilterRef        = useRef(null)
   const hdrProgressFillRef  = useRef(null)
   const categoryFilterBarRef = useRef(null)   // category chip row — only populated when the page has tags attached
   // sidebar
@@ -4203,22 +4205,7 @@ export default function Canvas() {
         dot.title = s.userName || s.name
         const nm  = document.createElement('div'); nm.className = 'ct-scard-name'; nm.textContent = s.name
         const sb  = document.createElement('span'); sb.className = 'ct-solo-badge'; sb.textContent = 'SOLO'
-        top.append(dot, nm, sb)
-        // Category badge — only resolvable for the active page's own
-        // sessions (pageTags is that one page's tag list; a card for a
-        // different page in this cross-page list is left without one
-        // rather than fetching that other page's tags just to label it).
-        if (s.tagId && pg.id === activePage?.id) {
-          const catTag = pageTags.find(t => t.id === s.tagId)
-          if (catTag) {
-            const catBadge = document.createElement('span'); catBadge.className = 'ct-scard-cat'
-            const catDot = document.createElement('span'); catDot.className = 'ct-scard-cat-dot'
-            catDot.style.background = categoryColor(catTag.id)
-            catBadge.append(catDot, document.createTextNode(catTag.name))
-            top.appendChild(catBadge)
-          }
-        }
-        top.append(editBtn, delBtn)
+        top.append(dot, nm, sb, editBtn, delBtn)
 
         const sfDiv = document.createElement('div'); sfDiv.className = 'ct-scard-sf'
         const _count = s.count ?? s.countMarkers?.length ?? 0
@@ -4231,7 +4218,24 @@ export default function Canvas() {
         card.append(top, sfDiv)
 
         const metaDiv = document.createElement('div'); metaDiv.className = 'ct-scard-meta'
-        metaDiv.textContent = [pg.name, formatMD(s.date), s.time, (s.userName || s.name)].filter(Boolean).join(' · ')
+        // Category badge first, same line as the rest of the metadata
+        // (project/date/time/user) rather than competing with the name
+        // and edit/delete buttons for room on the crowded top row — only
+        // resolvable for the active page's own sessions (pageTags is that
+        // one page's tag list; a card for a different page in this
+        // cross-page list is left without one rather than fetching that
+        // other page's tags just to label it).
+        if (s.tagId && pg.id === activePage?.id) {
+          const catTag = pageTags.find(t => t.id === s.tagId)
+          if (catTag) {
+            const catBadge = document.createElement('span'); catBadge.className = 'ct-scard-cat'
+            const catDot = document.createElement('span'); catDot.className = 'ct-scard-cat-dot'
+            catDot.style.background = categoryColor(catTag.id)
+            catBadge.append(catDot, document.createTextNode(catTag.name))
+            metaDiv.appendChild(catBadge)
+          }
+        }
+        metaDiv.appendChild(document.createTextNode([pg.name, formatMD(s.date), s.time, (s.userName || s.name)].filter(Boolean).join(' · ')))
         card.appendChild(metaDiv)
 
         if (s.photos && s.photos.length > 0) {
@@ -4266,6 +4270,7 @@ export default function Canvas() {
       const hasTags = pageTags.length > 0
       if (saveCategoryFieldRef.current) saveCategoryFieldRef.current.style.display = hasTags ? '' : 'none'
       if (editCategoryFieldRef.current) editCategoryFieldRef.current.style.display = hasTags ? '' : 'none'
+      if (hdrFilterBoxRef.current) hdrFilterBoxRef.current.style.display = hasTags ? '' : 'none'
       for (const sel of [saveCategoryRef.current, editCategoryRef.current]) {
         if (!sel) continue
         const prev = sel.value
@@ -4317,15 +4322,13 @@ export default function Canvas() {
         s._catHidden = filtering && !activeCategoryFilter.has(s.tagId || UNCATEGORIZED)
       })
       invalidateSessions(); redrawAll(); updateSF(); renderSessions()
-      // "Total SF/LF/EA" (applyUnitLabels) becomes misleading once it's
-      // really just the isolated category's subtotal (see updateSF's own
-      // cachedTotalSF comment) — relabel the header stat to say which,
-      // rather than leaving a smaller number silently sitting under a
-      // label that still claims it's the whole sheet's total.
-      if (hdrTotalLblRef.current) {
+      // "Total SF/LF/EA" now reflects just the isolated category(ies)
+      // rather than the whole sheet (see updateSF's own cachedTotalSF
+      // comment) — the "Showing" stat says which, rather than silently
+      // changing what "Total SF" means without saying so.
+      if (hdrFilterRef.current) {
         const names = [...activeCategoryFilter].map(k => k === UNCATEGORIZED ? 'Uncategorized' : pageTags.find(t => t.id === k)?.name).filter(Boolean)
-        if (!filtering || !names.length) applyUnitLabels()
-        else hdrTotalLblRef.current.textContent = names.join(' + ')
+        hdrFilterRef.current.textContent = (!filtering || !names.length) ? 'All' : names.join(' + ')
       }
     }
     function toggleCategoryFilter(key) {
@@ -7411,6 +7414,14 @@ export default function Canvas() {
         <div className="ct-stat-box" style={{minWidth:55}}>
           <div ref={hdrPctRef} className="ct-stat-val" style={{color:'#3b82f6'}}>–</div>
           <div className="ct-stat-lbl">of target</div>
+        </div>
+        {/* "Showing" — which category(ies) the three stats to its left
+            reflect; only shown once this page has tags (see
+            renderCategoryTagsUI/applyCategoryFilterVisibility) */}
+        <div className="ct-hdiv" />
+        <div ref={hdrFilterBoxRef} className="ct-stat-box" style={{minWidth:70, display:'none'}}>
+          <div ref={hdrFilterRef} className="ct-stat-val" style={{color:'#9ca3af', fontSize:12}}>All</div>
+          <div className="ct-stat-lbl">showing</div>
         </div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
           {headerProfile && (

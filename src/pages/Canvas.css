@@ -301,7 +301,7 @@
 .ct-scard-edit:hover { background: rgba(96,165,250,0.15); color: #60a5fa; }
 .ct-scard-sf { font-size: 16px; font-weight: 700; color: var(--ct-accent); }
 .ct-scard-meta { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
-.ct-scard-cat { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; color: var(--ct-muted); background: var(--ct-surface-2); border: 1px solid var(--ct-border); border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
+.ct-scard-cat { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; color: var(--ct-muted); background: var(--ct-surface-2); border: 1px solid var(--ct-border); border-radius: 3px; padding: 1px 5px; margin-right: 6px; vertical-align: middle; }
 .ct-scard-cat-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .ct-scard-photos { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .ct-scard-photo { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; cursor: pointer; border: 1px solid var(--ct-border); }
