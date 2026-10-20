@@ -69,6 +69,15 @@ const IS_IPAD = /iPad|Macintosh/i.test(navigator.userAgent) && navigator.maxTouc
 // being saved regardless of which tool was used) — it isn't read back by
 // this file today, but is there for reports/exports that may want it
 // without re-joining pages.
+//
+// NOTE: Run this migration to enable per-session categories — tagging a
+// session with one of the tags already attached to its page (Sheet
+// Settings), so a sheet that's really several separately-tracked parts
+// (e.g. a data hall's Cold Aisle vs. Hot Aisle, or a floor split between
+// Wood and Tile) can isolate/filter the canvas and break out progress by
+// category instead of one flat total for the whole sheet — see
+// supabase-migration-session-category-tag.sql:
+// ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS tag_id uuid REFERENCES public.tags ON DELETE SET NULL;
 
 const COLORS = [
   '#facc15','#4ade80','#60a5fa','#f97316','#f472b6','#a78bfa',
@@ -76,6 +85,22 @@ const COLORS = [
   '#14b8a6','#6366f1','#fb7185','#d946ef',
   '#000000','#ff0000','#7f1d1d','#1e3a8a','#166534','#a16207','#6b21a8','#db2777',
 ]
+// Category chips/badges (page tags used as session categories) get a color
+// of their own, deterministic per tag id — distinct from COLORS above
+// (that's what was actually painted; a category is a separate dimension
+// and would be confusing sharing the same swatches/meaning).
+const CATEGORY_COLORS = [
+  '#f59e0b','#3b82f6','#ec4899','#10b981','#8b5cf6','#f43f5e','#06b6d4','#84cc16',
+]
+function categoryColor(tagId) {
+  if (!tagId) return '#9ca3af'
+  let h = 0
+  for (let i = 0; i < tagId.length; i++) h = (h * 31 + tagId.charCodeAt(i)) >>> 0
+  return CATEGORY_COLORS[h % CATEGORY_COLORS.length]
+}
+// Sentinel for the category filter's "Uncategorized" chip — stands in for
+// a session's null tagId (a real tag id, being a uuid, never collides with it).
+const UNCATEGORIZED = '__uncategorized__'
 const SCALES = {
   '1:1':{n:1,d:1/12},'1:32':{n:1/32,d:1},'3:64':{n:3/64,d:1},
   '1:16':{n:1/16,d:1},'3:32':{n:3/32,d:1},'1:8':{n:1/8,d:1},
@@ -144,6 +169,7 @@ export default function Canvas() {
   const hdrTotalLblRef      = useRef(null)
   const hdrPctRef           = useRef(null)
   const hdrProgressFillRef  = useRef(null)
+  const categoryFilterBarRef = useRef(null)   // category chip row — only populated when the page has tags attached
   // sidebar
   const btnHlRef         = useRef(null)
   const btnPenRef        = useRef(null)
@@ -182,6 +208,8 @@ export default function Canvas() {
   const editHoursRef     = useRef(null)
   const editTotalHoursRef = useRef(null)
   const editDateRef      = useRef(null)
+  const editCategoryFieldRef = useRef(null) // wrapping field, shown only when the page has tags
+  const editCategoryRef  = useRef(null)   // category <select>, only rendered when the page has tags
   const editPhotosRef    = useRef(null)   // thumbnail strip container
   const editPhotoInputRef = useRef(null)  // hidden <input type=file>
   // save session modal
@@ -191,6 +219,8 @@ export default function Canvas() {
   const saveCrewRef      = useRef(null)
   const saveHoursRef     = useRef(null)
   const saveTotalHoursRef = useRef(null)
+  const saveCategoryFieldRef = useRef(null) // wrapping field, shown only when the page has tags
+  const saveCategoryRef  = useRef(null)   // category <select>, only rendered when the page has tags
   const savePhotosRef    = useRef(null)   // thumbnail strip container
   const savePhotoInputRef = useRef(null)  // hidden <input type=file>
   // history modal
@@ -428,7 +458,7 @@ export default function Canvas() {
       hlc.clearRect(0, 0, img.width, img.height)
       penc.clearRect(0, 0, img.width, img.height)
       activePage.sessions.forEach(s => {
-        if (s._hidden || !s.hlCanvas || s.hlCanvas.width === 0) return
+        if (s._hidden || s._catHidden || !s.hlCanvas || s.hlCanvas.width === 0) return
         const mismatched = s.hlCanvas.width !== img.width || s.hlCanvas.height !== img.height
         if (mismatched) {
           console.warn('[Canvas] Session hlCanvas size mismatch vs page image:', s.id,
@@ -452,7 +482,7 @@ export default function Canvas() {
         else hlc.drawImage(toDraw, 0, 0)
       })
       activePage.sessions.forEach(s => {
-        if (!s.penCanvas || s._hidden) return
+        if (!s.penCanvas || s._hidden || s._catHidden) return
         if (s.penCanvas.width !== img.width || s.penCanvas.height !== img.height) {
           penc.drawImage(s.penCanvas, 0, 0, img.width, img.height)
         } else {
@@ -475,6 +505,8 @@ export default function Canvas() {
     let orgUnlimitedUntil   = null // this job's organization's unlimited_until — a Super Admin-granted plan-limit bypass, see src/lib/planLimits.js
     let lunchBreakMinutes   = 0   // per-crew-member deduction applied to man-hours in the Sheet Report (see Scope Settings)
     let orgLogoUrl          = null // company logo (Company Hub) — shown top-right on the Sheet Report
+    let pageTags            = []   // tags attached to this page (Sheet Settings) — the category choices offered when saving/editing a session
+    let activeCategoryFilter = new Set() // tag ids currently isolated on the canvas; empty = show every category
     let calYear         = 0
     let calMonth        = 0
     let calSelectedDate = null
@@ -799,7 +831,7 @@ export default function Canvas() {
       const all = []
       if (!soloSession) {
         activePage.sessions.forEach(s => {
-          if (!s._hidden && s.countMarkers) s.countMarkers.forEach(m => all.push(m))
+          if (!s._hidden && !s._catHidden && s.countMarkers) s.countMarkers.forEach(m => all.push(m))
         })
         liveCountMarkers.forEach(m => all.push(m))
       } else if (soloSession.countMarkers) {
@@ -841,7 +873,7 @@ export default function Canvas() {
       const allLines = []
       if (!soloSession) {
         activePage.sessions.forEach(s => {
-          if (!s._hidden && s.lfLines) s.lfLines.forEach(l => allLines.push(l))
+          if (!s._hidden && !s._catHidden && s.lfLines) s.lfLines.forEach(l => allLines.push(l))
         })
         liveLFLines.forEach(l => allLines.push(l))
       } else if (soloSession.lfLines) {
@@ -889,7 +921,7 @@ export default function Canvas() {
       const allLabels = []
       if (!soloSession) {
         activePage.sessions.forEach(s => {
-          if (!s._hidden && s.textLabels) s.textLabels.forEach(t => allLabels.push(t))
+          if (!s._hidden && !s._catHidden && s.textLabels) s.textLabels.forEach(t => allLabels.push(t))
         })
         liveTextLabels.forEach(t => allLabels.push(t))
       } else if (soloSession.textLabels) {
@@ -3368,12 +3400,15 @@ export default function Canvas() {
         : liveSFVal
       // Daily total = today's sessions only + current unsaved live work (for daily progress bar)
       cachedTodaySF = activePage.sessions
-        .filter(s => !s._hidden && s.date === today)
+        .filter(s => !s._hidden && !s._catHidden && s.date === today)
         .reduce((sum, s) => sum + sessionUnitValue(s, uom), 0)
         + cachedLiveUnitVal
       // Grand total = all non-hidden sessions + live (for header Total stat)
+      // — when a category filter is active, this becomes that category's
+      // subtotal instead of the whole page's, same as the canvas itself
+      // only showing that category's markup (see applyCategoryFilterVisibility).
       cachedTotalSF = activePage.sessions
-        .filter(s => !s._hidden)
+        .filter(s => !s._hidden && !s._catHidden)
         .reduce((sum, s) => sum + sessionUnitValue(s, uom), 0)
         + cachedLiveUnitVal
       updateSFDisplay()
@@ -3581,6 +3616,15 @@ export default function Canvas() {
       saveTotalHoursTouched = false
       if (saveTotalHoursRef.current) saveTotalHoursRef.current.value = ''
       updateSaveTotalHours()
+      // Default to whatever single category the canvas is currently
+      // isolated to (if any) — the common case for a page with categories
+      // is working through one at a time, so the save a session that just
+      // got painted while isolated to "Cold Aisle" is almost always
+      // itself Cold Aisle work.
+      if (saveCategoryRef.current) {
+        const [only] = activeCategoryFilter
+        saveCategoryRef.current.value = (activeCategoryFilter.size === 1 && only !== UNCATEGORIZED) ? only : ''
+      }
       savePendingPhotos = []
       renderSavePhotos()
       if (saveModalRef.current) saveModalRef.current.classList.add('open')
@@ -3686,6 +3730,7 @@ export default function Canvas() {
       const crewSize    = crewRaw  ? parseInt(crewRaw, 10)   : null
       const hoursWorked = hoursRaw ? parseFloat(hoursRaw)    : null
       const totalHours  = resolveTotalHours(crewRaw, hoursRaw, totalRaw)
+      const tagId = saveCategoryRef.current?.value || null
       closeSaveModal()
 
       const sf   = toSF(countPx(liveHlCanvas))
@@ -3719,7 +3764,13 @@ export default function Canvas() {
         countMarkers: snapCount,
         lfLines: snapLFLines,
         textLabels: snapText,
-        crewSize, hoursWorked, totalHours,
+        crewSize, hoursWorked, totalHours, tagId,
+        // Matches whatever the canvas is currently isolated to, same as any
+        // other session — a filter active when this one's about to appear
+        // shouldn't suddenly reveal it just because it's brand new (see
+        // applyCategoryFilterVisibility, which every other session's
+        // _catHidden already goes through).
+        _catHidden: activeCategoryFilter.size > 0 && !activeCategoryFilter.has(tagId || UNCATEGORIZED),
         pageId: activePage.id, pageName: activePage.name,
         photos: [],
         _pendingPhotoFiles: savePendingPhotos,
@@ -3907,6 +3958,7 @@ export default function Canvas() {
         text_data: session.textLabels?.length > 0
           ? { w: activePage.image.width, h: activePage.image.height, labels: session.textLabels }
           : null,
+        tag_id: session.tagId || null,
       }
       try {
         const [highlight_data, pen_data, photoResult] = await Promise.all([
@@ -3952,6 +4004,7 @@ export default function Canvas() {
             : null,
           photos,
           unit_of_measure: activePage.unitOfMeasure || 'SF',
+          tag_id:         session.tagId || null,
           updated_at:     new Date().toISOString(),
         }
 
@@ -4018,6 +4071,15 @@ export default function Canvas() {
           console.warn('[Canvas] unit_of_measure column missing on sessions, retrying without it.')
           const { unit_of_measure, ...rest } = insertPayload
           ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
+        }
+        if (error && /\btag_id\b/.test(error.message)) {
+          // Same idea, for the newer tag_id (category) column.
+          console.warn('[Canvas] tag_id column missing on sessions, retrying without it.')
+          const { tag_id, ...rest } = insertPayload
+          ;({ data, error } = await supabase.from('sessions').insert(rest).select('id').single())
+          if (!error && session.tagId) {
+            alert('Session saved, but its Category was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (tag_id ALTER TABLE) in the Supabase SQL editor, then re-select it via the session\'s edit (pencil) button.')
+          }
         }
         if (error) throw error
         if (data?.id) session.supabaseId = data.id
@@ -4141,7 +4203,22 @@ export default function Canvas() {
         dot.title = s.userName || s.name
         const nm  = document.createElement('div'); nm.className = 'ct-scard-name'; nm.textContent = s.name
         const sb  = document.createElement('span'); sb.className = 'ct-solo-badge'; sb.textContent = 'SOLO'
-        top.append(dot, nm, sb, editBtn, delBtn)
+        top.append(dot, nm, sb)
+        // Category badge — only resolvable for the active page's own
+        // sessions (pageTags is that one page's tag list; a card for a
+        // different page in this cross-page list is left without one
+        // rather than fetching that other page's tags just to label it).
+        if (s.tagId && pg.id === activePage?.id) {
+          const catTag = pageTags.find(t => t.id === s.tagId)
+          if (catTag) {
+            const catBadge = document.createElement('span'); catBadge.className = 'ct-scard-cat'
+            const catDot = document.createElement('span'); catDot.className = 'ct-scard-cat-dot'
+            catDot.style.background = categoryColor(catTag.id)
+            catBadge.append(catDot, document.createTextNode(catTag.name))
+            top.appendChild(catBadge)
+          }
+        }
+        top.append(editBtn, delBtn)
 
         const sfDiv = document.createElement('div'); sfDiv.className = 'ct-scard-sf'
         const _count = s.count ?? s.countMarkers?.length ?? 0
@@ -4177,6 +4254,89 @@ export default function Canvas() {
         card.addEventListener('click', () => toggleSolo(s))
         list.appendChild(card)
       })
+    }
+
+    // ── CATEGORIES (session-level tags: isolate/filter the canvas) ────────────
+    // Builds the category <select> options (Save/Edit Session modals) and the
+    // filter chip bar from pageTags, once it's loaded — a no-op (both stay
+    // empty/hidden) for a page with no tags attached, same as before any of
+    // this existed. Re-run is safe/idempotent (innerHTML reset each time), so
+    // callers don't need to worry about calling it more than once.
+    function renderCategoryTagsUI() {
+      const hasTags = pageTags.length > 0
+      if (saveCategoryFieldRef.current) saveCategoryFieldRef.current.style.display = hasTags ? '' : 'none'
+      if (editCategoryFieldRef.current) editCategoryFieldRef.current.style.display = hasTags ? '' : 'none'
+      for (const sel of [saveCategoryRef.current, editCategoryRef.current]) {
+        if (!sel) continue
+        const prev = sel.value
+        sel.innerHTML = ''
+        if (!hasTags) continue
+        const none = document.createElement('option'); none.value = ''; none.textContent = '— None —'
+        sel.appendChild(none)
+        pageTags.forEach(t => {
+          const opt = document.createElement('option'); opt.value = t.id; opt.textContent = t.name
+          sel.appendChild(opt)
+        })
+        if (prev) sel.value = prev
+      }
+      const bar = categoryFilterBarRef.current
+      if (!bar) return
+      bar.innerHTML = ''
+      bar.style.display = hasTags ? 'flex' : 'none'
+      if (!hasTags) return
+      const lbl = document.createElement('span'); lbl.className = 'ct-cat-bar-lbl'; lbl.textContent = 'Isolate'
+      bar.appendChild(lbl)
+      const allChip = document.createElement('div')
+      allChip.className = 'ct-cat-chip' + (activeCategoryFilter.size === 0 ? ' active' : '')
+      allChip.textContent = 'All'
+      allChip.addEventListener('click', () => clearCategoryFilter())
+      bar.appendChild(allChip)
+      pageTags.forEach(t => {
+        const chip = document.createElement('div')
+        chip.className = 'ct-cat-chip' + (activeCategoryFilter.has(t.id) ? ' active' : '')
+        const dot = document.createElement('span'); dot.className = 'ct-cat-chip-dot'; dot.style.background = categoryColor(t.id)
+        chip.append(dot, document.createTextNode(t.name))
+        chip.addEventListener('click', () => toggleCategoryFilter(t.id))
+        bar.appendChild(chip)
+      })
+      const uncatChip = document.createElement('div')
+      uncatChip.className = 'ct-cat-chip' + (activeCategoryFilter.has(UNCATEGORIZED) ? ' active' : '')
+      uncatChip.textContent = 'Uncategorized'
+      uncatChip.addEventListener('click', () => toggleCategoryFilter(UNCATEGORIZED))
+      bar.appendChild(uncatChip)
+    }
+
+    // Toggling a chip on/off re-derives every session's _catHidden from
+    // scratch rather than patching just the one category — simpler, and
+    // cheap enough (a page's session count is nowhere near perf-sensitive
+    // here) given how rarely this fires compared to drawing itself.
+    function applyCategoryFilterVisibility() {
+      if (!activePage) return
+      const filtering = activeCategoryFilter.size > 0
+      activePage.sessions.forEach(s => {
+        s._catHidden = filtering && !activeCategoryFilter.has(s.tagId || UNCATEGORIZED)
+      })
+      invalidateSessions(); redrawAll(); updateSF(); renderSessions()
+      // "Total SF/LF/EA" (applyUnitLabels) becomes misleading once it's
+      // really just the isolated category's subtotal (see updateSF's own
+      // cachedTotalSF comment) — relabel the header stat to say which,
+      // rather than leaving a smaller number silently sitting under a
+      // label that still claims it's the whole sheet's total.
+      if (hdrTotalLblRef.current) {
+        const names = [...activeCategoryFilter].map(k => k === UNCATEGORIZED ? 'Uncategorized' : pageTags.find(t => t.id === k)?.name).filter(Boolean)
+        if (!filtering || !names.length) applyUnitLabels()
+        else hdrTotalLblRef.current.textContent = names.join(' + ')
+      }
+    }
+    function toggleCategoryFilter(key) {
+      if (activeCategoryFilter.has(key)) activeCategoryFilter.delete(key)
+      else activeCategoryFilter.add(key)
+      renderCategoryTagsUI(); applyCategoryFilterVisibility()
+    }
+    function clearCategoryFilter() {
+      if (activeCategoryFilter.size === 0) return
+      activeCategoryFilter = new Set()
+      renderCategoryTagsUI(); applyCategoryFilterVisibility()
     }
 
     // ── DRAFT (localStorage) ──────────────────────────────────────────────────
@@ -4261,6 +4421,11 @@ export default function Canvas() {
       if (editColorsRef.current) editColorsRef.current.querySelectorAll('.ct-modal-cc').forEach(el => el.classList.toggle('sel', el.dataset.c === s.color))
       if (editCrewRef.current) editCrewRef.current.value = s.crewSize ?? ''
       if (editHoursRef.current) editHoursRef.current.value = s.hoursWorked ?? ''
+      // Only meaningful for a session on the currently active page — the
+      // select's own options are that page's pageTags, so a session
+      // belonging to a different page (this list spans every page in the
+      // scope) just can't be shown a matching option here.
+      if (editCategoryRef.current) editCategoryRef.current.value = s.tagId || ''
       if (s.totalHours != null) {
         editTotalHoursTouched = true
         if (editTotalHoursRef.current) editTotalHoursRef.current.value = formatTotalHours(s.totalHours)
@@ -4300,6 +4465,13 @@ export default function Canvas() {
       s.crewSize    = (newCrew != null && !isNaN(newCrew)) ? newCrew : null
       s.hoursWorked = (newHours != null && !isNaN(newHours)) ? newHours : null
       s.totalHours  = newTotalHours
+      // Only present (and so only ever changed here) for a session on the
+      // currently active page — see openEditModal's own note on why a
+      // different page's session can't be shown/edited here.
+      if (editCategoryRef.current) {
+        s.tagId = editCategoryRef.current.value || null
+        s._catHidden = activeCategoryFilter.size > 0 && !activeCategoryFilter.has(s.tagId || UNCATEGORIZED)
+      }
       const newPhotoFiles = editPendingPhotos
       const keptPhotoUrls = editKeptPhotoUrls
       editPendingPhotos = []; editKeptPhotoUrls = []
@@ -4311,7 +4483,7 @@ export default function Canvas() {
       if (photoResult.failed.length > 0) await queueFailedPhotos(s, photoResult.failed, s.photos)
       if (s.supabaseId) {
         console.log('[Canvas] Updating session in Supabase:', s.supabaseId, s.name)
-        const editFields = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked, total_hours: s.totalHours }
+        const editFields = { name: s.name, color: s.color, sf: s.sf, lf: s.lf || null, work_date: s.date, crew_size: s.crewSize, hours_worked: s.hoursWorked, total_hours: s.totalHours, tag_id: s.tagId ?? null }
         const payload = { ...editFields, photos: s.photos }
         try {
           let { error } = await supabase.from('sessions').update(payload).eq('id', s.supabaseId)
@@ -4358,6 +4530,16 @@ export default function Canvas() {
           }
           if (!error && photosDropped) {
             alert('Session saved, but Photos were NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (photos ALTER TABLE) in the Supabase SQL editor, then re-add them.')
+          }
+          let tagDropped = false
+          if (error && /\btag_id\b/.test(error.message)) {
+            console.warn('[Canvas] tag_id column missing, retrying without it — run the migration noted at the top of this file.')
+            tagDropped = true
+            const { tag_id, ...rest } = payload
+            ;({ error } = await supabase.from('sessions').update(rest).eq('id', s.supabaseId))
+          }
+          if (!error && tagDropped) {
+            alert('Session saved, but its Category was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (tag_id ALTER TABLE) in the Supabase SQL editor, then re-select it.')
           }
           if (error) throw error
           showToast('Session updated!')
@@ -5322,6 +5504,13 @@ export default function Canvas() {
           sf: s.sf, lf: s.lf || 0, count: s.count ?? s.countMarkers?.length ?? 0,
           crew: s.crewSize || 0, hours: s.hoursWorked || 0,
           manHours: sessionManHours(s),
+          // Only set when this page actually has tags attached — an
+          // untagged page's report stays exactly the flat list it always
+          // was, no grouping/subtotals. A tagged page's own untagged
+          // sessions still land in their own "Uncategorized" group rather
+          // than silently vanishing from the breakdown.
+          category: pageTags.length ? (pageTags.find(t => t.id === s.tagId)?.name || 'Uncategorized') : null,
+          categoryColor: pageTags.length ? categoryColor(s.tagId) : null,
         })),
         lunchBreakMinutes,
         // Already resolved to signed URLs above — this was previously
@@ -5362,8 +5551,8 @@ export default function Canvas() {
       closeReportSetup()
       if (reportModalRef.current) reportModalRef.current.classList.add('open')
     }
-    function reportRowsHtml(data, numClass) {
-      return data.rows.map(r => `
+    function reportRowHtml(r, data, numClass) {
+      return `
         <tr>
           <td>${r.date}</td>
           <td><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${r.color || '#4ade80'};margin-right:6px;vertical-align:middle;"></span>${r.name}</td>
@@ -5371,7 +5560,54 @@ export default function Canvas() {
           <td class="${numClass}">${r.crew || '–'}</td>
           <td class="${numClass}">${r.hours ? r.hours.toFixed(1) : '–'}</td>
           <td class="${numClass}">${r.manHours ? r.manHours.toFixed(1) : '–'}</td>
-        </tr>`).join('')
+        </tr>`
+    }
+    // Sessions grouped by category (Sheet Settings tags), in first-seen
+    // order, with per-group totals — null when the page has no tags at
+    // all (every row's category is then unset), so an untagged page's
+    // report keeps rendering as one flat list via reportRowsHtml's own
+    // fallback below, unchanged from before categories existed.
+    function groupReportRowsByCategory(data) {
+      if (!data.rows.some(r => r.category)) return null
+      const order = []
+      const byCat = new Map()
+      data.rows.forEach(r => {
+        const key = r.category
+        if (!byCat.has(key)) { byCat.set(key, { category: key, color: r.categoryColor, rows: [] }); order.push(key) }
+        byCat.get(key).rows.push(r)
+      })
+      return order.map(key => {
+        const g = byCat.get(key)
+        const totals = {}
+        data.units.forEach(u => { totals[u.key] = g.rows.reduce((a, r) => a + (r[u.key] || 0), 0) })
+        totals.manHours = g.rows.reduce((a, r) => a + (r.manHours || 0), 0)
+        return { ...g, totals }
+      })
+    }
+    function reportSubtotalRowHtml(g, data, numClass) {
+      // Same bold/border-top treatment as .ct-rep-table tfoot td (the
+      // overall Total row) — applied per-cell rather than on the <tr>,
+      // matching that rule exactly rather than relying on browsers to
+      // render a border on the row element itself.
+      const cellStyle = 'font-weight:700;border-top:2px solid var(--ct-border);'
+      return `
+        <tr>
+          <td colspan="2" style="${cellStyle}">
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${g.color || '#9ca3af'};margin-right:6px;vertical-align:middle;"></span>
+            ${g.category} — Subtotal
+          </td>
+          ${data.units.map(u => `<td class="${numClass}" style="${cellStyle}">${Math.round(g.totals[u.key]).toLocaleString()}</td>`).join('')}
+          <td class="${numClass}" style="${cellStyle}"></td>
+          <td class="${numClass}" style="${cellStyle}"></td>
+          <td class="${numClass}" style="${cellStyle}">${g.totals.manHours.toFixed(1)}</td>
+        </tr>`
+    }
+    function reportRowsHtml(data, numClass) {
+      const groups = groupReportRowsByCategory(data)
+      if (!groups) return data.rows.map(r => reportRowHtml(r, data, numClass)).join('')
+      return groups.map(g =>
+        g.rows.map(r => reportRowHtml(r, data, numClass)).join('') + reportSubtotalRowHtml(g, data, numClass)
+      ).join('')
     }
     // Shared by the on-screen view and the printable version. One
     // Man-Hour/Day segment per unit actually shown (see `units` in
@@ -5720,13 +5956,38 @@ export default function Canvas() {
         const unitCount = data.units.length
         const sessionColWidth = unitCount <= 1 ? 0.41 : unitCount === 2 ? 0.33 : 0.25
         const head = ['Date', 'Session', ...data.units.map(u => u.label), 'Crew', 'Hours', 'Total Hours']
-        const body = data.rows.map(r => [
+        // bodyMeta runs parallel to body (one entry per row) so didParseCell/
+        // didDrawCell below know what each row actually is — a plain session
+        // row (color dot, normal weight) or a category subtotal row (bold,
+        // no dot) — without having to re-derive it from the row's own cell
+        // text. Grouped-with-subtotals when this page has tags (see
+        // groupReportRowsByCategory), otherwise the same flat list as
+        // always, both built from the same reportSessionRow/reportSubtotalRow
+        // helpers the on-screen report's reportRowHtml/reportSubtotalRowHtml
+        // mirror.
+        const sessionRow = r => [
           r.date, r.name,
           ...data.units.map(u => r[u.key] ? Math.round(r[u.key]).toLocaleString() : '–'),
           r.crew || '–',
           r.hours ? r.hours.toFixed(1) : '–',
           r.manHours ? r.manHours.toFixed(1) : '–',
-        ])
+        ]
+        const subtotalRow = g => [
+          { content: `${g.category} — Subtotal`, colSpan: 2 },
+          ...data.units.map(u => Math.round(g.totals[u.key]).toLocaleString()),
+          '', '',
+          g.totals.manHours.toFixed(1),
+        ]
+        const body = [], bodyMeta = []
+        const groups = groupReportRowsByCategory(data)
+        if (!groups) {
+          data.rows.forEach(r => { body.push(sessionRow(r)); bodyMeta.push({ type: 'session', color: r.color }) })
+        } else {
+          groups.forEach(g => {
+            g.rows.forEach(r => { body.push(sessionRow(r)); bodyMeta.push({ type: 'session', color: r.color }) })
+            body.push(subtotalRow(g)); bodyMeta.push({ type: 'subtotal' })
+          })
+        }
         const foot = ['Total', '',
           ...data.units.map(u => u.total ? Math.round(u.total).toLocaleString() : '–'),
           '', '',
@@ -5760,17 +6021,29 @@ export default function Canvas() {
           // here, after normal style resolution, guarantees the foot
           // matches every numeric column's alignment above it exactly.
           didParseCell(hook) {
+            // A category subtotal row gets the same bold/right-align
+            // treatment as the Total foot row below it, so it reads as a
+            // subtotal rather than just another session line.
+            if (hook.section === 'body' && bodyMeta[hook.row.index]?.type === 'subtotal') {
+              hook.cell.styles.fontStyle = 'bold'
+              const wanted = columnStyles[hook.column.index]?.halign
+              if (wanted) hook.cell.styles.halign = wanted
+              return
+            }
             if (hook.section !== 'foot') return
             const wanted = columnStyles[hook.column.index]?.halign
             if (wanted) hook.cell.styles.halign = wanted
           },
           // Each session's color dot, same as the on-screen report — the
           // extra left cellPadding on the Session column (above) is the
-          // room reserved for it so it doesn't overlap the name.
+          // room reserved for it so it doesn't overlap the name. Skipped
+          // for a category subtotal row (bodyMeta), which has no session
+          // color of its own to show.
           didDrawCell(hook) {
             if (hook.section !== 'body' || hook.column.index !== 1) return
-            const color = data.rows[hook.row.index]?.color || '#4ade80'
-            doc.setFillColor(color)
+            const meta = bodyMeta[hook.row.index]
+            if (meta?.type !== 'session') return
+            doc.setFillColor(meta.color || '#4ade80')
             doc.circle(hook.cell.x + 0.09, hook.cell.y + hook.cell.height / 2, 0.035, 'F')
           },
         })
@@ -6143,6 +6416,7 @@ export default function Canvas() {
           crewSize:     dbSess.crew_size ?? null,
           hoursWorked:  dbSess.hours_worked ?? null,
           totalHours:   dbSess.total_hours ?? null,
+          tagId:        dbSess.tag_id ?? null,
           photos:       Array.isArray(dbSess.photos) ? dbSess.photos : [],
           supabaseId:   dbSess.id,
         }
@@ -6472,6 +6746,7 @@ export default function Canvas() {
           crewSize: cs.crew_size ?? null,
           hoursWorked: cs.hours_worked ?? null,
           totalHours: cs.total_hours ?? null,
+          tagId: cs.tag_id ?? null,
           // Cached as real bytes (see offlineCache.js) — converted to
           // blob: URLs here rather than at download time so they aren't
           // held open for the whole time the device stays offline.
@@ -6597,6 +6872,16 @@ export default function Canvas() {
           console.warn('[Canvas] Could not load company logo for Sheet Report:', err)
         }
       }
+      // Best-effort, same reasoning — a sheet with no tags attached (Sheet
+      // Settings, ScopeDetail.jsx) just gets no category picker/filter at
+      // all, same as before this existed.
+      try {
+        const { data: tagRows } = await supabase.from('page_tags').select('tags(*)').eq('page_id', pageId)
+        pageTags = (tagRows || []).map(r => r.tags).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name))
+      } catch (err) {
+        console.warn('[Canvas] Could not load page tags for category tracking:', err)
+      }
+      renderCategoryTagsUI()
 
       const savedPPF = pg.pixels_per_foot || null
       const savedCalibrated = pg.calibrated || false
@@ -7145,6 +7430,9 @@ export default function Canvas() {
         <div ref={hdrProgressFillRef} style={{height:4,background:'#3b82f6',width:'0%',borderRadius:2,transition:'width 0.4s ease'}} />
       </div>
 
+      {/* Category filter — only populated (and shown) when this page has tags attached */}
+      <div ref={categoryFilterBarRef} className="ct-cat-bar" style={{display:'none'}} />
+
       <div style={{display:'flex',flex:1,overflow:'hidden',minHeight:0}}>
 
         <div ref={wrapRef} className="ct-canvas-wrap">
@@ -7308,6 +7596,10 @@ export default function Canvas() {
             <label className="ct-modal-lbl">Color</label>
             <div ref={editColorsRef} className="ct-modal-colors" />
           </div>
+          <div ref={editCategoryFieldRef} className="ct-modal-field" style={{ display: 'none' }}>
+            <label className="ct-modal-lbl">Category</label>
+            <select ref={editCategoryRef} className="ct-modal-input" />
+          </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Photos (optional)</label>
             <div ref={editPhotosRef} className="ct-modal-photos" />
@@ -7347,6 +7639,10 @@ export default function Canvas() {
             <label className="ct-modal-lbl">Total Hours</label>
             <input ref={saveTotalHoursRef} className="ct-modal-input" type="number" min="0" step="0.25" placeholder="crew x hours"
               onInput={() => api.current.handleSaveTotalHoursInput?.()} />
+          </div>
+          <div ref={saveCategoryFieldRef} className="ct-modal-field" style={{ display: 'none' }}>
+            <label className="ct-modal-lbl">Category</label>
+            <select ref={saveCategoryRef} className="ct-modal-input" />
           </div>
           <div className="ct-modal-field">
             <label className="ct-modal-lbl">Photos (optional)</label>

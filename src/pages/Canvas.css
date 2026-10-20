@@ -91,6 +91,23 @@
 .ct-hbtn.active { background: var(--ct-accent); border-color: var(--ct-accent); color: #000; font-weight: 700; }
 .ct-hbtn.primary { background: var(--ct-accent); border-color: var(--ct-accent); color: #000; font-weight: 700; }
 .ct-hbtn.primary:hover { background: var(--ct-accent-dim); }
+
+/* ── CATEGORY FILTER BAR — isolates a sheet's tagged sessions on the canvas ── */
+.ct-cat-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: var(--ct-surface); border-bottom: 1px solid var(--ct-border);
+  padding: 6px 10px; flex-shrink: 0;
+}
+.ct-cat-bar-lbl { font-size: 10px; color: var(--ct-muted); text-transform: uppercase; letter-spacing: 1px; margin-right: 2px; flex-shrink: 0; }
+.ct-cat-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; padding: 3px 10px 3px 7px; border-radius: 20px;
+  border: 1px solid var(--ct-border); background: var(--ct-surface-2); color: var(--ct-muted);
+  cursor: pointer; transition: all 0.12s; white-space: nowrap; opacity: 0.55;
+}
+.ct-cat-chip:hover { opacity: 0.85; }
+.ct-cat-chip.active { color: var(--ct-text); opacity: 1; border-color: var(--ct-text); }
+.ct-cat-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ct-stat-box { text-align: center; flex-shrink: 0; }
 .ct-stat-val { font-size: 17px; font-weight: 800; line-height: 1; }
 .ct-stat-lbl { font-size: 9px; color: var(--ct-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 1px; }
@@ -284,6 +301,8 @@
 .ct-scard-edit:hover { background: rgba(96,165,250,0.15); color: #60a5fa; }
 .ct-scard-sf { font-size: 16px; font-weight: 700; color: var(--ct-accent); }
 .ct-scard-meta { font-size: 10px; color: var(--ct-muted); margin-top: 2px; }
+.ct-scard-cat { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; color: var(--ct-muted); background: var(--ct-surface-2); border: 1px solid var(--ct-border); border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
+.ct-scard-cat-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .ct-scard-photos { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .ct-scard-photo { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; cursor: pointer; border: 1px solid var(--ct-border); }
 .ct-scard-photo:hover { opacity: 0.85; }
