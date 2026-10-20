@@ -2715,10 +2715,15 @@ export default function Canvas() {
     // touch can only pan (one finger) or pinch-zoom (two fingers, handled by
     // the existing two-finger branch below, unaffected) — it never paints,
     // erases, or places anything. Only a stylus touch still does that. Read
-    // once per mount; changing it on the Profile page takes effect the next
-    // time a floor plan is opened.
-    let pencilOnlyMode = false
-    try { pencilOnlyMode = localStorage.getItem('live-trak_pencil_only') === 'true' } catch {}
+    // fresh on every touch rather than cached once at mount — this effect
+    // only re-runs on [pageId, user?.id], so a `let` captured here would
+    // keep whatever the toggle read as when the sheet was opened: flipping
+    // it on the Profile page without actually leaving/reopening this sheet
+    // left it stuck off, and a finger kept drawing exactly as if the
+    // toggle had never been touched.
+    function isPencilOnlyMode() {
+      try { return localStorage.getItem('live-trak_pencil_only') === 'true' } catch { return false }
+    }
 
     // Pencil double-tap-to-erase: Apple Pencil's own barrel double-tap
     // gesture (UIPencilInteraction) never reaches web content at all — Safari
@@ -2873,7 +2878,7 @@ export default function Canvas() {
       // Single touch, or a pencil touch (with a resting palm alongside it).
       const pos = getTouchPos(e)
       if (calibrating) { handleCalibClick(pos.x, pos.y); return }
-      if (pencilOnlyMode && !stylusTouch) {
+      if (isPencilOnlyMode() && !stylusTouch) {
         // A lone finger with Pencil-only markup on is almost always a
         // resting palm, not a deliberate gesture — nobody drags one finger
         // to pan while also holding a pencil down to draw. This used to
