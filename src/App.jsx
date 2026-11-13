@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { AuthProvider } from './contexts/AuthContext'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import ProtectedRoute from './components/ProtectedRoute'
+import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
@@ -26,6 +27,34 @@ function RootRedirect() {
   return <Navigate to={{ pathname: '/projects', search: location.search, hash: location.hash }} replace />
 }
 
+// "/" specifically (not the catch-all above) — the one URL a prospective
+// customer actually types/clicks, so it's the only place the public
+// Landing page can show. Everyone else still gets sent straight into the
+// app, same as "/" has always behaved:
+//   - a magic-link/invite click landing here with its session in the
+//     hash (see RootRedirect's own comment) — has to reach ProtectedRoute
+//     before Supabase's client consumes that hash, a marketing page in
+//     the way would drop it
+//   - the installed Home Screen PWA (manifest start_url is "/") — always
+//     wants the app, signed in or not; showing marketing copy there on
+//     every cold launch would be bizarre
+//   - anyone already signed in, in an ordinary browser tab — they're a
+//     customer, not a prospect, by the time they're looking at this
+function RootGate() {
+  const location = useLocation()
+  const { user, loading } = useAuth()
+  const isStandalone = typeof window !== 'undefined' && (
+    window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone
+  )
+  const hasAuthHash = /access_token|refresh_token|error=/.test(location.hash)
+
+  if (loading) return null
+  if (hasAuthHash || isStandalone || user) {
+    return <Navigate to={{ pathname: '/projects', search: location.search, hash: location.hash }} replace />
+  }
+  return <Landing />
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -47,7 +76,7 @@ export default function App() {
             <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
             <Route path="/canvas/:pageId" element={<ProtectedRoute><Canvas /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-            <Route path="/" element={<RootRedirect />} />
+            <Route path="/" element={<RootGate />} />
             <Route path="*" element={<RootRedirect />} />
           </Routes>
         </AuthProvider>

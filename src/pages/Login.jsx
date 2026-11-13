@@ -208,7 +208,12 @@ function OtpStep({ email, onVerified, onUseDifferentAccount }) {
 }
 
 export default function Login() {
-  const [mode, setMode] = useState('signin') // 'signin' | 'forgot' | 'signup'
+  // The landing page's "Start Free Trial" CTA links straight here with
+  // ?mode=signup so the signup form is already showing on arrival,
+  // instead of making someone land on sign-in and hunt for it.
+  const [mode, setMode] = useState(() =>
+    new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'signin'
+  ) // 'signin' | 'forgot' | 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
