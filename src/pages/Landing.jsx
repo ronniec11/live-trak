@@ -98,7 +98,12 @@ const STEPS = [
   { n: '3', title: 'See it roll up instantly', body: 'Production, man-hour rates, and daily targets update live for every job, scope, and sheet in the company.' },
 ]
 
+// Basic's feature bullets are a draft, not confirmed — Starter/Pro/
+// Business mirror Pricing.jsx's real tiers, but Basic only has a price
+// ($25/mo) so far; swap these three lines for whatever it should
+// actually say.
 const PLANS = [
+  { name: 'Basic', price: 25, blurb: 'Every new company starts here.', features: ['Up to 1 active job', 'Up to 2 team members', 'Unlimited floor plans & sessions'], trialTag: true },
   { name: 'Starter', price: 49, blurb: 'Small crews getting off spreadsheets.', features: ['Up to 3 active jobs', 'Up to 5 team members', 'Unlimited floor plans & sessions'] },
   { name: 'Pro', price: 149, blurb: 'Growing teams running several jobs at once.', features: ['Up to 15 active jobs', 'Up to 25 team members', 'Everything in Starter'], featured: true },
   { name: 'Business', price: 399, blurb: 'Larger operations, no limits.', features: ['Unlimited active jobs', 'Unlimited team members', 'Everything in Pro'] },
@@ -181,15 +186,16 @@ export default function Landing() {
       </section>
 
       {/* Pricing */}
-      <section className="max-w-5xl mx-auto px-5 sm:px-8 pb-16 sm:pb-24">
+      <section className="max-w-6xl mx-auto px-5 sm:px-8 pb-16 sm:pb-24">
         <div className="text-center mb-10">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Simple, per-company pricing</h2>
-          <p className="mt-2 text-sm text-muted">Every plan starts with a 14-day free trial. Invite your whole team at no extra cost.</p>
+          <p className="mt-2 text-sm text-muted">Every company starts on Basic with a 14-day free trial — upgrade to any plan below whenever you're ready, right from the app.</p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {PLANS.map(p => (
-            <div key={p.name} className={`card flex flex-col ${p.featured ? 'border-accent' : ''}`}>
+            <div key={p.name} className={`card flex flex-col ${p.featured ? 'border-accent' : ''} ${p.trialTag ? 'border-accent/60' : ''}`}>
               {p.featured && <div className="text-[11px] font-bold text-accent uppercase tracking-wide mb-2">Most popular</div>}
+              {p.trialTag && <div className="text-[11px] font-bold text-accent uppercase tracking-wide mb-2">14-day free trial</div>}
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{p.name}</h3>
               <p className="text-xs text-muted mt-0.5 mb-3">{p.blurb}</p>
               <p className="text-3xl font-bold text-gray-900 dark:text-white mb-4">${p.price}<span className="text-sm font-normal text-muted">/month</span></p>
@@ -203,8 +209,8 @@ export default function Landing() {
                   </li>
                 ))}
               </ul>
-              <Link to="/login?mode=signup" className={p.featured ? 'btn-primary w-full text-center' : 'btn-secondary w-full text-center'}>
-                Start Free Trial
+              <Link to="/login?mode=signup" className={p.featured || p.trialTag ? 'btn-primary w-full text-center' : 'btn-secondary w-full text-center'}>
+                {p.trialTag ? 'Start Free Trial' : 'Get Started'}
               </Link>
             </div>
           ))}
