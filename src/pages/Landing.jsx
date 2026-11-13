@@ -98,12 +98,8 @@ const STEPS = [
   { n: '3', title: 'See it roll up instantly', body: 'Production, man-hour rates, and daily targets update live for every job, scope, and sheet in the company.' },
 ]
 
-// Basic's feature bullets are a draft, not confirmed — Starter/Pro/
-// Business mirror Pricing.jsx's real tiers, but Basic only has a price
-// ($25/mo) so far; swap these three lines for whatever it should
-// actually say.
 const PLANS = [
-  { name: 'Basic', price: 25, blurb: 'Every new company starts here.', features: ['Up to 1 active job', 'Up to 2 team members', 'Unlimited floor plans & sessions'], trialTag: true },
+  { name: 'Basic', price: 25, blurb: 'Every new company starts here.', features: ['1 active job', '1 team member', '1 floor plan, unlimited sessions'], trialTag: true },
   { name: 'Starter', price: 49, blurb: 'Small crews getting off spreadsheets.', features: ['Up to 3 active jobs', 'Up to 5 team members', 'Unlimited floor plans & sessions'] },
   { name: 'Pro', price: 149, blurb: 'Growing teams running several jobs at once.', features: ['Up to 15 active jobs', 'Up to 25 team members', 'Everything in Starter'], featured: true },
   { name: 'Business', price: 399, blurb: 'Larger operations, no limits.', features: ['Unlimited active jobs', 'Unlimited team members', 'Everything in Pro'] },
