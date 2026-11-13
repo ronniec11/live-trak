@@ -12,8 +12,36 @@ import { generatePdfTiles, generateRasterTiles, deleteTiles } from '../lib/tileG
 import { getCachedProject } from '../lib/offlineCache'
 import { resolveStorageUrl, storagePathFrom } from '../lib/storageUrls'
 import { INTEGRATIONS } from '../lib/integrations'
+import { limitError } from '../lib/planLimits'
 
 const UPLOAD_TIMEOUT_MS = 30_000
+
+// maxPagesPerJob counts every floor plan across the WHOLE job (every
+// scope under it), not just the one scope a new page is being added to
+// — a plan meant to cap one job's total floor plans shouldn't be
+// dodgeable by spreading them across several scopes instead. Best-
+// effort: a failure here (no connection, an RLS hiccup) never blocks a
+// genuine upload, it just skips the check, same as every other
+// plan-limit check in this app (see planLimits.js).
+async function getPageLimitError(projectId) {
+  try {
+    const { data: scopeRow } = await supabase
+      .from('projects')
+      .select('job_id, jobs(organizations(plan, unlimited_until))')
+      .eq('id', projectId)
+      .single()
+    const jobId = scopeRow?.job_id
+    if (!jobId) return null
+    const { data: scopeRows } = await supabase.from('projects').select('id').eq('job_id', jobId)
+    const scopeIds = (scopeRows || []).map(s => s.id)
+    if (!scopeIds.length) return null
+    const { count } = await supabase.from('pages').select('id', { count: 'exact', head: true }).in('project_id', scopeIds)
+    return limitError(scopeRow.jobs?.organizations, 'maxPagesPerJob', count || 0)
+  } catch (err) {
+    console.warn('[ScopeDetail] Could not check page plan limit — allowing upload:', err)
+    return null
+  }
+}
 
 // Shared by AddPageModal (a local file picker) and ImportAutodeskModal (a
 // File downloaded from Autodesk) so both go through the exact same
@@ -30,6 +58,9 @@ const UPLOAD_TIMEOUT_MS = 30_000
 // here and storing THAT would just be a URL that's already partway through
 // expiring by the time it's ever shown.
 async function createPageFromFile(projectId, name, file, onStep) {
+  const limitMsg = await getPageLimitError(projectId)
+  if (limitMsg) throw new Error(limitMsg)
+
   let floor_plan_url = null
 
   if (file) {

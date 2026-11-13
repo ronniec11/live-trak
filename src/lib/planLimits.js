@@ -10,6 +10,13 @@
 // unlimited until real per-plan limits are decided.
 export const PLAN_LIMITS = {
   free: { maxUsers: 1, maxJobs: 2, maxScopesPerJob: 1, maxSessionsPerJob: 10 },
+  // The self-signup trial plan (see supabase-migration-signup-payment-
+  // gate.sql) — 1 job, 2 team members, 2 floor plans total across every
+  // scope in that one job (maxPagesPerJob), unlimited scopes and
+  // sessions. The page cap exists specifically so one job can't be
+  // stretched into an unlimited number of unrelated floor plans by a
+  // solo account using it like several separate projects.
+  basic: { maxUsers: 2, maxJobs: 1, maxPagesPerJob: 2 },
 }
 
 export function limitsForPlan(plan) {
@@ -28,13 +35,14 @@ export function orgIsUnlimited(org) {
   return !!org?.unlimited_until && new Date(org.unlimited_until) > new Date()
 }
 
-const PLAN_NAME = { free: 'Free', starter: 'Starter', pro: 'Pro', business: 'Business', enterprise: 'Enterprise' }
+const PLAN_NAME = { free: 'Free', basic: 'Basic', starter: 'Starter', pro: 'Pro', business: 'Business', enterprise: 'Enterprise' }
 
 const LIMIT_TEXT = {
   maxUsers: limit => `up to ${limit} user${limit === 1 ? '' : 's'}`,
   maxJobs: limit => `up to ${limit} project${limit === 1 ? '' : 's'}`,
   maxScopesPerJob: limit => `${limit} scope${limit === 1 ? '' : 's'} per project`,
   maxSessionsPerJob: limit => `${limit} session${limit === 1 ? '' : 's'} per project`,
+  maxPagesPerJob: limit => `${limit} floor plan${limit === 1 ? '' : 's'} per project`,
 }
 
 // Returns an error message if adding ONE MORE of `kind` would exceed the
