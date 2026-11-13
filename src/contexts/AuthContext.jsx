@@ -22,11 +22,27 @@ export function AuthProvider({ children }) {
       // with no organization_id yet (pre-CompanySetup), which is fine —
       // that case is caught by ProtectedRoute's own organization_id check
       // before the payment gate ever runs.
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
         .select('*, organizations(plan, plan_status, unlimited_until)')
         .eq('id', userId)
         .single()
+
+      if (error) {
+        // The embed itself failing (e.g. PostgREST not recognizing the
+        // profiles->organizations relationship for some accounts — seen
+        // in practice, not hypothetical) used to fall straight through to
+        // the synthesized-fallback profile below, which hardcodes
+        // role: 'foreman' — silently downgrading a real admin/super-admin
+        // account's visible role to the lowest one on every login, with
+        // nothing in the UI suggesting it wasn't their actual role.
+        // Retrying without the embed recovers the REAL profile (role,
+        // is_super_admin, everything) — the only loss is .organizations
+        // being unavailable, which just makes the payment gate a no-op
+        // for this fetch instead of corrupting who the person actually is.
+        console.warn('[AuthContext] Profile fetch with organizations embed failed, retrying without it:', error)
+        ;({ data, error } = await supabase.from('profiles').select('*').eq('id', userId).single())
+      }
 
       if (!error && data) {
         setProfile(data)
@@ -161,13 +177,19 @@ export function AuthProvider({ children }) {
     // Same join as fetchProfile — without it, this overwrites profile with
     // a plain profiles row (no .organizations), and ProtectedRoute's
     // payment gate would read plan_status as undefined until the next
-    // full fetchProfile happens to run.
-    const { data, error } = await supabase
+    // full fetchProfile happens to run. Same retry-without-it fallback as
+    // fetchProfile too — the embed failing shouldn't make an otherwise
+    // ordinary profile update (name, avatar color, ...) fail outright.
+    let { data, error } = await supabase
       .from('profiles')
       .update(updates)
       .eq('id', user.id)
       .select('*, organizations(plan, plan_status, unlimited_until)')
       .single()
+    if (error) {
+      console.warn('[AuthContext] updateProfile with organizations embed failed, retrying without it:', error)
+      ;({ data, error } = await supabase.from('profiles').update(updates).eq('id', user.id).select('*').single())
+    }
     if (error) throw error
     setProfile(data)
     return data
