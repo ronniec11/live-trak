@@ -19,10 +19,18 @@ const stripe = new Stripe(requireEnv('STRIPE_SECRET_KEY'))
 const APP_URL = process.env.APP_URL || 'https://www.live-trak.ai'
 
 const PLAN_PRICE_ENV = {
+  basic: 'STRIPE_PRICE_BASIC',
   starter: 'STRIPE_PRICE_STARTER',
   pro: 'STRIPE_PRICE_PRO',
   business: 'STRIPE_PRICE_BUSINESS',
 }
+
+// 'basic' is only ever reached from SubscribeGate.jsx — a brand new
+// self-signup org (plan_status 'incomplete', see supabase-migration-
+// signup-payment-gate.sql) with nothing to subscribe to yet. Every other
+// plan here is an existing org's Pricing-page upgrade, which keeps its
+// current no-trial behavior.
+const SIGNUP_TRIAL_DAYS = 14
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
@@ -39,9 +47,21 @@ export default async function handler(req, res) {
     if (!profile?.organization_id) { res.status(409).json({ error: "Your account isn't linked to a company yet." }); return }
     if (profile.role !== 'admin') { res.status(403).json({ error: 'Only a company admin can change billing.' }); return }
 
+    const subscriptionData = { metadata: { organizationId: profile.organization_id, plan } }
+    // Card required upfront even during the trial (the whole point of
+    // this gate — a trial nobody has to put a card down for doesn't stop
+    // the same free-signup problem, just delays it 14 days) — explicit
+    // 'always' rather than leaving this at Stripe's default, which skips
+    // collection for some trial configurations.
+    const checkoutOverrides = plan === 'basic'
+      ? { payment_method_collection: 'always' }
+      : {}
+    if (plan === 'basic') subscriptionData.trial_period_days = SIGNUP_TRIAL_DAYS
+
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
+      ...checkoutOverrides,
       line_items: [{ price: requireEnv(priceEnvVar), quantity: 1 }],
       customer_email: user.email,
       // Stashed on BOTH the session and the subscription it creates — the
@@ -53,7 +73,7 @@ export default async function handler(req, res) {
       // deleted events, which only ever hand back the subscription, not
       // the checkout session.
       metadata: { organizationId: profile.organization_id, userId: user.id, plan },
-      subscription_data: { metadata: { organizationId: profile.organization_id, plan } },
+      subscription_data: subscriptionData,
       success_url: `${APP_URL}/hub?payment=success`,
       cancel_url: `${APP_URL}/hub?payment=cancelled`,
     })

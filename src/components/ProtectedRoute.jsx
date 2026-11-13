@@ -2,6 +2,8 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useEffect, useState } from 'react'
 import CompanySetup from './CompanySetup'
+import SubscribeGate from './SubscribeGate'
+import { orgIsUnlimited } from '../lib/planLimits'
 
 export default function ProtectedRoute({ children }) {
   const { user, profile, loading, signOut, otpPending } = useAuth()
@@ -62,6 +64,17 @@ export default function ProtectedRoute({ children }) {
   // ever catches that one case.
   if (profile && !profile.organization_id && !profile._synthesized) {
     return <CompanySetup />
+  }
+
+  // The actual payment gate — a self-signup org (CompanySetup above
+  // already ran) that hasn't started a trial/subscription yet. Never
+  // true for an invited team member: their org's plan_status was already
+  // something else before they ever joined (see supabase-migration-
+  // signup-payment-gate.sql). unlimited_until exempts an org a super
+  // admin has manually comped, same as every plan-limit check already
+  // treats that override (src/lib/planLimits.js).
+  if (profile?.organizations?.plan_status === 'incomplete' && !orgIsUnlimited(profile.organizations)) {
+    return <SubscribeGate />
   }
 
   return children

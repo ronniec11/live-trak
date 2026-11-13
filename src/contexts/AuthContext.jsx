@@ -16,9 +16,15 @@ export function AuthProvider({ children }) {
 
   async function fetchProfile(userId) {
     try {
+      // organizations(...) — ProtectedRoute's payment gate (SubscribeGate)
+      // needs plan_status/unlimited_until on every profile fetch, not just
+      // somewhere billing-specific happens to load it; null for a profile
+      // with no organization_id yet (pre-CompanySetup), which is fine —
+      // that case is caught by ProtectedRoute's own organization_id check
+      // before the payment gate ever runs.
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('*, organizations(plan, plan_status, unlimited_until)')
         .eq('id', userId)
         .single()
 
@@ -152,11 +158,15 @@ export function AuthProvider({ children }) {
   }
 
   async function updateProfile(updates) {
+    // Same join as fetchProfile — without it, this overwrites profile with
+    // a plain profiles row (no .organizations), and ProtectedRoute's
+    // payment gate would read plan_status as undefined until the next
+    // full fetchProfile happens to run.
     const { data, error } = await supabase
       .from('profiles')
       .update(updates)
       .eq('id', user.id)
-      .select()
+      .select('*, organizations(plan, plan_status, unlimited_until)')
       .single()
     if (error) throw error
     setProfile(data)

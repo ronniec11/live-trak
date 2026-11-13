@@ -15,6 +15,7 @@ const stripe = new Stripe(requireEnv('STRIPE_SECRET_KEY'))
 export const config = { api: { bodyParser: false } }
 
 const PRICE_PLAN_MAP = {
+  [process.env.STRIPE_PRICE_BASIC]: 'basic',
   [process.env.STRIPE_PRICE_STARTER]: 'starter',
   [process.env.STRIPE_PRICE_PRO]: 'pro',
   [process.env.STRIPE_PRICE_BUSINESS]: 'business',
