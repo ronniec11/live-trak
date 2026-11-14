@@ -644,7 +644,7 @@ function ScopeCard({ scope, dailyGroups, totalGroups, onClick, onUpdateStatus, o
               foreman actually scans for on this card — falls back to the
               scope's own name as the title when no description is set,
               rather than rendering an empty heading. */}
-          <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-accent truncate">
+          <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 group-hover:text-accent leading-snug line-clamp-2">
             {scope.description || scope.name}
           </h3>
         </div>
