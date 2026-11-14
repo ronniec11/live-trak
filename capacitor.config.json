@@ -1,0 +1,8 @@
+{
+  "appId": "com.livetrak.app",
+  "appName": "Live-Trak",
+  "webDir": "dist",
+  "ios": {
+    "backgroundColor": "#ffffff"
+  }
+}
