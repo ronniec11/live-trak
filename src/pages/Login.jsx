@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { isNativeApp } from '../lib/platform'
 
 // EMAIL OTP SECOND FACTOR — depends on dashboard-only Supabase config this
 // file can't set:
@@ -210,9 +211,12 @@ function OtpStep({ email, onVerified, onUseDifferentAccount }) {
 export default function Login() {
   // The landing page's "Start Free Trial" CTA links straight here with
   // ?mode=signup so the signup form is already showing on arrival,
-  // instead of making someone land on sign-in and hunt for it.
+  // instead of making someone land on sign-in and hunt for it. Never
+  // honored inside the native app (see src/lib/platform.js) — that's a
+  // sign-in-only surface, company signup/payment only ever happens on
+  // the web.
   const [mode, setMode] = useState(() =>
-    new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'signin'
+    !isNativeApp() && new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'signin'
   ) // 'signin' | 'forgot' | 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -570,13 +574,17 @@ export default function Login() {
                   </>
                 ) : 'Sign in'}
               </button>
-              <button
-                type="button"
-                onClick={() => { setMode('signup'); setError('') }}
-                className="btn-ghost w-full text-sm"
-              >
-                New company? Create your account
-              </button>
+              {/* Company signup only ever happens on the web — see
+                  src/lib/platform.js. The native app is sign-in only. */}
+              {!isNativeApp() && (
+                <button
+                  type="button"
+                  onClick={() => { setMode('signup'); setError('') }}
+                  className="btn-ghost w-full text-sm"
+                >
+                  New company? Create your account
+                </button>
+              )}
             </form>
           )}
     </AuthShell>

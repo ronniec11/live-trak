@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { isNativeApp } from '../lib/platform'
 import { formatPhone } from '../lib/phone'
 import { INTEGRATIONS } from '../lib/integrations'
 
@@ -708,14 +709,21 @@ function PlanUsageCard({ org, people, usage }) {
         </div>
       </div>
       {error && <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm">{error}</div>}
-      <div className="flex gap-2">
-        <button onClick={() => navigate('/pricing')} className="btn-secondary flex-1">Upgrade Plan</button>
-        {org.stripe_customer_id && (
-          <button onClick={manageBilling} disabled={managing} className="btn-primary flex-1">
-            {managing ? 'Opening...' : 'Manage Billing'}
-          </button>
-        )}
-      </div>
+      {isNativeApp() ? (
+        // No Stripe Checkout/portal inside the native app — see
+        // src/lib/platform.js. Plan changes and billing only ever happen
+        // on the web.
+        <p className="text-xs text-muted">Manage your plan and billing at live-trak.ai.</p>
+      ) : (
+        <div className="flex gap-2">
+          <button onClick={() => navigate('/pricing')} className="btn-secondary flex-1">Upgrade Plan</button>
+          {org.stripe_customer_id && (
+            <button onClick={manageBilling} disabled={managing} className="btn-primary flex-1">
+              {managing ? 'Opening...' : 'Manage Billing'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

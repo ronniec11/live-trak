@@ -3,3 +3,14 @@ dist
 .env
 .DS_Store
 .claude/
+
+# iOS native app (Capacitor) — the Xcode project itself is committed,
+# but these are either regenerated build output or Xcode's own
+# per-machine/per-user state, not source.
+ios/App/App/public
+ios/App/Pods
+ios/App/App.xcworkspace/xcuserdata
+ios/App/App.xcodeproj/xcuserdata
+ios/App/App.xcodeproj/project.xcworkspace/xcuserdata
+ios/DerivedData
+*.xcuserstate

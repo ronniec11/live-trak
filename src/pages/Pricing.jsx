@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { isNativeApp } from '../lib/platform'
 
 // Feature bullets are placeholders — swap them for whatever each tier
 // actually enforces once there's a real limit behind them (there isn't
@@ -122,6 +123,11 @@ export default function Pricing() {
                   </ul>
                   {isCurrent ? (
                     <button disabled className="btn-secondary w-full opacity-60 cursor-default">Current Plan</button>
+                  ) : isNativeApp() ? (
+                    // No Stripe Checkout inside the native app — see
+                    // src/lib/platform.js. Plan changes only ever happen
+                    // on the web.
+                    <p className="text-xs text-muted text-center">Manage your plan at live-trak.ai</p>
                   ) : (
                     <button onClick={() => subscribe(plan.key)} disabled={busyPlan === plan.key} className="btn-primary w-full">
                       {busyPlan === plan.key ? 'Redirecting...' : 'Subscribe'}
@@ -133,7 +139,7 @@ export default function Pricing() {
           </div>
         )}
 
-        {org?.stripe_customer_id && (
+        {org?.stripe_customer_id && !isNativeApp() && (
           <div className="text-center mt-8">
             <button onClick={manageBilling} disabled={managing} className="btn-secondary">
               {managing ? 'Opening...' : 'Manage Billing'}

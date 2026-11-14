@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { isNativeApp } from '../lib/platform'
 
 // Rendered by ProtectedRoute whenever profile.organizations.plan_status
 // is 'incomplete' — a brand new self-signup company (CompanySetup.jsx
@@ -73,41 +74,60 @@ export default function SubscribeGate() {
         </div>
 
         <div className="card border-border/60">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Start your free trial</h2>
-          <p className="text-sm text-muted mb-5">
-            Your company's set up — one step left. Start a 14-day free trial to unlock Live-Trak for your team. A card is required to start the trial; you won't be charged until it ends, and you can cancel anytime before then.
-          </p>
+          {isNativeApp() ? (
+            // No Stripe Checkout inside the native app — see
+            // src/lib/platform.js. Finishing the trial/subscription has
+            // to happen on the web; this account can come straight back
+            // here once that's done.
+            <>
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Finish setting up on the web</h2>
+              <p className="text-sm text-muted mb-5">
+                Your company's set up — one step left, and it has to happen at{' '}
+                <span className="text-gray-900 dark:text-gray-100 font-medium">live-trak.ai</span> on a browser: start your 14-day free trial there, then come back and sign in here.
+              </p>
+              <button type="button" onClick={signOut} className="btn-ghost w-full text-sm">
+                Sign out
+              </button>
+            </>
+          ) : (
+            <>
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Start your free trial</h2>
+              <p className="text-sm text-muted mb-5">
+                Your company's set up — one step left. Start a 14-day free trial to unlock Live-Trak for your team. A card is required to start the trial; you won't be charged until it ends, and you can cancel anytime before then.
+              </p>
 
-          {cancelled && (
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-600 dark:text-amber-400 text-sm mb-4">
-              Checkout was cancelled — no charge was made. Start the trial whenever you're ready.
-            </div>
+              {cancelled && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-600 dark:text-amber-400 text-sm mb-4">
+                  Checkout was cancelled — no charge was made. Start the trial whenever you're ready.
+                </div>
+              )}
+
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={startTrial}
+                  disabled={starting}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
+                  {starting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
+                      Starting...
+                    </>
+                  ) : 'Start 14-Day Free Trial'}
+                </button>
+                <button type="button" onClick={signOut} className="btn-ghost w-full text-sm">
+                  Sign out
+                </button>
+              </div>
+            </>
           )}
-
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-4">
-              {error}
-            </div>
-          )}
-
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={startTrial}
-              disabled={starting}
-              className="btn-primary w-full flex items-center justify-center gap-2"
-            >
-              {starting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />
-                  Starting...
-                </>
-              ) : 'Start 14-Day Free Trial'}
-            </button>
-            <button type="button" onClick={signOut} className="btn-ghost w-full text-sm">
-              Sign out
-            </button>
-          </div>
         </div>
       </div>
     </div>

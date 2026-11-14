@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import ProtectedRoute from './components/ProtectedRoute'
+import { isNativeApp } from './lib/platform'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Projects from './pages/Projects'
@@ -38,6 +39,8 @@ function RootRedirect() {
 //   - the installed Home Screen PWA (manifest start_url is "/") — always
 //     wants the app, signed in or not; showing marketing copy there on
 //     every cold launch would be bizarre
+//   - the native iOS app (see src/lib/platform.js) — it's strictly a
+//     sign-in-and-use tool, never a signup/marketing surface
 //   - anyone already signed in, in an ordinary browser tab — they're a
 //     customer, not a prospect, by the time they're looking at this
 function RootGate() {
@@ -49,7 +52,7 @@ function RootGate() {
   const hasAuthHash = /access_token|refresh_token|error=/.test(location.hash)
 
   if (loading) return null
-  if (hasAuthHash || isStandalone || user) {
+  if (hasAuthHash || isStandalone || isNativeApp() || user) {
     return <Navigate to={{ pathname: '/projects', search: location.search, hash: location.hash }} replace />
   }
   return <Landing />
