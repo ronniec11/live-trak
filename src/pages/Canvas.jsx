@@ -4083,6 +4083,18 @@ export default function Canvas() {
             alert('Session saved, but its Category was NOT saved — the database is missing that column. Run the migration noted at the top of Canvas.jsx (tag_id ALTER TABLE) in the Supabase SQL editor, then re-select it via the session\'s edit (pencil) button.')
           }
         }
+        if (error && /row-level security/i.test(error.message)) {
+          // See supabase.js — the native app's WKWebView freezes JS timers
+          // while backgrounded, so the background token-refresh timer can
+          // miss a renewal and leave an expired access token in place.
+          // Force a fresh one and retry once before giving up and losing
+          // the markup.
+          console.warn('[Canvas] Insert rejected by RLS, refreshing session and retrying once:', error.message)
+          const { error: refreshErr } = await supabase.auth.refreshSession()
+          if (!refreshErr) {
+            ;({ data, error } = await supabase.from('sessions').insert(insertPayload).select('id').single())
+          }
+        }
         if (error) throw error
         if (data?.id) session.supabaseId = data.id
         console.log('[Canvas] Session saved to Supabase, id:', data?.id)
