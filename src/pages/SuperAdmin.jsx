@@ -89,7 +89,7 @@ function ModalShell({ title, onClose, children, wide = false }) {
 }
 
 // ── View company ──────────────────────────────────────────────────────────
-function CompanyViewModal({ org, users, jobs, sfByOrg, storageByOrg, onClose, onGrantUnlimited }) {
+function CompanyViewModal({ org, users, jobs, sfByOrg, storageByOrg, onClose, onGrantUnlimited, onMoveJob }) {
   const orgUsers = users.filter(u => u.organization_id === org.id)
   const orgJobs = jobs.filter(j => j.organization_id === org.id)
   const storage = storageByOrg[org.id]
@@ -151,7 +151,10 @@ function CompanyViewModal({ org, users, jobs, sfByOrg, storageByOrg, onClose, on
         {orgJobs.map(j => (
           <div key={j.id} className="flex items-center justify-between text-sm py-1">
             <span className="text-gray-800 dark:text-gray-200 truncate">{j.name}</span>
-            <span className="text-xs text-muted capitalize shrink-0">{j.status}</span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span className="text-xs text-muted capitalize">{j.status}</span>
+              <button onClick={() => onMoveJob(j)} className="btn-ghost py-0.5 px-1.5 text-xs">Move</button>
+            </span>
           </div>
         ))}
         {orgJobs.length === 0 && <p className="text-sm text-muted">No jobs yet.</p>}
@@ -289,6 +292,59 @@ function ChangeCompanyModal({ user, orgs, onClose, onSaved }) {
   )
 }
 
+// ── Move job to another company ─────────────────────────────────────────
+// Jobs are the root of the whole org-scoping chain (jobs -> projects
+// (scopes) -> pages -> sessions all derive their company from
+// jobs.organization_id, nothing below it stores its own — see the comment
+// in loadAll() below), so moving a job's organization_id takes everything
+// under it along in one move, with no separate data to migrate.
+//
+// What it doesn't do: touch project_members/job_members. Someone who only
+// ever saw this job through their OWN company's admin/PM org-wide access
+// (not an explicit membership row) loses access the moment the job lands
+// in a different company, unless they're also a member of that one —
+// same as any other company's admin/PM has no automatic access to a job
+// outside their own org. Explicit project/job members keep access
+// regardless, since that check never looked at organization_id at all.
+function ChangeJobCompanyModal({ job, orgs, onClose, onSaved }) {
+  const [orgId, setOrgId] = useState(job.organization_id || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSave() {
+    if (orgId === job.organization_id) { onClose(); return }
+    const targetName = orgs.find(o => o.id === orgId)?.name || 'that company'
+    if (!confirm(`Move "${job.name}" to ${targetName}? Every scope, floor plan, and session under it moves with it. Anyone who only has access through their own company's admin/PM role (not an explicit project member) will lose access unless they're also added to ${targetName}.`)) return
+    setSaving(true)
+    setError('')
+    try {
+      const { data, error: jErr } = await supabase.from('jobs').update({ organization_id: orgId }).eq('id', job.id).select().single()
+      if (jErr) throw jErr
+      if (!data) throw new Error('Nothing was saved — check the jobs_update_super_admin RLS policy (supabase-migration-jobs-update-super-admin.sql).')
+      onSaved(`"${data.name}" moved to ${targetName}.`)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalShell title={`Move Job — ${job.name}`} onClose={onClose}>
+      <label className="label">Company</label>
+      <select className="input mb-4" value={orgId} onChange={e => setOrgId(e.target.value)}>
+        {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+      {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-4">{error}</div>}
+      <div className="flex gap-2">
+        <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+        <button onClick={handleSave} disabled={saving || !orgId} className="btn-primary flex-1">{saving ? 'Saving...' : 'Save'}</button>
+      </div>
+    </ModalShell>
+  )
+}
+
 export default function SuperAdmin() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -308,6 +364,7 @@ export default function SuperAdmin() {
   const [adminOrg, setAdminOrg] = useState(null)
   const [changeRoleUser, setChangeRoleUser] = useState(null)
   const [changeCompanyUser, setChangeCompanyUser] = useState(null)
+  const [changeCompanyJob, setChangeCompanyJob] = useState(null)
 
   useEffect(() => {
     if (profile && !isSuperAdmin) navigate('/projects', { replace: true })
@@ -591,7 +648,7 @@ export default function SuperAdmin() {
       {viewOrg && (
         <CompanyViewModal
           org={orgs.find(o => o.id === viewOrg)} users={users} jobs={jobs} sfByOrg={sfByOrg} storageByOrg={storageByOrg}
-          onClose={() => setViewOrg(null)} onGrantUnlimited={grantUnlimited}
+          onClose={() => setViewOrg(null)} onGrantUnlimited={grantUnlimited} onMoveJob={setChangeCompanyJob}
         />
       )}
       {adminOrg && (
@@ -612,6 +669,13 @@ export default function SuperAdmin() {
         <ChangeCompanyModal
           user={changeCompanyUser} orgs={orgs}
           onClose={() => setChangeCompanyUser(null)}
+          onSaved={msg => { showToast(msg); loadAll() }}
+        />
+      )}
+      {changeCompanyJob && (
+        <ChangeJobCompanyModal
+          job={changeCompanyJob} orgs={orgs}
+          onClose={() => setChangeCompanyJob(null)}
           onSaved={msg => { showToast(msg); loadAll() }}
         />
       )}
