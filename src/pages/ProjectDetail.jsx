@@ -12,6 +12,8 @@ import { useTheme } from '../contexts/ThemeContext'
 import { supabase } from '../lib/supabase'
 import { getCachedJobDetail } from '../lib/offlineCache'
 import { limitError } from '../lib/planLimits'
+import { storagePathFrom } from '../lib/storageUrls'
+import { deleteTiles } from '../lib/tileGenerator'
 
 const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 
@@ -977,6 +979,25 @@ export default function ProjectDetail() {
     setScopes(ss => ss.map(s => s.id === scopeId ? { ...s, status } : s))
   }
 
+  // ScopeSettingsModal's own confirm() already ran before this is called.
+  // project_members/pages/sessions cascade away at the DB level once the
+  // projects row goes (ON DELETE CASCADE — see supabase-schema.sql), but
+  // that only drops the rows, not the actual files those pages reference —
+  // same storage cleanup deletePage() (ScopeDetail.jsx) does per page,
+  // just looped over every page this scope has instead of one.
+  async function deleteScope(scope) {
+    const { data: scopePages, error: pagesErr } = await supabase.from('pages').select('*').eq('project_id', scope.id)
+    if (pagesErr) throw pagesErr
+    for (const page of scopePages || []) {
+      const filesToRemove = [page.floor_plan_url, page.cached_image_url].filter(Boolean).map(storagePathFrom)
+      if (filesToRemove.length > 0) await supabase.storage.from('floor-plans').remove(filesToRemove)
+      if (page.tile_meta) await deleteTiles(scope.id, page.id)
+    }
+    const { error } = await supabase.from('projects').delete().eq('id', scope.id)
+    if (error) throw error
+    setScopes(ss => ss.filter(s => s.id !== scope.id))
+  }
+
   // jobs is a newer table than projects and was confirmed to have at
   // least one missing/broken RLS policy already (see JobSettingsModal) —
   // .select().single() here for the same reason: surface a blocked update
@@ -1351,6 +1372,7 @@ export default function ProjectDetail() {
           scope={scopeSettingsTarget}
           onClose={() => setScopeSettingsTarget(null)}
           onSaved={patch => setScopes(ss => ss.map(s => s.id === scopeSettingsTarget.id ? { ...s, ...patch } : s))}
+          onDelete={(profile?.role === 'admin' || profile?.role === 'pm') ? deleteScope : undefined}
         />
       )}
     </Layout>
