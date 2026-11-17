@@ -1462,6 +1462,23 @@ export default function ScopeDetail() {
     setTodaySessions(ts => ts.filter(s => s.page_id !== page.id))
   }
 
+  // ScopeSettingsModal's own confirm() already ran before this is called.
+  // pages/sessions/project_members cascade away at the DB level once the
+  // projects row itself goes (ON DELETE CASCADE — see supabase-schema.sql),
+  // but that only drops the rows, not the actual files those pages
+  // reference — same per-page storage cleanup deletePage() does above,
+  // just looped over every page already loaded in this scope's own state.
+  async function deleteScope(scope) {
+    for (const page of pages) {
+      const filesToRemove = [page.floor_plan_url, page.cached_image_url].filter(Boolean).map(storagePathFrom)
+      if (filesToRemove.length > 0) await supabase.storage.from('floor-plans').remove(filesToRemove)
+      if (page.tile_meta) await deleteTiles(projectId, page.id)
+    }
+    const { error } = await supabase.from('projects').delete().eq('id', scope.id)
+    if (error) throw error
+    navigate(project?.job_id ? `/projects/${project.job_id}` : '/scopes')
+  }
+
   async function loadTodaySessions(pgs) {
     if (!pgs?.length) return
     const { data: sessions, error } = await supabase
@@ -2256,6 +2273,7 @@ export default function ScopeDetail() {
           canEditCost={canEditFinancials}
           onClose={() => setShowScopeSettings(false)}
           onSaved={patch => setProject(p => ({ ...p, ...patch }))}
+          onDelete={(profile?.role === 'admin' || profile?.role === 'pm') ? deleteScope : undefined}
         />
       )}
     </Layout>

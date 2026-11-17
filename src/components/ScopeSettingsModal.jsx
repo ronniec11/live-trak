@@ -24,13 +24,31 @@ const STATUS_OPTIONS = ['active', 'completed', 'on hold']
 // Info" is the one place that field is actually meant to be a distinct
 // subtitle from the name (shown below it when set); this modal only ever
 // edits `name`, matching how ScopeDetail.jsx's settings always worked.
-export default function ScopeSettingsModal({ scope, canEditCost = true, onClose, onSaved }) {
+export default function ScopeSettingsModal({ scope, canEditCost = true, onClose, onSaved, onDelete }) {
   const [name, setName] = useState(scope.name || '')
   const [status, setStatus] = useState(scope.status || 'active')
   const [cost, setCost] = useState(scope.cost ?? '')
   const [lunchBreak, setLunchBreak] = useState(scope.lunch_break_minutes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Separate from saving/error above — Delete and Save Changes are two
+  // independent actions on this form, and running one shouldn't disable or
+  // show stale error state from the other.
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
+  async function handleDelete() {
+    if (!confirm(`Delete "${scope.name}"? This permanently deletes every sheet, floor plan, and session logged under this scope. This cannot be undone.`)) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await onDelete(scope)
+      onClose()
+    } catch (err) {
+      setDeleteError(err.message)
+      setDeleting(false)
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -111,6 +129,17 @@ export default function ScopeSettingsModal({ scope, canEditCost = true, onClose,
               </button>
             </div>
           </form>
+
+          {onDelete && (
+            <div className="mt-5 pt-5 border-t border-border">
+              {deleteError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-600 dark:text-red-400 text-sm mb-3">{deleteError}</div>
+              )}
+              <button type="button" onClick={handleDelete} disabled={deleting} className="btn-ghost w-full text-sm text-red-500 hover:text-red-600">
+                {deleting ? 'Deleting...' : 'Delete Scope'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
